@@ -2,21 +2,19 @@
 
 import { 
     ReactFlow, 
-    Controls, 
     Background, 
     SelectionMode, 
     BackgroundVariant,
-    addEdge,
     useEdgesState,
-    useNodesState
+    useNodesState,
   } from "@xyflow/react";
-import { BaseNode } from "@/components/nodes/base-node";
-import { useCallback } from "react";
+import { nodeTypes } from "@/components/nodes";
+import { Console } from "@/components/console/console";
 
-  // Configure panning buttons (1 = middle mouse, 2 = right mouse)
-  const panOnDragButtons = [1, 2];
-  
-  export default function Canvas() {
+// Configure panning buttons (1 = middle mouse, 2 = right mouse)
+const panOnDragButtons = [1, 2];
+
+export default function Canvas() {
     const [nodes, setNodes, onNodesChange] = useNodesState([]);
     const [edges, setEdges, onEdgesChange] = useEdgesState([]);
     
@@ -26,7 +24,9 @@ import { useCallback } from "react";
         <ReactFlow
           nodes={nodes}
           edges={edges}
-
+          nodeTypes={nodeTypes}
+          onNodesChange={onNodesChange}
+          onEdgesChange={onEdgesChange}
           fitView
           className="bg-background text-foreground"
           // Figma-style controls
@@ -39,11 +39,7 @@ import { useCallback } from "react";
           zoomOnScroll={false}
           zoomOnDoubleClick={false}
         >
-          <Controls 
-            position="bottom-right"
-            showInteractive={false}
-            className="!bg-background/80 !border !border-foreground/10 !rounded-md !shadow-sm p-1"
-          />
+          <Console />
           <Background
             variant={BackgroundVariant.Dots}
             gap={32}
@@ -53,4 +49,4 @@ import { useCallback } from "react";
         </ReactFlow>
       </div>
     );
-  }
+}
