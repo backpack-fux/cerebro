@@ -8,7 +8,10 @@ import {
   Users, 
   User, 
   Building2, 
-  GitFork 
+  GitFork,
+  Calendar,
+  Code,
+  StickyNote
 } from "lucide-react";
 import { useCallback } from "react";
 import { useReactFlow } from "@xyflow/react";
@@ -23,6 +26,9 @@ const nodeTypes = [
   { type: 'teamMember', label: 'Member', icon: User },
   { type: 'provider', label: 'Provider', icon: Building2 },
   { type: 'option', label: 'Option', icon: GitFork },
+  { type: 'calendar', label: 'Calendar', icon: Calendar },
+  { type: 'code', label: 'Code', icon: Code },
+  { type: 'notes', label: 'Notes', icon: StickyNote },
 ] as const;
 
 export function Console() {
