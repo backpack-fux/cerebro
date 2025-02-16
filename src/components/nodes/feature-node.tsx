@@ -8,17 +8,16 @@ import {
   NodeHeaderActions,
   NodeHeaderMenuAction,
 } from '@/components/nodes/node-header';
-import { LabeledHandle } from '@/components/nodes/labeled-handle';
 import { DropdownMenuItem } from "@radix-ui/react-dropdown-menu";
 import { useReactFlow } from "@xyflow/react";
 import { useCallback } from "react";
 
-export type MetaNodeData = Node<{
+export type FeatureNodeData = Node<{
   title: string;
   description?: string;
 }>;
 
-export function MetaNode({ id, data, selected }: NodeProps<MetaNodeData>) {
+export function FeatureNode({ id, data, selected }: NodeProps<FeatureNodeData>) {
   const { updateNodeData, setNodes } = useReactFlow();
 
   const handleTitleChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
@@ -37,11 +36,11 @@ export function MetaNode({ id, data, selected }: NodeProps<MetaNodeData>) {
             value={data.title}
             onChange={handleTitleChange}
             className="bg-transparent outline-none placeholder:text-muted-foreground"
-            placeholder="Meta Title"
+            placeholder="Feature Title"
           />
         </NodeHeaderTitle>
         <NodeHeaderActions>
-          <NodeHeaderMenuAction label="Meta node menu">
+          <NodeHeaderMenuAction label="Feature node menu">
             <DropdownMenuItem onSelect={handleDelete} className="cursor-pointer">
               Delete
             </DropdownMenuItem>
@@ -49,18 +48,15 @@ export function MetaNode({ id, data, selected }: NodeProps<MetaNodeData>) {
         </NodeHeaderActions>
       </NodeHeader>
 
-      {/* Input/Output Handles */}
-      <Handle
-        type="source"
-        position={Position.Top}
-        id="source"
-        title="Knowledge Base"
-      />
       <Handle
         type="target"
-        position={Position.Bottom}
-        title="Roadmap"
+        position={Position.Top}
         id="target"
+      />
+      <Handle
+        type="source"
+        position={Position.Bottom}
+        id="source"
       />
     </BaseNode>
   );

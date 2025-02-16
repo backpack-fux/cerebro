@@ -13,12 +13,12 @@ import { DropdownMenuItem } from "@radix-ui/react-dropdown-menu";
 import { useReactFlow } from "@xyflow/react";
 import { useCallback } from "react";
 
-export type MetaNodeData = Node<{
+export type MilestoneNodeData = Node<{
   title: string;
   description?: string;
 }>;
 
-export function MetaNode({ id, data, selected }: NodeProps<MetaNodeData>) {
+export function MilestoneNode({ id, data, selected }: NodeProps<MilestoneNodeData>) {
   const { updateNodeData, setNodes } = useReactFlow();
 
   const handleTitleChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
