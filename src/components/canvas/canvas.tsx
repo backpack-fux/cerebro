@@ -22,13 +22,9 @@ export default function Canvas() {
     const [edges, setEdges, onEdgesChange] = useEdgesState([]);
     
     // Handle new connections
-    const onConnect = useCallback(
-        (connection: Connection) => {
-            // You can add validation logic here
-            setEdges((eds) => addEdge(connection, eds));
-        },
-        [setEdges]
-    );
+    const onConnect = useCallback((connection: Connection) => {
+        setEdges((eds) => addEdge(connection, eds));
+    }, [setEdges]);
 
     return (
       <div className={`h-full w-full`}>

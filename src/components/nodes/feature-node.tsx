@@ -1,6 +1,6 @@
 "use client";
 
-import { Handle, Position, type NodeProps, type Node } from "@xyflow/react";
+import { Handle, Position, type NodeProps, type Node, useNodeConnections, useReactFlow, type Edge } from "@xyflow/react";
 import { BaseNode } from '@/components/nodes/base-node';
 import { 
   NodeHeader,
@@ -9,8 +9,7 @@ import {
   NodeHeaderMenuAction,
 } from '@/components/nodes/node-header';
 import { DropdownMenuItem } from "@radix-ui/react-dropdown-menu";
-import { useReactFlow } from "@xyflow/react";
-import { useCallback, useState, useMemo } from "react";
+import { useCallback, useState, useMemo, useEffect } from "react";
 import { Textarea } from "@/components/ui/textarea";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
@@ -76,8 +75,57 @@ interface TeamMember {
 }
 
 export function FeatureNode({ id, data, selected }: NodeProps<FeatureNodeData>) {
-  const { updateNodeData, setNodes, getNodes } = useReactFlow();
+  const { updateNodeData, setNodes, getNodes, getEdges, setEdges } = useReactFlow();
   const [open, setOpen] = useState(false);
+  
+  // Get node connections
+  const connections = useNodeConnections({
+    id: id,
+  });
+
+  // Watch for connection changes and update team members
+  useEffect(() => {
+    const connectedTeamMembers = connections
+      .filter(connection => {
+        // Check both source and target since the connection could be in either direction
+        const connectedNode = getNodes().find(node => 
+          node.id === connection.source || node.id === connection.target
+        );
+        // Make sure we're looking at the other node, not the feature node itself
+        const isTeamMember = connectedNode?.type === 'teamMember' && connectedNode.id !== id;
+        return isTeamMember;
+      })
+      .map(connection => 
+        // Get the ID of the team member node (could be source or target)
+        connection.source === id ? connection.target : connection.source
+      );
+
+    // Get current team members
+    const currentMembers = data.teamMembers || [];
+    
+    // Find new members to add
+    const newMembers = connectedTeamMembers.filter(
+      memberId => !currentMembers.includes(memberId)
+    );
+
+    // If we have new members, update the node data
+    if (newMembers.length > 0) {
+      const updatedMembers = [...currentMembers, ...newMembers];
+      
+      // Initialize allocations for new members with 0%
+      const currentAllocations = data.memberAllocations || [];
+      const newAllocations = newMembers.map(memberId => ({
+        memberId,
+        timePercentage: 0
+      }));
+
+      updateNodeData(id, {
+        ...data,
+        teamMembers: updatedMembers,
+        memberAllocations: [...currentAllocations, ...newAllocations]
+      });
+    }
+  }, [connections, data, id, updateNodeData, getNodes]);
 
   // Get all team member nodes with proper typing
   const teamMembers = useMemo<TeamMember[]>(() => {
@@ -96,12 +144,36 @@ export function FeatureNode({ id, data, selected }: NodeProps<FeatureNodeData>) 
 
   const handleTeamMemberToggle = useCallback((memberId: string) => {
     const currentMembers = data.teamMembers || [];
-    const newMembers = currentMembers.includes(memberId)
-      ? currentMembers.filter(id => id !== memberId)
-      : [...currentMembers, memberId];
+    const isAdding = !currentMembers.includes(memberId);
+    const newMembers = isAdding
+      ? [...currentMembers, memberId]
+      : currentMembers.filter(id => id !== memberId);
     
+    // Update node data with new members
     updateNodeData(id, { ...data, teamMembers: newMembers });
-  }, [id, data, updateNodeData]);
+
+    // If we're adding a new member, create an edge if it doesn't exist
+    if (isAdding) {
+      const existingEdges = getEdges();
+      const hasConnection = existingEdges.some(
+        edge => 
+          (edge.source === memberId && edge.target === id) ||
+          (edge.source === id && edge.target === memberId)
+      );
+
+      if (!hasConnection) {
+        // Create new edge from team member to feature
+        const newEdge: Edge = {
+          id: `${memberId}-${id}`,
+          source: memberId,
+          target: id,
+          type: 'default',
+        };
+
+        setEdges(edges => [...edges, newEdge]);
+      }
+    }
+  }, [id, data, updateNodeData, getEdges, setEdges]);
 
   const handleTitleChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     updateNodeData(id, { ...data, title: e.target.value });
