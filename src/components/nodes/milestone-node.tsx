@@ -8,7 +8,6 @@ import {
   NodeHeaderActions,
   NodeHeaderMenuAction,
 } from '@/components/nodes/node-header';
-import { LabeledHandle } from '@/components/nodes/labeled-handle';
 import { DropdownMenuItem } from "@radix-ui/react-dropdown-menu";
 import { useReactFlow } from "@xyflow/react";
 import { useCallback } from "react";

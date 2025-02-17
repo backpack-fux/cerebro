@@ -7,17 +7,28 @@ import {
     BackgroundVariant,
     useEdgesState,
     useNodesState,
-  } from "@xyflow/react";
+    Connection,
+    addEdge,
+} from "@xyflow/react";
 import { nodeTypes } from "@/components/nodes";
 import { Console } from "@/components/console/console";
+import { useCallback } from "react";
 
 // Configure panning buttons (1 = middle mouse, 2 = right mouse)
 const panOnDragButtons = [1, 2];
 
 export default function Canvas() {
-    const [nodes, setNodes, onNodesChange] = useNodesState([]);
+    const [nodes, , onNodesChange] = useNodesState([]);
     const [edges, setEdges, onEdgesChange] = useEdgesState([]);
     
+    // Handle new connections
+    const onConnect = useCallback(
+        (connection: Connection) => {
+            // You can add validation logic here
+            setEdges((eds) => addEdge(connection, eds));
+        },
+        [setEdges]
+    );
 
     return (
       <div className={`h-full w-full`}>
@@ -27,6 +38,7 @@ export default function Canvas() {
           nodeTypes={nodeTypes}
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
+          onConnect={onConnect}
           fitView
           className="bg-background text-foreground"
           // Figma-style controls
@@ -38,6 +50,16 @@ export default function Canvas() {
           // Optional: Disable default behaviors
           zoomOnScroll={false}
           zoomOnDoubleClick={false}
+          // Optional: Configure default edge options
+          defaultEdgeOptions={{
+            type: 'default', // or 'bezier', 'step', etc.
+            animated: true,
+            style: { stroke: 'currentColor', strokeWidth: 2 },
+          }}
+          // Optional: Configure connection line style
+          connectionLineStyle={{ stroke: 'currentColor', strokeWidth: 2 }}
+          // Optional: Configure connection validation
+          connectOnClick={true}
         >
           <Console />
           <Background
