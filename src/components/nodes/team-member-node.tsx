@@ -132,14 +132,14 @@ export function TeamMemberNode({ id, data, selected }: NodeProps<TeamMemberNodeD
       </div>
 
       <Handle
-        type="target"
+        type="source"
         position={Position.Top}
-        id="target"
+        id="source"
       />
       <Handle
-        type="source"
+        type="target"
         position={Position.Bottom}
-        id="source"
+        id="target"
       />
     </BaseNode>
   );

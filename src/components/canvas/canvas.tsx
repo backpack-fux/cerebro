@@ -44,8 +44,9 @@ export default function Canvas() {
           selectionMode={SelectionMode.Partial}
           zoomActivationKeyCode="Meta"
           // Optional: Disable default behaviors
-          zoomOnScroll={false}
+          zoomOnScroll={true}
           zoomOnDoubleClick={false}
+          zoomOnPinch={true}
           // Optional: Configure default edge options
           defaultEdgeOptions={{
             type: 'default', // or 'bezier', 'step', etc.
@@ -56,6 +57,8 @@ export default function Canvas() {
           connectionLineStyle={{ stroke: 'currentColor', strokeWidth: 2 }}
           // Optional: Configure connection validation
           connectOnClick={true}
+          minZoom={0.1}
+          maxZoom={4}
         >
           <Console />
           <Background
