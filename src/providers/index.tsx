@@ -1,5 +1,6 @@
 "use client";
 
+import { ValidationProvider } from "@/contexts/validation-context";
 import { ReactFlowProvider } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { ThemeProvider as NextThemesProvider } from "next-themes";
@@ -10,14 +11,16 @@ interface ProvidersProps {
 
 export function Providers({ children }: ProvidersProps) {
   return (
-    <NextThemesProvider
-      attribute="class"
-      defaultTheme="system"
-      enableSystem
-      disableTransitionOnChange
+    <ValidationProvider>
+      <NextThemesProvider
+        attribute="class"
+        defaultTheme="system"
+        enableSystem
+        disableTransitionOnChange
     >
-      <ReactFlowProvider>{children}</ReactFlowProvider>
-    </NextThemesProvider>
+        <ReactFlowProvider>{children}</ReactFlowProvider>
+      </NextThemesProvider>
+    </ValidationProvider>
   );
 }
   
