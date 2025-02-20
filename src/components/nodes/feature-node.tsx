@@ -9,42 +9,33 @@ import {
   NodeHeaderMenuAction,
 } from '@/components/nodes/node-header';
 import { DropdownMenuItem } from "@radix-ui/react-dropdown-menu";
-import { useCallback, useState } from "react";
+import { useCallback, useState, useMemo } from "react";
 import { Textarea } from "@/components/ui/textarea";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
-import { cn } from "@/lib/utils";
-import { Check, ChevronsUpDown } from "lucide-react";
-import {
-  Command,
-  CommandInput,
-  CommandEmpty,
-  CommandGroup,
-  CommandList,
-  CommandItem,
-} from "@/components/ui/command";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
 import { Button } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { Slider } from "@/components/ui/slider";
 import { useTeamAllocation } from "@/hooks/useTeamAllocation";
 import { useDurationInput } from "@/hooks/useDurationInput";
 import { useNodeStatus } from "@/hooks/useNodeStatus";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Checkbox } from "@/components/ui/checkbox";
 
 export type BuildType = 'internal' | 'external';
 export type TimeUnit = 'days' | 'weeks';
 
 // Add this type to define member allocation
-type MemberAllocation = {
+interface MemberAllocation {
   memberId: string;
   timePercentage: number;
-};
+}
 
 // Update FeatureNodeData to include allocations
 export type FeatureNodeData = Node<{
@@ -56,16 +47,27 @@ export type FeatureNodeData = Node<{
   timeUnit?: TimeUnit;
   teamMembers?: string[]; // Array of team member node IDs
   memberAllocations?: MemberAllocation[]; // Add this field
+  teamAllocations?: {
+    teamId: string;
+    requestedHours: number;
+    allocatedMembers: { memberId: string; hours: number }[];
+  }[];
+  availableBandwidth: { memberId: string; dailyRate: number }[];
 }>;
+
+// Add this type for managing selected members in the dialog
+interface MemberSelection {
+  memberId: string;
+  hours: number;
+}
 
 export function FeatureNode({ id, data, selected }: NodeProps<FeatureNodeData>) {
   const { updateNodeData, setNodes } = useReactFlow();
-  const [open, setOpen] = useState(false);
+  const [selectedTeamId, setSelectedTeamId] = useState<string | null>(null);
   
   const {
-    teamMembers,
-    selectedMembers,
-    handleAllocationChange,
+    connectedTeams,
+    requestTeamAllocation,
     costs,
     CostSummary
   } = useTeamAllocation(id, data);
@@ -97,6 +99,49 @@ export function FeatureNode({ id, data, selected }: NodeProps<FeatureNodeData>) 
   const handleDelete = useCallback(() => {
     setNodes((nodes) => nodes.filter((node) => node.id !== id));
   }, [id, setNodes]);
+
+  // Calculate total allocated hours and costs
+  const teamAllocations = useMemo(() => {
+    return connectedTeams.map(team => {
+      const allocation = data.teamAllocations?.find(a => a.teamId === team.teamId);
+      return {
+        ...team,
+        requestedHours: allocation?.requestedHours || 0,
+        allocatedMembers: allocation?.allocatedMembers || []
+      };
+    });
+  }, [connectedTeams, data.teamAllocations]);
+
+  // Add state for managing member selection
+  const [selectedMembers, setSelectedMembers] = useState<MemberSelection[]>([]);
+  const [totalHours, setTotalHours] = useState<number>(0);
+
+  // Add handler for the allocation dialog
+  const handleAllocationSubmit = useCallback(() => {
+    if (!selectedTeamId) return;
+    
+    requestTeamAllocation(
+      selectedTeamId,
+      totalHours,
+      selectedMembers.map(m => m.memberId)
+    );
+    setSelectedTeamId(null);
+    setSelectedMembers([]);
+    setTotalHours(0);
+  }, [selectedTeamId, totalHours, selectedMembers, requestTeamAllocation]);
+
+  // Handle allocation changes
+  const handleAllocationChange = useCallback((memberId: string, percentage: number) => {
+    const teamId = connectedTeams.find(team => 
+      team.availableBandwidth.some(m => m.memberId === memberId)
+    )?.teamId;
+
+    if (!teamId) return;
+
+    // Update the allocation
+    const hoursRequested = (percentage / 100) * 8 * (data.duration || 1); // Convert % to hours
+    requestTeamAllocation(teamId, hoursRequested, [memberId]);
+  }, [connectedTeams, data.duration, requestTeamAllocation]);
 
   return (
     <BaseNode selected={selected}>
@@ -175,104 +220,127 @@ export function FeatureNode({ id, data, selected }: NodeProps<FeatureNodeData>) 
         </div>
 
         <div className="space-y-2">
-          <Label>Build Roster</Label>
-          <Popover open={open} onOpenChange={setOpen}>
-            <PopoverTrigger asChild>
-              <Button
-                variant="outline"
-                role="combobox"
-                aria-expanded={open}
-                className="w-full justify-between bg-transparent"
-              >
-                {selectedMembers.length > 0
-                  ? `${selectedMembers.length} team member${selectedMembers.length === 1 ? '' : 's'}`
-                  : "Select team members..."}
-                <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-              </Button>
-            </PopoverTrigger>
-            <PopoverContent className="w-full p-0" align="start">
-              <Command>
-                <CommandInput placeholder="Search team members..." />
-                <CommandList>
-                  <CommandEmpty>No team members found.</CommandEmpty>
-                  <CommandGroup>
-                    <ScrollArea className="h-[200px]">
-                      {teamMembers.map((member) => (
-                        <CommandItem
-                          key={member.id}
-                          value={member.id}
-                          onSelect={() => handleAllocationChange(member.id, 0)}
-                        >
-                          <div className="flex items-center justify-between w-full">
-                            <div className="flex items-center">
-                              <Check
-                                className={cn(
-                                  "mr-2 h-4 w-4",
-                                  data.teamMembers?.includes(member.id)
-                                    ? "opacity-100"
-                                    : "opacity-0"
-                                )}
-                              />
-                              <span>{member.name}</span>
-                            </div>
-                            {member.dailyRate && (
-                              <span className="text-muted-foreground">
-                                ${member.dailyRate}/day
-                              </span>
-                            )}
-                          </div>
-                        </CommandItem>
-                      ))}
-                    </ScrollArea>
-                  </CommandGroup>
-                </CommandList>
-              </Command>
-            </PopoverContent>
-          </Popover>
-          {selectedMembers.length > 0 && (
+          <Label>Team Allocations</Label>
+          
+          {connectedTeams.length === 0 ? (
+            <div className="text-sm text-muted-foreground">
+              Connect to teams to allocate resources
+            </div>
+          ) : (
             <div className="space-y-4">
-              {selectedMembers.map((member) => {
-                const allocation = data.memberAllocations?.find(
-                  a => a.memberId === member.id
-                )?.timePercentage || 0;
-
-                // Calculate allocated days based on feature duration
-                const allocatedDays = data.duration 
-                  ? Math.round((allocation / 100) * data.duration * 10) / 10
-                  : 0;
-
-                return (
-                  <div key={member.id} className="space-y-2">
-                    <div className="flex items-center justify-between">
-                      <Badge variant="secondary" className="text-xs">
-                        {member.name}
-                        {member.dailyRate && ` • $${member.dailyRate}/day`}
-                      </Badge>
-                      <span className="text-xs text-muted-foreground">
-                        {allocation}% allocation
-                        {allocatedDays > 0 && ` (${allocatedDays} days)`}
-                      </span>
-                    </div>
-                    <Slider
-                      value={[allocation]}
-                      onValueChange={([value]) => handleAllocationChange(member.id, value)}
-                      min={0}
-                      max={100}
-                      step={10}
-                      className="w-full"
-                    />
+              {connectedTeams.map(team => (
+                <div key={team.teamId} className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="font-medium">{team.title}</span>
                   </div>
-                );
-              })}
 
-              <CostSummary 
-                costs={costs}
-                selectedMembers={selectedMembers}
-                duration={data.duration}
-              />
+                  {/* Member Allocation Controls */}
+                  <div className="space-y-4">
+                    {team.availableBandwidth.map(member => {
+                      const allocation = data.teamAllocations
+                        ?.find(a => a.teamId === team.teamId)
+                        ?.allocatedMembers
+                        .find(m => m.memberId === member.memberId);
+                      
+                      const percentage = allocation 
+                        ? (allocation.hours / 8 / (data.duration || 1)) * 100 
+                        : 0;
+
+                      return (
+                        <div key={member.memberId} className="space-y-2">
+                          <div className="flex items-center justify-between text-sm">
+                            <span>{member.name}</span>
+                            <span className="text-muted-foreground">
+                              {percentage.toFixed(0)}% ({member.availableHours}h available)
+                            </span>
+                          </div>
+                          <Slider
+                            value={[percentage]}
+                            onValueChange={([value]) => handleAllocationChange(member.memberId, value)}
+                            max={100}
+                            step={1}
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
             </div>
           )}
         </div>
+
+        {/* Member Allocation Dialog */}
+        {selectedTeamId && (
+          <Dialog open={true} onOpenChange={() => setSelectedTeamId(null)}>
+            <DialogContent className="sm:max-w-[425px]">
+              <DialogHeader>
+                <DialogTitle>Allocate Team Members</DialogTitle>
+              </DialogHeader>
+              
+              <div className="space-y-4 py-4">
+                {/* Total Hours Input */}
+                <div className="space-y-2">
+                  <Label>Total Hours Needed</Label>
+                  <Input
+                    type="number"
+                    value={totalHours}
+                    onChange={(e) => setTotalHours(Number(e.target.value))}
+                    min={0}
+                    step={1}
+                  />
+                </div>
+
+                {/* Member Selection */}
+                <div className="space-y-2">
+                  <Label>Available Team Members</Label>
+                  <div className="space-y-2">
+                    {teamAllocations
+                      .find(t => t.teamId === selectedTeamId)
+                      ?.availableBandwidth.map(member => (
+                        <div key={member.memberId} className="flex items-center justify-between space-x-2">
+                          <div className="flex items-center space-x-2">
+                            <Checkbox
+                              checked={selectedMembers.some(m => m.memberId === member.memberId)}
+                              onCheckedChange={(checked) => {
+                                if (checked) {
+                                  setSelectedMembers([...selectedMembers, { 
+                                    memberId: member.memberId,
+                                    hours: 0
+                                  }]);
+                                } else {
+                                  setSelectedMembers(selectedMembers.filter(
+                                    m => m.memberId !== member.memberId
+                                  ));
+                                }
+                              }}
+                            />
+                            <span>{member.name}</span>
+                          </div>
+                          <span className="text-sm text-muted-foreground">
+                            {member.availableHours}h available
+                          </span>
+                        </div>
+                      ))}
+                  </div>
+                </div>
+
+                {/* Submit Button */}
+                <Button 
+                  onClick={handleAllocationSubmit}
+                  disabled={totalHours <= 0 || selectedMembers.length === 0}
+                >
+                  Allocate Members
+                </Button>
+              </div>
+            </DialogContent>
+          </Dialog>
+        )}
+
+        {/* Cost Summary */}
+        {costs && costs.allocations.length > 0 && (
+          <CostSummary costs={costs} duration={data.duration} />
+        )}
       </div>
 
       <Handle

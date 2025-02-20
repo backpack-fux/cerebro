@@ -18,7 +18,7 @@ import { Plus, Trash } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { useTeamAllocation, type MemberAllocation } from "@/hooks/useTeamAllocation";
+import { useTeamAllocation } from "@/hooks/useTeamAllocation";
 import { useDurationInput } from "@/hooks/useDurationInput";
 import { Slider } from "@/components/ui/slider";
 import { useNodeStatus } from "@/hooks/useNodeStatus";
@@ -79,19 +79,33 @@ export type DDItem = {
 export type ProviderNodeData = Node<{
   title: string;
   description?: string;
+  duration?: number;
   costs?: ProviderCost[];
-  expectedVolume?: {
-    [key: string]: number;
-  };
-  duration?: number; // Time to close
-  teamMembers?: string[];
-  memberAllocations?: MemberAllocation[];
   ddItems?: DDItem[];
+  teamAllocations?: Array<{
+    teamId: string;
+    requestedHours: number;
+    allocatedMembers: Array<{
+      memberId: string;
+      hours: number;
+    }>;
+  }>;
 }>;
 
 export function ProviderNode({ id, data, selected }: NodeProps<ProviderNodeData>) {
   const { updateNodeData, setNodes } = useReactFlow();
-  
+  const {
+    connectedTeams,
+    requestTeamAllocation,
+    costs,
+    CostSummary
+  } = useTeamAllocation(id, data);
+
+  const { status, getStatusColor, cycleStatus } = useNodeStatus(id, data, updateNodeData, {
+    canBeActive: true,
+    defaultStatus: 'planning'
+  });
+
   const handleTitleChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     updateNodeData(id, { ...data, title: e.target.value });
   }, [id, data, updateNodeData]);
@@ -100,8 +114,31 @@ export function ProviderNode({ id, data, selected }: NodeProps<ProviderNodeData>
     updateNodeData(id, { ...data, description: e.target.value });
   }, [id, data, updateNodeData]);
 
+  const handleDelete = useCallback(() => {
+    setNodes((nodes) => nodes.filter((node) => node.id !== id));
+  }, [id, setNodes]);
+
+  const duration = useDurationInput(id, data, updateNodeData, {
+    maxDays: 90,
+    label: "Integration Duration",
+    fieldName: "duration",
+    tip: 'Estimated time to integrate with this provider'
+  });
+
+  // Handle allocation changes
+  const handleAllocationChange = useCallback((memberId: string, percentage: number) => {
+    const teamId = connectedTeams.find(team => 
+      team.availableBandwidth.some(m => m.memberId === memberId)
+    )?.teamId;
+
+    if (!teamId) return;
+
+    // Update the allocation
+    const hoursRequested = (percentage / 100) * 8 * (data.duration || 1); // Convert % to hours
+    requestTeamAllocation(teamId, hoursRequested, [memberId]);
+  }, [connectedTeams, data.duration, requestTeamAllocation]);
+
   const addCost = useCallback(() => {
-    console.log('Adding new cost');
     const newCost: ProviderCost = {
       id: `cost-${Date.now()}`,
       name: '',
@@ -112,11 +149,9 @@ export function ProviderNode({ id, data, selected }: NodeProps<ProviderNodeData>
         frequency: 'monthly'
       }
     };
-    const updatedCosts = [...(data.costs || []), newCost];
-    console.log('Updated costs array:', updatedCosts);
     updateNodeData(id, { 
       ...data, 
-      costs: updatedCosts
+      costs: [...(data.costs || []), newCost] 
     });
   }, [id, data, updateNodeData]);
 
@@ -136,24 +171,6 @@ export function ProviderNode({ id, data, selected }: NodeProps<ProviderNodeData>
     });
   }, [id, data, updateNodeData]);
 
-  const handleDelete = useCallback(() => {
-    setNodes((nodes) => nodes.filter((node) => node.id !== id));
-  }, [id, setNodes]);
-
-  const {
-    selectedMembers,
-    handleAllocationChange,
-    costs: teamCosts,
-    CostSummary
-  } = useTeamAllocation(id, data);
-
-  const duration = useDurationInput(id, data, updateNodeData, {
-    maxDays: 365 * 2, // 2 years max for provider integration
-    label: "Time to Close",
-    fieldName: "duration",
-    tip: 'Estimated time to complete DD and go live. Use "w" for weeks or "m" for months'
-  });
-
   const addDDItem = useCallback(() => {
     const newItem: DDItem = {
       id: `dd-${Date.now()}`,
@@ -166,11 +183,6 @@ export function ProviderNode({ id, data, selected }: NodeProps<ProviderNodeData>
     });
   }, [id, data, updateNodeData]);
 
-  const { status, getStatusColor, cycleStatus } = useNodeStatus(id, data, updateNodeData, {
-    canBeActive: true,
-    defaultStatus: 'planning'
-  });
-
   return (
     <BaseNode selected={selected}>
       <NodeHeader>
@@ -180,7 +192,6 @@ export function ProviderNode({ id, data, selected }: NodeProps<ProviderNodeData>
               variant="secondary" 
               className={`cursor-pointer ${getStatusColor(status)}`}
               onClick={cycleStatus}
-              title="Click to advance status, Shift+Click to reverse"
             >
               {status}
             </Badge>
@@ -202,40 +213,7 @@ export function ProviderNode({ id, data, selected }: NodeProps<ProviderNodeData>
       </NodeHeader>
 
       <div className="px-3 pb-3 space-y-4">
-        <Textarea
-          value={data.description || ''}
-          onChange={handleDescriptionChange}
-          placeholder="Describe this provider's services..."
-          className="min-h-[80px] resize-y bg-transparent"
-        />
-
-        {/* Cost Structures Section */}
-        <div className="space-y-2">
-          <div className="flex items-center justify-between">
-            <Label>Cost Structures</Label>
-            <Button 
-              variant="ghost" 
-              size="sm" 
-              onClick={addCost}
-              className="h-6 px-2"
-            >
-              <Plus className="h-4 w-4" />
-            </Button>
-          </div>
-
-          <div className="space-y-4">
-            {(data.costs || []).map(cost => (
-              <CostStructure
-                key={cost.id}
-                cost={cost}
-                onUpdate={(updates) => updateCost(cost.id, updates)}
-                onRemove={() => removeCost(cost.id)}
-              />
-            ))}
-          </div>
-        </div>
-
-        {/* Time to Close Section */}
+        {/* Duration Input */}
         <div className="space-y-2">
           <Label>{duration.config.label}</Label>
           <div className="space-y-1">
@@ -257,52 +235,77 @@ export function ProviderNode({ id, data, selected }: NodeProps<ProviderNodeData>
           </div>
         </div>
 
-        {/* Team Allocation Section */}
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <Label>Team Allocation</Label>
-            <span className="text-xs text-muted-foreground">
-              {selectedMembers.length} team member{selectedMembers.length !== 1 ? 's' : ''}
-            </span>
-          </div>
-
-          {selectedMembers.length > 0 && (
+        {/* Team Allocations Section */}
+        <div className="space-y-2">
+          <Label>Team Allocations</Label>
+          
+          {connectedTeams.length === 0 ? (
+            <div className="text-sm text-muted-foreground">
+              Connect to teams to allocate resources
+            </div>
+          ) : (
             <div className="space-y-4">
-              {selectedMembers.map((member) => {
-                const allocation = data.memberAllocations?.find(
-                  a => a.memberId === member.id
-                )?.timePercentage || 0;
-
-                return (
-                  <div key={member.id} className="space-y-2">
-                    <div className="flex items-center justify-between">
-                      <Badge variant="secondary" className="text-xs">
-                        {member.name}
-                        {member.dailyRate && ` • $${member.dailyRate}/day`}
-                      </Badge>
-                      <span className="text-xs text-muted-foreground">
-                        {allocation}% allocation
-                      </span>
-                    </div>
-                    <Slider
-                      value={[allocation]}
-                      onValueChange={([value]) => handleAllocationChange(member.id, value)}
-                      min={0}
-                      max={100}
-                      step={10}
-                      className="w-full"
-                    />
+              {connectedTeams.map(team => (
+                <div key={team.teamId} className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="font-medium">{team.title}</span>
                   </div>
-                );
-              })}
 
-              <CostSummary 
-                costs={teamCosts}
-                selectedMembers={selectedMembers}
-                duration={data.duration}
-              />
+                  {/* Member Allocation Controls */}
+                  <div className="space-y-4">
+                    {team.availableBandwidth.map(member => {
+                      const allocation = data.teamAllocations
+                        ?.find(a => a.teamId === team.teamId)
+                        ?.allocatedMembers
+                        .find(m => m.memberId === member.memberId);
+                      
+                      const percentage = allocation 
+                        ? (allocation.hours / 8 / (data.duration || 1)) * 100 
+                        : 0;
+
+                      return (
+                        <div key={member.memberId} className="space-y-2">
+                          <div className="flex items-center justify-between text-sm">
+                            <span>{member.name}</span>
+                            <span className="text-muted-foreground">
+                              {percentage.toFixed(0)}% ({member.availableHours}h available)
+                            </span>
+                          </div>
+                          <Slider
+                            value={[percentage]}
+                            onValueChange={([value]) => handleAllocationChange(member.memberId, value)}
+                            max={100}
+                            step={1}
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
             </div>
           )}
+        </div>
+
+        {/* Cost Structures Section */}
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <Label>Cost Structures</Label>
+            <Button variant="ghost" size="sm" onClick={addCost} className="h-6 px-2">
+              <Plus className="h-4 w-4" />
+            </Button>
+          </div>
+
+          <div className="space-y-4">
+            {(data.costs || []).map(cost => (
+              <CostStructure
+                key={cost.id}
+                cost={cost}
+                onUpdate={(updates) => updateCost(cost.id, updates)}
+                onRemove={() => removeCost(cost.id)}
+              />
+            ))}
+          </div>
         </div>
 
         {/* Due Diligence Section */}
@@ -311,9 +314,7 @@ export function ProviderNode({ id, data, selected }: NodeProps<ProviderNodeData>
           onUpdate={(item) => {
             updateNodeData(id, {
               ...data,
-              ddItems: data.ddItems?.map(i => 
-                i.id === item.id ? item : i
-              )
+              ddItems: data.ddItems?.map(i => i.id === item.id ? item : i)
             });
           }}
           onAdd={addDDItem}
@@ -324,18 +325,22 @@ export function ProviderNode({ id, data, selected }: NodeProps<ProviderNodeData>
             });
           }}
         />
+
+        {/* Cost Summary */}
+        {costs && costs.allocations.length > 0 && (
+          <CostSummary costs={costs} duration={data.duration} />
+        )}
+
+        <Textarea
+          value={data.description || ''}
+          onChange={handleDescriptionChange}
+          placeholder="Describe this provider..."
+          className="min-h-[80px] resize-y bg-transparent"
+        />
       </div>
 
-      <Handle
-        type="source"
-        position={Position.Top}
-        id="source"
-      />
-      <Handle
-        type="target"
-        position={Position.Bottom}
-        id="target"
-      />
+      <Handle type="target" position={Position.Bottom} id="target" />
+      <Handle type="source" position={Position.Top} id="source" />
     </BaseNode>
   );
 }

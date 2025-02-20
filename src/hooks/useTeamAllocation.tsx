@@ -1,215 +1,357 @@
 import { useCallback, useEffect, useMemo } from 'react';
-import { useNodeConnections, useReactFlow } from '@xyflow/react';
+import { useNodeConnections, useReactFlow, Node } from '@xyflow/react';
 
-export type MemberAllocation = {
+// Core data types
+interface TeamNodeData extends Record<string, unknown> {
+  title: string;
+  roster: Array<RosterMember>;
+}
+
+interface MemberNodeData extends Record<string, unknown> {
+  title: string;
+  weeklyCapacity: number;
+  dailyRate?: number;
+  hoursPerDay: number;
+  daysPerWeek: number;
+}
+
+interface RosterMember {
   memberId: string;
-  timePercentage: number;
-};
+  allocation: number;  // % of member's time allocated to team
+  allocations: Array<WorkAllocation>;
+}
 
-export type TeamAllocationData = {
-  teamMembers?: string[];
-  memberAllocations?: MemberAllocation[];
+interface WorkAllocation {
+  nodeId: string;
+  percentage: number;
+}
+
+export interface FeatureNodeData extends Record<string, unknown> {
+  title: string;
+  description?: string;
+  teamAllocations?: Array<TeamAllocation>;
   duration?: number;
-};
+}
 
-// Update the return type to include cost summary component
-type CostSummaryProps = {
-  costs: {
-    dailyCost: number;
-    totalCost: number;
-    allocations: {
-      member: {
-        id: string;
-        name: string;
-        dailyRate?: number;
-      };
-      allocation: number;
-      allocatedDays: number;
-      cost: number;
-    }[];
-  };
-  selectedMembers: {
-    id: string;
-    name: string;
-    dailyRate?: number;
-  }[];
+interface TeamAllocation {
+  teamId: string;
+  requestedHours: number;
+  allocatedMembers: Array<{
+    memberId: string;
+    hours: number;
+  }>;
+}
+
+// Return types
+interface AvailableMember {
+  memberId: string;
+  name: string;
+  availableHours: number;
+  dailyRate: number;
+}
+
+interface ConnectedTeam {
+  teamId: string;
+  title: string;
+  availableBandwidth: AvailableMember[];
+}
+
+interface CostSummary {
+  dailyCost: number;
+  totalCost: number;
+  allocations: Array<{
+    member: {
+      memberId: string;
+      name: string;
+      dailyRate: number;
+    };
+    allocation: number;
+    allocatedDays: number;
+    cost: number;
+  }>;
+}
+
+// Add these interfaces
+interface CostSummaryProps {
+  costs: CostSummary;
   duration?: number;
+}
+
+// Add the CostSummary component
+const CostSummaryComponent = ({ costs, duration }: CostSummaryProps) => {
+  return (
+    <div className="space-y-4">
+      {/* Member Allocations */}
+      <div className="space-y-2">
+        {costs.allocations.map(allocation => (
+          <div key={allocation.member.memberId} className="flex justify-between items-center text-sm">
+            <div className="space-y-1">
+              <span className="font-medium">{allocation.member.name}</span>
+              <div className="text-muted-foreground">
+                {allocation.allocatedDays} days ({allocation.allocation.toFixed(1)}%)
+              </div>
+            </div>
+            {allocation.cost > 0 && (
+              <span className="font-mono text-muted-foreground">
+                ${allocation.cost.toLocaleString('en-US', { 
+                  minimumFractionDigits: 2, 
+                  maximumFractionDigits: 2 
+                })}
+              </span>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {/* Totals */}
+      <div className="border-t pt-2">
+        <div className="flex justify-between items-center text-sm">
+          <span className="font-medium">Total Resource Cost</span>
+          <span className="font-mono">
+            ${costs.totalCost.toLocaleString('en-US', { 
+              minimumFractionDigits: 2, 
+              maximumFractionDigits: 2 
+            })}
+          </span>
+        </div>
+
+        <div className="flex justify-between items-center text-sm text-muted-foreground mt-1">
+          <span>Daily Rate</span>
+          <span className="font-mono">
+            ${costs.dailyCost.toLocaleString('en-US', { 
+              minimumFractionDigits: 2, 
+              maximumFractionDigits: 2 
+            })}
+          </span>
+        </div>
+
+        {duration && (
+          <div className="flex justify-between items-center text-sm text-muted-foreground">
+            <span>Total Duration</span>
+            <span className="font-mono">{duration} days</span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
 };
 
-export function useTeamAllocation(nodeId: string, data: TeamAllocationData & Record<string, any>) {
+// Type guards
+function isTeamNode(node: Node | null | undefined): node is Node<TeamNodeData> {
+  if (!node || node.type !== 'team' || !node.data) return false;
+  const data = node.data as Partial<TeamNodeData>;
+  return (
+    typeof data.title === 'string' &&
+    Array.isArray(data.roster)
+  );
+}
+
+function isMemberNode(node: Node | null | undefined): node is Node<MemberNodeData> {
+  if (!node || node.type !== 'teamMember' || !node.data) return false;
+  const data = node.data as Partial<MemberNodeData>;
+  return (
+    typeof data.title === 'string' &&
+    typeof data.weeklyCapacity === 'number'
+  );
+}
+
+export function useTeamAllocation(nodeId: string, data: FeatureNodeData) {
   const { updateNodeData, getNodes } = useReactFlow();
   const connections = useNodeConnections({ id: nodeId });
 
-  // Get all team member nodes with proper typing
-  const teamMembers = useMemo(() => {
-    return getNodes()
-      .filter(node => node.type === 'teamMember')
-      .map(node => ({
-        id: node.id,
-        name: node.data.title as string,
-        dailyRate: node.data.dailyRate as number | undefined,
-      }));
-  }, [getNodes]);
+  // Debug connection issues
+  console.log('Node Connections:', {
+    nodeId,
+    connections: connections.map(c => ({
+      source: c.source,
+      target: c.target,
+      sourceNode: getNodes().find(n => n.id === c.source)?.type
+    }))
+  });
 
-  // Get selected team members
-  const selectedMembers = useMemo(() => {
-    return teamMembers.filter(member => data.teamMembers?.includes(member.id));
-  }, [teamMembers, data.teamMembers]);
-
-  // Handle allocation changes
-  const handleAllocationChange = useCallback((memberId: string, timePercentage: number) => {
-    const currentAllocations = data.memberAllocations || [];
-    const newAllocations = currentAllocations.some(a => a.memberId === memberId)
-      ? currentAllocations.map(a => 
-          a.memberId === memberId 
-            ? { ...a, timePercentage } 
-            : a
-        )
-      : [...currentAllocations, { memberId, timePercentage }];
-
-    updateNodeData(nodeId, {
-      ...data,
-      memberAllocations: newAllocations
-    });
-  }, [nodeId, data, updateNodeData]);
-
-  // Watch for connection changes
+  // Add effect to handle new team connections
   useEffect(() => {
-    const connectedTeamMembers = connections
-      .filter(connection => {
-        const connectedNode = getNodes().find(node => 
-          node.id === connection.source || node.id === connection.target
-        );
-        const isTeamMember = connectedNode?.type === 'teamMember' && connectedNode.id !== nodeId;
-        return isTeamMember;
+    const connectedTeamIds = connections
+      .map(conn => {
+        const node = getNodes().find(n => n.id === conn.source);
+        return isTeamNode(node) ? node.id : null;
       })
-      .map(connection => 
-        connection.source === nodeId ? connection.target : connection.source
-      );
+      .filter((id): id is string => id !== null);
 
-    const currentMembers = data.teamMembers || [];
-    const newMembers = connectedTeamMembers.filter(
-      memberId => !currentMembers.includes(memberId)
-    );
+    // Initialize allocations for new team connections
+    const currentTeams = new Set(data.teamAllocations?.map(a => a.teamId));
+    const newTeams = connectedTeamIds.filter(teamId => !currentTeams.has(teamId));
 
-    if (newMembers.length > 0) {
-      const updatedMembers = [...currentMembers, ...newMembers];
-      const currentAllocations = data.memberAllocations || [];
-      const newAllocations = newMembers.map(memberId => ({
-        memberId,
-        timePercentage: 0
-      }));
-
+    if (newTeams.length > 0) {
       updateNodeData(nodeId, {
         ...data,
-        teamMembers: updatedMembers,
-        memberAllocations: [...currentAllocations, ...newAllocations]
+        teamAllocations: [
+          ...(data.teamAllocations || []),
+          ...newTeams.map(teamId => ({
+            teamId,
+            requestedHours: 0,
+            allocatedMembers: []
+          }))
+        ]
       });
     }
   }, [connections, data, nodeId, updateNodeData, getNodes]);
 
-  // Calculate total costs
-  const costs = useMemo(() => {
-    const dailyCost = selectedMembers.reduce((sum, member) => {
-      const allocation = data.memberAllocations?.find(
-        a => a.memberId === member.id
-      )?.timePercentage || 0;
-      return sum + (member.dailyRate || 0) * (allocation / 100);
-    }, 0);
+  const connectedTeams = useMemo(() => {
+    return connections
+      .filter(conn => {
+        const sourceNode = getNodes().find(n => n.id === conn.source);
+        return sourceNode?.type === 'team';
+      })
+      .map(conn => {
+        const teamNode = getNodes().find(n => n.id === conn.source);
+        if (!isTeamNode(teamNode)) return null;
 
-    return {
-      dailyCost,
-      totalCost: dailyCost * (data.duration || 0),
-      allocations: selectedMembers.map(member => {
-        const allocation = data.memberAllocations?.find(
-          a => a.memberId === member.id
-        )?.timePercentage || 0;
-        const allocatedDays = data.duration 
-          ? Math.round((allocation / 100) * data.duration * 10) / 10
-          : 0;
+        const availableBandwidth = teamNode.data.roster
+          .map(member => {
+            const memberNode = getNodes().find(n => n.id === member.memberId);
+            if (!isMemberNode(memberNode)) return null;
+
+            const weeklyCapacity = memberNode.data.weeklyCapacity;
+            const teamAllocation = member.allocation;
+            const totalTeamHours = (weeklyCapacity * teamAllocation) / 100;
+
+            return {
+              memberId: member.memberId,
+              name: memberNode.data.title,
+              availableHours: totalTeamHours,
+              dailyRate: memberNode.data.dailyRate ?? 350
+            };
+          })
+          .filter((bandwidth): bandwidth is AvailableMember => bandwidth !== null);
+
         return {
-          member,
-          allocation,
-          allocatedDays,
-          cost: (member.dailyRate || 0) * allocatedDays
+          teamId: teamNode.id,
+          title: teamNode.data.title,
+          availableBandwidth
         };
       })
+      .filter((team): team is ConnectedTeam => team !== null);
+  }, [connections, getNodes, nodeId]);
+
+  const requestTeamAllocation = useCallback((
+    teamId: string, 
+    requestedHours: number,
+    memberIds: string[]
+  ) => {
+    const teamNode = getNodes().find(n => n.id === teamId);
+    if (!isTeamNode(teamNode)) return;
+
+    // Update team node allocations
+    const updatedRoster = teamNode.data.roster.map(member => {
+      if (!memberIds.includes(member.memberId)) return member;
+
+      const memberNode = getNodes().find(n => n.id === member.memberId);
+      if (!isMemberNode(memberNode)) return member;
+
+      // Find existing allocation for this work node
+      const existingAllocationIndex = member.allocations.findIndex(a => a.nodeId === nodeId);
+      
+      // Calculate hours per day for this member
+      const hoursPerDay = memberNode.data.hoursPerDay ?? 12;
+      const daysPerWeek = memberNode.data.daysPerWeek ?? 6;
+      const weeklyHours = hoursPerDay * daysPerWeek;
+      
+      // Calculate percentage of weekly capacity
+      const weeklyPercentage = (requestedHours / weeklyHours) * 100;
+      const newPercentage = Math.min(100, weeklyPercentage);
+
+      let updatedAllocations;
+      if (existingAllocationIndex >= 0) {
+        // Update existing allocation
+        updatedAllocations = [...member.allocations];
+        updatedAllocations[existingAllocationIndex] = {
+          nodeId,
+          percentage: newPercentage
+        };
+      } else {
+        // Add new allocation
+        updatedAllocations = [
+          ...member.allocations,
+          {
+            nodeId,
+            percentage: newPercentage
+          }
+        ];
+      }
+
+      // Calculate total utilization from all work nodes
+      const totalUtilization = updatedAllocations.reduce((sum, allocation) => 
+        sum + allocation.percentage, 0);
+
+      return {
+        ...member,
+        allocation: Math.min(100, totalUtilization), // Update member's team allocation
+        allocations: updatedAllocations
+      };
+    });
+
+    updateNodeData(teamId, {
+      ...teamNode.data,
+      roster: updatedRoster
+    });
+
+    // Update feature/option node allocations
+    const updatedTeamAllocations = [
+      ...(data.teamAllocations?.filter(a => a.teamId !== teamId) || []),
+      {
+        teamId,
+        requestedHours,
+        allocatedMembers: memberIds.map(id => ({
+          memberId: id,
+          hours: requestedHours / memberIds.length
+        }))
+      }
+    ];
+
+    updateNodeData(nodeId, {
+      ...data,
+      teamAllocations: updatedTeamAllocations
+    });
+  }, [nodeId, data, getNodes, updateNodeData]);
+
+  // Calculate costs based on team allocations
+  const costs = useMemo(() => {
+    const allocations = data.teamAllocations?.flatMap(teamAllocation => 
+      teamAllocation.allocatedMembers.map(member => {
+        const team = connectedTeams.find(t => t.teamId === teamAllocation.teamId);
+        const bandwidthMember = team?.availableBandwidth.find(bw => bw.memberId === member.memberId);
+        
+        if (!bandwidthMember) return null;
+
+        const allocatedDays = member.hours / 8;
+        const dailyRate = bandwidthMember.dailyRate;
+        const cost = dailyRate * allocatedDays;
+
+        return {
+          member: {
+            memberId: member.memberId,
+            name: bandwidthMember.name,
+            dailyRate
+          },
+          allocation: (member.hours / (data.duration || 1) / 8) * 100,
+          allocatedDays,
+          cost
+        };
+      })
+    ).filter((allocation): allocation is NonNullable<typeof allocation> => allocation !== null);
+
+    return {
+      dailyCost: allocations?.reduce((sum, a) => sum + a.member.dailyRate * (a.allocation / 100), 0) || 0,
+      totalCost: allocations?.reduce((sum, a) => sum + a.cost, 0) || 0,
+      allocations: allocations || []
     };
-  }, [selectedMembers, data.memberAllocations, data.duration]);
-
-  // Add cost summary component
-  const CostSummary = useCallback(({ costs, selectedMembers, duration }: CostSummaryProps) => {
-    if (selectedMembers.length === 0 || !duration) return null;
-
-    return (
-      <div className="space-y-4 mt-4 p-3 bg-muted/30 rounded-lg">
-        <div className="space-y-2">
-          <h4 className="text-sm font-medium">Cost Summary</h4>
-          
-          {/* Resource Breakdown */}
-          <div className="space-y-2">
-            {selectedMembers.map((member) => {
-              const allocation = costs.allocations.find(a => a.member.id === member.id);
-              if (!allocation || allocation.allocation === 0) return null;
-
-              return (
-                <div key={member.id} className="flex justify-between items-baseline text-sm">
-                  <div className="space-x-2">
-                    <span className="font-medium">{member.name}</span>
-                    <span className="text-muted-foreground">
-                      {allocation.allocatedDays} days ({allocation.allocation}%)
-                    </span>
-                  </div>
-                  {allocation.cost > 0 && (
-                    <span className="font-mono text-muted-foreground">
-                      ${allocation.cost.toLocaleString('en-US', { 
-                        minimumFractionDigits: 2, 
-                        maximumFractionDigits: 2 
-                      })}
-                    </span>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-
-          {/* Totals */}
-          <div className="border-t pt-2 mt-4">
-            <div className="flex justify-between items-center text-sm">
-              <span className="font-medium">Total Resource Cost</span>
-              <span className="font-mono">
-                ${costs.totalCost.toLocaleString('en-US', { 
-                  minimumFractionDigits: 2, 
-                  maximumFractionDigits: 2 
-                })}
-              </span>
-            </div>
-
-            <div className="flex justify-between items-center text-sm text-muted-foreground mt-1">
-              <span>Daily Rate</span>
-              <span className="font-mono">
-                ${costs.dailyCost.toLocaleString('en-US', { 
-                  minimumFractionDigits: 2, 
-                  maximumFractionDigits: 2 
-                })}
-              </span>
-            </div>
-
-            <div className="flex justify-between items-center text-sm text-muted-foreground">
-              <span>Total Duration</span>
-              <span className="font-mono">{duration} days</span>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }, []);
+  }, [data.teamAllocations, data.duration, connectedTeams]);
 
   return {
-    teamMembers,
-    selectedMembers,
-    handleAllocationChange,
+    connectedTeams,
+    requestTeamAllocation,
     costs,
-    CostSummary
+    CostSummary: CostSummaryComponent  // Return the component
   };
 } 

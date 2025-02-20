@@ -56,13 +56,21 @@ export type OptionNodeData = Node<{
   risks: Risk[];
   buildDuration?: number;
   timeToClose?: number;
+  teamAllocations?: Array<{
+    teamId: string;
+    requestedHours: number;
+    allocatedMembers: Array<{
+      memberId: string;
+      hours: number;
+    }>;
+  }>;
 }>;
 
 export function OptionNode({ id, data, selected }: NodeProps<OptionNodeData>) {
   const { updateNodeData, setNodes } = useReactFlow();
   const {
-    selectedMembers,
-    handleAllocationChange,
+    connectedTeams,
+    requestTeamAllocation,
     costs,
     CostSummary
   } = useTeamAllocation(id, data);
@@ -188,6 +196,19 @@ export function OptionNode({ id, data, selected }: NodeProps<OptionNodeData>) {
       isPayoffPossible: expectedMonthlyValue > 0
     };
   }, [expectedMonthlyValue, costs.totalCost]);
+
+  // Handle allocation changes
+  const handleAllocationChange = useCallback((memberId: string, percentage: number) => {
+    const teamId = connectedTeams.find(team => 
+      team.availableBandwidth.some(m => m.memberId === memberId)
+    )?.teamId;
+
+    if (!teamId) return;
+
+    // Update the allocation
+    const hoursRequested = (percentage / 100) * 8 * (data.duration || 1); // Convert % to hours
+    requestTeamAllocation(teamId, hoursRequested, [memberId]);
+  }, [connectedTeams, data.duration, requestTeamAllocation]);
 
   return (
     <BaseNode selected={selected}>
@@ -365,53 +386,62 @@ export function OptionNode({ id, data, selected }: NodeProps<OptionNodeData>) {
           </div>
         </div>
 
-        {/* Team Allocation Section */}
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <Label>Team Allocation</Label>
-            <span className="text-xs text-muted-foreground">
-              {selectedMembers.length} team member{selectedMembers.length !== 1 ? 's' : ''}
-            </span>
-          </div>
-
-          {selectedMembers.length > 0 && (
+        {/* Team Allocations Section */}
+        <div className="space-y-2">
+          <Label>Team Allocations</Label>
+          
+          {connectedTeams.length === 0 ? (
+            <div className="text-sm text-muted-foreground">
+              Connect to teams to allocate resources
+            </div>
+          ) : (
             <div className="space-y-4">
-              {selectedMembers.map((member) => {
-                const allocation = data.memberAllocations?.find(
-                  a => a.memberId === member.id
-                )?.timePercentage || 0;
-
-                return (
-                  <div key={member.id} className="space-y-2">
-                    <div className="flex items-center justify-between">
-                      <Badge variant="secondary" className="text-xs">
-                        {member.name}
-                        {member.dailyRate && ` • $${member.dailyRate}/day`}
-                      </Badge>
-                      <span className="text-xs text-muted-foreground">
-                        {allocation}% allocation
-                      </span>
-                    </div>
-                    <Slider
-                      value={[allocation]}
-                      onValueChange={([value]) => handleAllocationChange(member.id, value)}
-                      min={0}
-                      max={100}
-                      step={10}
-                      className="w-full"
-                    />
+              {connectedTeams.map(team => (
+                <div key={team.teamId} className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="font-medium">{team.title}</span>
                   </div>
-                );
-              })}
 
-              <CostSummary 
-                costs={costs}
-                selectedMembers={selectedMembers}
-                duration={data.duration}
-              />
+                  {/* Member Allocation Controls */}
+                  <div className="space-y-4">
+                    {team.availableBandwidth.map(member => {
+                      const allocation = data.teamAllocations
+                        ?.find(a => a.teamId === team.teamId)
+                        ?.allocatedMembers
+                        .find(m => m.memberId === member.memberId);
+                      
+                      const percentage = allocation 
+                        ? (allocation.hours / 8 / (data.duration || 1)) * 100 
+                        : 0;
+
+                      return (
+                        <div key={member.memberId} className="space-y-2">
+                          <div className="flex items-center justify-between text-sm">
+                            <span>{member.name}</span>
+                            <span className="text-muted-foreground">
+                              {percentage.toFixed(0)}% ({member.availableHours}h available)
+                            </span>
+                          </div>
+                          <Slider
+                            value={[percentage]}
+                            onValueChange={([value]) => handleAllocationChange(member.memberId, value)}
+                            max={100}
+                            step={1}
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
             </div>
           )}
         </div>
+
+        {/* Cost Summary */}
+        {costs && costs.allocations.length > 0 && (
+          <CostSummary costs={costs} duration={data.duration} />
+        )}
 
         <Textarea
           value={data.description || ''}
