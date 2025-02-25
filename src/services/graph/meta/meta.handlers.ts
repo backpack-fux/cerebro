@@ -15,14 +15,40 @@ export class MetaHandlers {
   }
 
   static async update({ id, ...params }: UpdateMetaNodeParams): Promise<RFMetaNode> {
-    const response = await fetch(`${this.API_URL}/${id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(params)
-    });
+    console.log(`[MetaHandlers] Updating node ${id} with params:`, params);
+    
+    // Format the position data if it exists
+    if (params.position) {
+      console.log(`[MetaHandlers] Position data detected:`, params.position);
+    }
+    
+    const url = `${this.API_URL}/${id}`;
+    console.log(`[MetaHandlers] Making PATCH request to: ${url}`);
+    
+    const body = JSON.stringify(params);
+    console.log(`[MetaHandlers] Request body: ${body}`);
+    
+    try {
+      const response = await fetch(url, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body
+      });
 
-    if (!response.ok) throw new Error('Failed to update meta node');
-    return response.json() as Promise<RFMetaNode>;
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error(`[MetaHandlers] Update failed with status ${response.status}: ${errorText}`);
+        throw new Error(`Failed to update meta node: ${response.status} ${errorText}`);
+      }
+      
+      const result = await response.json();
+      console.log(`[MetaHandlers] Update successful, received:`, result);
+      
+      return result as RFMetaNode;
+    } catch (error) {
+      console.error('[MetaHandlers] Error during update:', error);
+      throw error;
+    }
   }
 
   static async delete(id: string): Promise<boolean> {

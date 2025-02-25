@@ -47,13 +47,22 @@ export function reactFlowToNeo4jEdge(edge: RFMetaEdge): GraphEdge {
 }
 
 export function neo4jToReactFlowEdge(neo4jEdge: Neo4jMetaEdge): RFMetaEdge {
+    console.log('[Transform] Converting Neo4j edge to React Flow edge:', {
+      id: neo4jEdge.id,
+      from: neo4jEdge.from,
+      to: neo4jEdge.to,
+      type: neo4jEdge.type,
+      properties: neo4jEdge.properties
+    });
+    
     return {
       id: neo4jEdge.id,
       source: neo4jEdge.from,
       target: neo4jEdge.to,
-      type: neo4jEdge.type.toLowerCase() as 'knowledge' | 'roadmap' | string, // Convert to lowercase for React Flow
+      type: 'default', // Use default edge type for ReactFlow
       data: {
         label: neo4jEdge.properties?.label,
+        edgeType: neo4jEdge.type.toLowerCase(), // Store the original edge type in data
         // Add other metadata from neo4jEdge.properties as needed
       },
     };
@@ -84,13 +93,13 @@ export function transformMetaNode(node: Neo4jNode): GraphNode<RFMetaNodeData> | 
     };
 }
 
-export function transformMetaEdge(relationship: Neo4jRelationship): GraphEdge | null {
+export function transformMetaEdge(relationship: Neo4jRelationship, sourceId?: string, targetId?: string): GraphEdge | null {
   if (!relationship.properties) return null;
 
   const neo4jEdge: Neo4jMetaEdge = {
     id: relationship.properties.id as string,
-    from: relationship.start.toString(),
-    to: relationship.end.toString(),
+    from: sourceId || relationship.start.toString(),
+    to: targetId || relationship.end.toString(),
     type: relationship.type,
     properties: {
       label: relationship.properties.label as string | undefined,

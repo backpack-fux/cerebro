@@ -49,6 +49,7 @@ export interface RFMetaEdge extends RFEdge {
     target: string;
     data?: {
       label?: string; // Optional label for display in UI
+      edgeType?: string; // Original edge type from Neo4j
       // Add other metadata as needed (e.g., weight, timestamp)
     };
 }

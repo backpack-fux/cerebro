@@ -14,12 +14,12 @@ import { XYPosition } from '@xyflow/react';
   export class Neo4jGraphStorage<T> implements IGraphStorage<T> {
     private driver: Driver;
     private transformNodeFn: (node: Neo4jNode) => GraphNode<T> | null;
-    private transformEdgeFn: (relationship: Neo4jRelationship) => GraphEdge | null;
+    private transformEdgeFn: (relationship: Neo4jRelationship, sourceId?: string, targetId?: string) => GraphEdge | null;
   
     constructor(
       config: Neo4jConfig, 
       transformNode: (node: Neo4jNode) => GraphNode<T> | null,
-      transformEdge: (relationship: Neo4jRelationship) => GraphEdge | null
+      transformEdge: (relationship: Neo4jRelationship, sourceId?: string, targetId?: string) => GraphEdge | null
     ) {
         this.driver = neo4j.driver(
           config.uri,
@@ -39,17 +39,23 @@ import { XYPosition } from '@xyflow/react';
       const result = await session.run(CYPHER_QUERIES.GET_FULL_GRAPH);
       const nodes: GraphNode<any>[] = [];
       const edges: GraphEdge[] = [];
+      const nodeMap = new Map<string, GraphNode<any>>();
 
       result.records.forEach(record => {
         const node = record.get('n') as Neo4jNode;
         if (node) {
           const transformed = this.transformNode(node);
-          if (transformed) nodes.push(transformed);
+          if (transformed && !nodeMap.has(transformed.id)) {
+            nodeMap.set(transformed.id, transformed);
+            nodes.push(transformed);
+          }
         }
 
         const relationship = record.get('r') as Neo4jRelationship;
         if (relationship) {
-          const transformedEdge = this.transformEdge(relationship);
+          const sourceId = record.get('sourceId') as string;
+          const targetId = record.get('targetId') as string;
+          const transformedEdge = this.transformEdge(relationship, sourceId, targetId);
           if (transformedEdge) edges.push(transformedEdge);
         }
       });
@@ -65,8 +71,11 @@ import { XYPosition } from '@xyflow/react';
       const now = new Date().toISOString();
       try {
         const position = (properties as N & { position?: XYPosition }).position || { x: 0, y: 0 };
-        const result = await session.run(CYPHER_QUERIES.CREATE_NODE, {
-          type,
+        
+        // Replace TYPE_PLACEHOLDER with the actual type
+        const query = CYPHER_QUERIES.CREATE_NODE.replace('TYPE_PLACEHOLDER', type.toUpperCase());
+        
+        const result = await session.run(query, {
           id: crypto.randomUUID(),
           positionX: position.x,
           positionY: position.y,
@@ -85,11 +94,10 @@ import { XYPosition } from '@xyflow/react';
     async getNodesByType(type: NodeType): Promise<GraphNode<any>[]> {
       const session = this.driver.session();
       try {
-        const result = await session.run(
-            CYPHER_QUERIES.GET_NODES_BY_TYPE,
-          { type }
-        );
-  
+        // Replace TYPE_PLACEHOLDER with the actual type
+        const query = CYPHER_QUERIES.GET_NODES_BY_TYPE.replace('TYPE_PLACEHOLDER', type.toUpperCase());
+        const result = await session.run(query);
+
         return result.records
           .map(record => {
             const node = record.get('n') as Neo4jNode<any>;
@@ -121,13 +129,33 @@ import { XYPosition } from '@xyflow/react';
       const session = this.driver.session();
       const now = new Date().toISOString();
       try {
+        // Get the current node to preserve existing position if not provided
+        const currentNode = await this.getNode(nodeId);
+        if (!currentNode) {
+          throw new Error(`Node with ID ${nodeId} not found`);
+        }
+        
+        // Extract position from properties if it exists
         const position = (properties as Partial<T> & { position?: XYPosition }).position;
+        
+        // Use current position if not provided in the update
+        const positionX = position?.x !== undefined ? position.x : currentNode.position.x;
+        const positionY = position?.y !== undefined ? position.y : currentNode.position.y;
+        
+        console.log(`[Neo4jService] Updating node ${nodeId} with position:`, { positionX, positionY });
+        
+        // Remove position from properties to avoid Neo4j error with complex objects
+        const cleanProperties = { ...properties };
+        if ((cleanProperties as any).position) {
+          delete (cleanProperties as any).position;
+        }
+        
         const result = await session.run(CYPHER_QUERIES.UPDATE_NODE, {
           id: nodeId,
           updatedAt: now,
-          positionX: position?.x,
-          positionY: position?.y,
-          properties,
+          positionX,
+          positionY,
+          properties: cleanProperties,
         });
     
         const node = result.records[0].get('n') as Neo4jNode;
@@ -154,12 +182,15 @@ import { XYPosition } from '@xyflow/react';
       const now = new Date().toISOString();
       try {
         const edgeId = edge.id || `edge-${crypto.randomUUID()}`;
+        
+        // Replace TYPE_PLACEHOLDER with the actual type
+        const query = CYPHER_QUERIES.CREATE_EDGE.replace('TYPE_PLACEHOLDER', edge.type);
+        
         const result = await session.run(
-          CYPHER_QUERIES.CREATE_EDGE,
+          query,
           {
             from: edge.from,
             to: edge.to,
-            type: edge.type,
             id: edgeId,
             createdAt: now,
             updatedAt: now,
@@ -180,37 +211,44 @@ import { XYPosition } from '@xyflow/react';
       }
     }
   
-    async getEdges(nodeId: ReactFlowId, type?: RelationshipType): Promise<GraphEdge[]> {
+    async getEdges(nodeId: ReactFlowId, type?: string): Promise<GraphEdge[]> {
       const session = this.driver.session();
       try {
+        // Use the centralized query from CYPHER_QUERIES
         const result = await session.run(
-            CYPHER_QUERIES.GET_EDGES,
+          CYPHER_QUERIES.GET_EDGES,
           { nodeId, type }
         );
-  
+
         return result.records
-        .map(record => {
-          const relationship = record.get('r') as Neo4jRelationship;
-          return this.transformEdge(relationship);
-        })
-        .filter((edge): edge is GraphEdge => edge !== null);
+          .map(record => {
+            const relationship = record.get('r') as Neo4jRelationship;
+            const sourceId = record.get('sourceId') as string;
+            const targetId = record.get('targetId') as string;
+            return this.transformEdge(relationship, sourceId, targetId);
+          })
+          .filter((edge): edge is GraphEdge => edge !== null);
       } finally {
         await session.close();
       }
     }
   
-    async getEdge(edgeId: string): Promise<GraphEdge | null> {
+    async getEdge(edgeId: ReactFlowId): Promise<GraphEdge | null> {
       const session = this.driver.session();
       try {
         const result = await session.run(
-            CYPHER_QUERIES.GET_EDGE,
+          CYPHER_QUERIES.GET_EDGE,
           { id: edgeId }
         );
-  
-        const relationship = result.records[0]?.get('r') as Neo4jRelationship | undefined;
-        if (!relationship) return null;
-  
-        return this.transformEdge(relationship);
+
+        const record = result.records[0];
+        if (!record) return null;
+        
+        const relationship = record.get('r') as Neo4jRelationship;
+        const sourceId = record.get('sourceId') as string;
+        const targetId = record.get('targetId') as string;
+        
+        return this.transformEdge(relationship, sourceId, targetId);
       } finally {
         await session.close();
       }
@@ -229,11 +267,15 @@ import { XYPosition } from '@xyflow/react';
           }
         );
   
-        const relationship = result.records[0].get('r') as Neo4jRelationship;
+        const record = result.records[0];
+        const relationship = record.get('r') as Neo4jRelationship;
+        const sourceId = record.get('sourceId') as string;
+        const targetId = record.get('targetId') as string;
+        
         return {
           id: relationship.properties.id as string,
-          from: relationship.start.toString(),
-          to: relationship.end.toString(),
+          from: sourceId,
+          to: targetId,
           type: relationship.type,
           properties: {
             ...relationship.properties,
@@ -267,11 +309,9 @@ import { XYPosition } from '@xyflow/react';
       return this.transformNodeFn(node);
     }
 
-    // Edge transformation method (added to match transformNode)
-    private transformEdge(relationship: Neo4jRelationship): GraphEdge | null {
-      return this.transformEdgeFn(relationship);
+    // Edge transformation method (updated to use the injected function)
+    private transformEdge(relationship: Neo4jRelationship, sourceId?: string, targetId?: string): GraphEdge | null {
+      return this.transformEdgeFn(relationship, sourceId, targetId);
     }
-
-    // Edge-specific transform function (to be overridden or injected per edge type)
 
   }
