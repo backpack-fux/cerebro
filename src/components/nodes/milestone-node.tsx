@@ -15,7 +15,8 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { useNodeStatus, NodeStatus } from "@/hooks/useNodeStatus";
 import { useMilestoneMetrics } from "@/hooks/useMilestoneMetrics";
-import { MilestoneHandlers } from '@/services/graph/milestone/milestone.handlers';
+import { GraphApiClient } from '@/services/graph/neo4j/api-client';
+import { NodeType } from '@/services/graph/neo4j/api-urls';
 import { useEdges } from "@xyflow/react";
 
 type KPI = {
@@ -66,12 +67,11 @@ export function MilestoneNode({ id, data, selected }: NodeProps<MilestoneNodeDat
     statusDebounceRef.current = setTimeout(async () => {
       try {
         // Persist the change to the database
-        await MilestoneHandlers.update({ 
-          id, 
+        await GraphApiClient.updateNode('milestone' as NodeType, id, { 
           status: newStatus 
         });
         console.log(`Updated milestone ${id} status to "${newStatus}"`);
-      } catch (error) {
+      } catch (error: unknown) {
         console.error(`Failed to update milestone ${id} status:`, error);
       }
       statusDebounceRef.current = null;
@@ -133,13 +133,12 @@ export function MilestoneNode({ id, data, selected }: NodeProps<MilestoneNodeDat
         // Only make API call if value has changed
         if (newTitle !== data.title) {
           // Persist the change to the database
-          await MilestoneHandlers.update({ 
-            id, 
+          await GraphApiClient.updateNode('milestone' as NodeType, id, { 
             title: newTitle 
           });
           console.log(`Updated milestone ${id} title to "${newTitle}"`);
         }
-      } catch (error) {
+      } catch (error: unknown) {
         console.error(`Failed to update milestone ${id}:`, error);
       }
       titleDebounceRef.current = null;
@@ -164,13 +163,12 @@ export function MilestoneNode({ id, data, selected }: NodeProps<MilestoneNodeDat
         // Only make API call if value has changed
         if (newDescription !== data.description) {
           // Persist the change to the database
-          await MilestoneHandlers.update({ 
-            id, 
+          await GraphApiClient.updateNode('milestone' as NodeType, id, { 
             description: newDescription 
           });
           console.log(`Updated milestone ${id} description`);
         }
-      } catch (error) {
+      } catch (error: unknown) {
         console.error(`Failed to update milestone ${id} description:`, error);
       }
       descriptionDebounceRef.current = null;
@@ -188,7 +186,7 @@ export function MilestoneNode({ id, data, selected }: NodeProps<MilestoneNodeDat
 
   const handleDelete = useCallback(() => {
     // First delete the node from the database
-    MilestoneHandlers.delete(id)
+    GraphApiClient.deleteNode('milestone' as NodeType, id)
       .then(() => {
         console.log(`Successfully deleted milestone node ${id}`);
         // Then remove it from the UI
@@ -197,11 +195,11 @@ export function MilestoneNode({ id, data, selected }: NodeProps<MilestoneNodeDat
         // Also delete associated edges
         const connectedEdges = edges.filter((edge) => edge.source === id || edge.target === id);
         connectedEdges.forEach((edge) => {
-          MilestoneHandlers.deleteMilestoneEdge(edge.id)
-            .catch((error) => console.error(`Failed to delete edge ${edge.id}:`, error));
+          GraphApiClient.deleteEdge('milestone' as NodeType, edge.id)
+            .catch((error: unknown) => console.error(`Failed to delete edge ${edge.id}:`, error));
         });
       })
-      .catch((error) => {
+      .catch((error: unknown) => {
         console.error(`Failed to delete milestone node ${id}:`, error);
       });
   }, [id, setNodes, edges]);

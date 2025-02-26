@@ -12,12 +12,15 @@ import {
     Node,
     NodeChange,
     NodePositionChange,
+    useReactFlow,
 } from "@xyflow/react";
 import { nodeTypes } from "@/components/nodes";
 import { Console } from "@/components/console/console";
 import { useCallback, useEffect, useState } from "react";
 import { GraphApiClient } from "@/services/graph/neo4j/api-client";
 import { NodeType } from "@/services/graph/neo4j/api-urls";
+import { Toaster } from "@/components/ui/sonner";
+import { toast } from "sonner";
 
 // Configure panning buttons (1 = middle mouse, 2 = right mouse)
 const panOnDragButtons = [1];
@@ -31,6 +34,10 @@ export default function Canvas() {
     const [deletingNodes, setDeletingNodes] = useState<Set<string>>(new Set());
     const [deletingEdges, setDeletingEdges] = useState<Set<string>>(new Set());
     const [updatingNodePositions, setUpdatingNodePositions] = useState<Set<string>>(new Set());
+    const [isCreatingNode, setIsCreatingNode] = useState<Record<string, boolean>>({});
+    
+    // Get ReactFlow instance for viewport and node operations
+    const { getViewport, addNodes } = useReactFlow();
     
     // Fetch graph data on component mount
     useEffect(() => {
@@ -366,6 +373,63 @@ export default function Canvas() {
         }
     }, [edges, setEdges, nodes]);
 
+    // Node creation function to be passed to Console
+    const createNode = useCallback(async (type: string, label: string) => {
+        // Prevent multiple clicks while creating
+        if (isCreatingNode[type]) return;
+        
+        try {
+            // Set loading state for this button
+            setIsCreatingNode(prev => ({ ...prev, [type]: true }));
+            
+            const { x, y, zoom } = getViewport();
+            
+            // Calculate center of current viewport
+            const position = {
+                x: -x / zoom + window.innerWidth / 2 / zoom,
+                y: -y / zoom + window.innerHeight / 2 / zoom
+            };
+
+            // Adjust position to center the node
+            const nodePosition = { 
+                x: position.x - 100, 
+                y: position.y - 50 
+            };
+
+            // Create the node directly in the database first
+            const createdNode = await GraphApiClient.createNode(type as NodeType, {
+                title: `New ${label}`,
+                description: `A new ${label.toLowerCase()} node`,
+                position: nodePosition,
+            });
+            
+            console.log(`${type} node created in database:`, createdNode);
+            
+            // Add the node to the UI only after successful creation
+            const permanentNode = {
+                ...createdNode,
+                position: nodePosition, // Use the original position to avoid jumps
+            };
+            
+            addNodes(permanentNode);
+            
+            // Show success message
+            toast(`Successfully created a new ${label} node.`, {
+                description: `The ${label.toLowerCase()} node has been added to the canvas.`,
+            });
+        } catch (error) {
+            console.error(`Error creating ${type} node:`, error);
+            
+            // Show error message
+            toast.error(`Failed to create ${label} node`, {
+                description: `${error instanceof Error ? error.message : 'Unknown error'}`,
+            });
+        } finally {
+            // Clear loading state
+            setIsCreatingNode(prev => ({ ...prev, [type]: false }));
+        }
+    }, [getViewport, addNodes, isCreatingNode]);
+
     return (
       <div className={`h-full w-full`}>
         {isLoading && (
@@ -419,7 +483,10 @@ export default function Canvas() {
           minZoom={0.1}
           maxZoom={4}
         >
-          <Console />
+          <Console 
+            createNode={createNode} 
+            isCreatingNode={isCreatingNode} 
+          />
           <Background
             variant={BackgroundVariant.Dots}
             gap={32}
@@ -427,6 +494,7 @@ export default function Canvas() {
             className="!text-foreground/5"
           />
         </ReactFlow>
+        <Toaster />
       </div>
     );
 }
