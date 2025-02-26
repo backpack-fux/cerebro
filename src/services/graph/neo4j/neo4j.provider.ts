@@ -11,14 +11,25 @@ import { NodeType } from '../base-node/reactflow.types';
 import { MilestoneService } from '@/services/graph/milestone/milestone.service';
 import { RFMilestoneNodeData } from '@/services/graph/milestone/milestone.types';
 import { transformMilestoneNode, transformMilestoneEdge } from '@/services/graph/milestone/milestone.transform';
+import { TeamMemberService } from '@/services/graph/team-member/team-member.service';
+import { RFTeamMemberNodeData } from '@/services/graph/team-member/team-member.types';
+import { transformTeamMemberNode, transformTeamMemberEdge } from '@/services/graph/team-member/team-member.transform';
 
 // Generic transform functions for any node/edge type (could be dynamic or default)
 function transformNode(node: Neo4jNode): GraphNode<any> | null {
   if (!node?.properties) return null;
 
-  const type = node.labels[0]?.toLowerCase() as NodeType;
+  // Get the raw type from Neo4j
+  let type = node.labels[0]?.toLowerCase() as NodeType;
   if (!type) return null;
 
+  // Map database node types to API node types
+  // This ensures consistency between database labels and API URLs
+  if (type === 'team_member' || type === 'teammember') {
+    type = 'teamMember';
+  }
+  // Add other mappings as needed for other node types
+  
   const { positionX, positionY, id, ...properties } = node.properties;
 
   return {
@@ -65,6 +76,9 @@ export const metaService = createMetaService(neo4jStorage as IGraphStorage<RFMet
 // Create a MilestoneService instance with the Neo4j storage
 export const milestoneService = createMilestoneService(neo4jStorage as IGraphStorage<RFMilestoneNodeData>);
 
+// Create a TeamMemberService instance with the Neo4j storage
+export const teamMemberService = createTeamMemberService(neo4jStorage as IGraphStorage<RFTeamMemberNodeData>);
+
 // Factory function for creating a MetaService instance
 export function createMetaService(storage: IGraphStorage<RFMetaNodeData>): MetaService {
   return new MetaService(storage);
@@ -73,6 +87,11 @@ export function createMetaService(storage: IGraphStorage<RFMetaNodeData>): MetaS
 // Factory function for creating a MilestoneService instance
 export function createMilestoneService(storage: IGraphStorage<RFMilestoneNodeData>): MilestoneService {
   return new MilestoneService(storage);
+}
+
+// Factory function for creating a TeamMemberService instance
+export function createTeamMemberService(storage: IGraphStorage<RFTeamMemberNodeData>): TeamMemberService {
+  return new TeamMemberService(storage);
 }
 
 // Create a specialized Neo4j storage for Meta nodes
@@ -90,5 +109,14 @@ export function createMilestoneStorage(): IGraphStorage<RFMilestoneNodeData> {
     neo4jConfig,
     transformMilestoneNode,
     transformMilestoneEdge
+  );
+}
+
+// Create a specialized Neo4j storage for TeamMember nodes
+export function createTeamMemberStorage(): IGraphStorage<RFTeamMemberNodeData> {
+  return createNeo4jStorage<RFTeamMemberNodeData>(
+    neo4jConfig,
+    transformTeamMemberNode,
+    transformTeamMemberEdge
   );
 }

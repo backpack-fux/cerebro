@@ -9,7 +9,7 @@ import {
   NodeHeaderMenuAction,
 } from '@/components/nodes/node-header';
 import { DropdownMenuItem } from "@radix-ui/react-dropdown-menu";
-import { useCallback, useMemo, useEffect } from "react";
+import { useCallback, useMemo, useEffect, useRef } from "react";
 import { useReactFlow, useNodeConnections } from "@xyflow/react";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
@@ -18,6 +18,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useValidation } from '@/contexts/validation-context';
 import { cn } from '@/lib/utils';
 import { Checkbox } from "@/components/ui/checkbox";
+import { GraphApiClient } from '@/services/graph/neo4j/api-client';
+import { NodeType } from '@/services/graph/neo4j/api-urls';
+import { toast } from "sonner";
 
 // Common timezones - can be expanded
 const TIMEZONES = [
@@ -55,7 +58,9 @@ export interface TeamAllocation {
 // Define the data structure as a Record type
 export interface TeamMemberData extends Record<string, unknown> {
   title: string;
-  roles: Role[];  // Change from single role to array
+  name: string;
+  description?: string;
+  roles: Role[];
   bio?: string;
   timezone?: string;
   dailyRate?: number;
@@ -64,8 +69,10 @@ export interface TeamMemberData extends Record<string, unknown> {
   weeklyCapacity: number;
   startDate?: string;
   skills?: string[];
-  teamId?: string;        // Single team ID instead of array
-  allocation?: number;    // Single allocation percentage
+  teamId?: string;
+  allocation?: number;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 // Define the node type
@@ -76,8 +83,9 @@ export interface TeamMemberSummary {
   id: string;
   weeklyCapacity: number;
   dailyRate: number;
-  roles: Role[];  // Update to array
+  roles: Role[];
   allocation: number;
+  startDate?: string;
 }
 
 export function TeamMemberNode({ 
@@ -91,6 +99,29 @@ export function TeamMemberNode({
 
   // Type guard for data
   const typedData = data as TeamMemberData;
+  
+  // Refs for debounce timers
+  const titleDebounceRef = useRef<NodeJS.Timeout | null>(null);
+  const bioDebounceRef = useRef<NodeJS.Timeout | null>(null);
+  const hoursDebounceRef = useRef<NodeJS.Timeout | null>(null);
+  const daysDebounceRef = useRef<NodeJS.Timeout | null>(null);
+  const rateDebounceRef = useRef<NodeJS.Timeout | null>(null);
+  const startDateDebounceRef = useRef<NodeJS.Timeout | null>(null);
+  const rolesDebounceRef = useRef<NodeJS.Timeout | null>(null);
+  const timezoneDebounceRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Helper function to save data to backend
+  const saveToBackend = useCallback(async (updatedData: Partial<TeamMemberData>) => {
+    try {
+      await GraphApiClient.updateNode('teamMember' as NodeType, id, updatedData);
+      console.log(`Updated team member ${id}:`, updatedData);
+    } catch (error) {
+      console.error(`Failed to update team member ${id}:`, error);
+      toast.error(`Failed to save changes`, {
+        description: `${error instanceof Error ? error.message : 'Unknown error'}`
+      });
+    }
+  }, [id]);
 
   // Initialize with defaults if values are undefined
   useEffect(() => {
@@ -99,10 +130,14 @@ export function TeamMemberNode({
         !typedData.startDate) {
       updateNodeData(id, {
         ...typedData,
-        hoursPerDay: typedData.hoursPerDay ?? 12,
-        daysPerWeek: typedData.daysPerWeek ?? 6,
-        weeklyCapacity: (typedData.hoursPerDay ?? 12) * (typedData.daysPerWeek ?? 6),
-        startDate: typedData.startDate ?? DEFAULT_START_DATE
+        hoursPerDay: typedData.hoursPerDay ?? 8,
+        daysPerWeek: typedData.daysPerWeek ?? 5,
+        weeklyCapacity: (typedData.hoursPerDay ?? 8) * (typedData.daysPerWeek ?? 5),
+        startDate: typedData.startDate ?? DEFAULT_START_DATE,
+        // Ensure name is set if it's not already
+        name: typedData.name ?? typedData.title ?? 'Untitled Team Member',
+        // Ensure description is set if it's not already
+        description: typedData.description ?? typedData.bio ?? '',
       });
     }
   }, [id, typedData, updateNodeData]);
@@ -116,7 +151,28 @@ export function TeamMemberNode({
       weeklyCapacity: hoursPerDay * daysPerWeek
     };
     updateNodeData(id, updatedData);
-  }, [id, typedData, updateNodeData]);
+    
+    // Clear any existing debounce timer
+    if (hoursDebounceRef.current) {
+      clearTimeout(hoursDebounceRef.current);
+    }
+    if (daysDebounceRef.current) {
+      clearTimeout(daysDebounceRef.current);
+    }
+    
+    // Set a new debounce timer
+    const debounceTimer = setTimeout(async () => {
+      await saveToBackend({
+        hoursPerDay,
+        daysPerWeek,
+        weeklyCapacity: hoursPerDay * daysPerWeek
+      });
+    }, 1000); // 1 second debounce
+    
+    // Store the timer reference
+    hoursDebounceRef.current = debounceTimer;
+    daysDebounceRef.current = debounceTimer;
+  }, [id, typedData, updateNodeData, saveToBackend]);
 
   // Validation handlers
   const validateHoursPerDay = useCallback((hours: number) => {
@@ -167,7 +223,7 @@ export function TeamMemberNode({
     }
   }, [id, addError, clearErrors]);
 
-  // Update the input handlers to include validation
+  // Update the input handlers to include validation and backend saving
   const handleHoursPerDayChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const hours = Math.min(Math.max(0, Number(e.target.value)), 24);
     updateWeeklyCapacity(hours, typedData.daysPerWeek ?? 5);
@@ -183,17 +239,40 @@ export function TeamMemberNode({
     if (!isNaN(rate)) {
       const updatedData: TeamMemberData = { ...typedData, dailyRate: rate };
       updateNodeData(id, updatedData);
+      
+      // Clear any existing debounce timer
+      if (rateDebounceRef.current) {
+        clearTimeout(rateDebounceRef.current);
+      }
+      
+      // Set a new debounce timer
+      rateDebounceRef.current = setTimeout(async () => {
+        await saveToBackend({ dailyRate: rate });
+        rateDebounceRef.current = null;
+      }, 1000); // 1 second debounce
     }
-  }, [id, typedData, updateNodeData]);
+  }, [id, typedData, updateNodeData, saveToBackend]);
 
   // Update the start date handler
   const handleStartDateChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const startDate = e.target.value || DEFAULT_START_DATE;
     const updatedData: TeamMemberData = { 
       ...typedData, 
-      startDate: e.target.value || DEFAULT_START_DATE 
+      startDate
     };
     updateNodeData(id, updatedData);
-  }, [id, typedData, updateNodeData]);
+    
+    // Clear any existing debounce timer
+    if (startDateDebounceRef.current) {
+      clearTimeout(startDateDebounceRef.current);
+    }
+    
+    // Set a new debounce timer
+    startDateDebounceRef.current = setTimeout(async () => {
+      await saveToBackend({ startDate });
+      startDateDebounceRef.current = null;
+    }, 1000); // 1 second debounce
+  }, [id, typedData, updateNodeData, saveToBackend]);
 
   const handleDelete = useCallback(() => {
     setNodes((nodes) => nodes.filter((node) => node.id !== id));
@@ -205,16 +284,18 @@ export function TeamMemberNode({
     weeklyCapacity: typedData.weeklyCapacity ?? 0,
     dailyRate: typedData.dailyRate ?? 0,
     roles: typedData.roles ?? [],
-    allocation: typedData.allocation ?? 0
+    allocation: typedData.allocation ?? 0,
+    startDate: typedData.startDate
   }), [
     id,
     typedData.weeklyCapacity,
     typedData.dailyRate,
     typedData.roles,
-    typedData.allocation
+    typedData.allocation,
+    typedData.startDate
   ]);
 
-  // Add handler for roles
+  // Add handler for roles with backend saving
   const handleRolesChange = useCallback((role: string, checked: boolean) => {
     const updatedRoles = checked 
       ? [...(typedData.roles || []), role]
@@ -225,7 +306,85 @@ export function TeamMemberNode({
       roles: updatedRoles 
     };
     updateNodeData(id, updatedData);
-  }, [id, typedData, updateNodeData]);
+    
+    // Clear any existing debounce timer
+    if (rolesDebounceRef.current) {
+      clearTimeout(rolesDebounceRef.current);
+    }
+    
+    // Set a new debounce timer
+    rolesDebounceRef.current = setTimeout(async () => {
+      await saveToBackend({ roles: updatedRoles });
+      rolesDebounceRef.current = null;
+    }, 1000); // 1 second debounce
+  }, [id, typedData, updateNodeData, saveToBackend]);
+
+  // Update title handler to also update name for consistency and save to backend
+  const handleTitleChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const title = e.target.value;
+    const updatedData: TeamMemberData = { 
+      ...typedData, 
+      title,
+      name: title // Keep name in sync with title
+    };
+    updateNodeData(id, updatedData);
+    
+    // Clear any existing debounce timer
+    if (titleDebounceRef.current) {
+      clearTimeout(titleDebounceRef.current);
+    }
+    
+    // Set a new debounce timer
+    titleDebounceRef.current = setTimeout(async () => {
+      await saveToBackend({ 
+        title,
+        name: title
+      });
+      titleDebounceRef.current = null;
+    }, 1000); // 1 second debounce
+  }, [id, typedData, updateNodeData, saveToBackend]);
+
+  // Update bio handler to also update description for consistency and save to backend
+  const handleBioChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const bio = e.target.value;
+    const updatedData: TeamMemberData = { 
+      ...typedData, 
+      bio,
+      description: bio // Keep description in sync with bio
+    };
+    updateNodeData(id, updatedData);
+    
+    // Clear any existing debounce timer
+    if (bioDebounceRef.current) {
+      clearTimeout(bioDebounceRef.current);
+    }
+    
+    // Set a new debounce timer
+    bioDebounceRef.current = setTimeout(async () => {
+      await saveToBackend({ 
+        bio,
+        description: bio
+      });
+      bioDebounceRef.current = null;
+    }, 1000); // 1 second debounce
+  }, [id, typedData, updateNodeData, saveToBackend]);
+
+  // Add handler for timezone with backend saving
+  const handleTimezoneChange = useCallback((timezone: string) => {
+    const updatedData: TeamMemberData = { ...typedData, timezone };
+    updateNodeData(id, updatedData);
+    
+    // Clear any existing debounce timer
+    if (timezoneDebounceRef.current) {
+      clearTimeout(timezoneDebounceRef.current);
+    }
+    
+    // Set a new debounce timer
+    timezoneDebounceRef.current = setTimeout(async () => {
+      await saveToBackend({ timezone });
+      timezoneDebounceRef.current = null;
+    }, 1000); // 1 second debounce
+  }, [id, typedData, updateNodeData, saveToBackend]);
 
   // Update connection handling to pass summary data
   useEffect(() => {
@@ -245,6 +404,13 @@ export function TeamMemberNode({
           memberSummary // This will be available to the team node
         };
         updateNodeData(id, updatedData);
+        
+        // Save team connection to backend
+        saveToBackend({
+          teamId,
+          allocation: 100,
+          memberSummary
+        });
       }
     } else {
       if (typedData.teamId) {
@@ -255,6 +421,13 @@ export function TeamMemberNode({
           memberSummary: undefined
         };
         updateNodeData(id, updatedData);
+        
+        // Save removal of team connection to backend
+        saveToBackend({
+          teamId: undefined,
+          allocation: undefined,
+          memberSummary: undefined
+        });
       }
     }
   }, [
@@ -263,8 +436,23 @@ export function TeamMemberNode({
     id, 
     updateNodeData, 
     getNodes, 
-    memberSummary // Add to dependencies
+    memberSummary,
+    saveToBackend // Add to dependencies
   ]);
+
+  // Clean up timers on unmount
+  useEffect(() => {
+    return () => {
+      if (titleDebounceRef.current) clearTimeout(titleDebounceRef.current);
+      if (bioDebounceRef.current) clearTimeout(bioDebounceRef.current);
+      if (hoursDebounceRef.current) clearTimeout(hoursDebounceRef.current);
+      if (daysDebounceRef.current) clearTimeout(daysDebounceRef.current);
+      if (rateDebounceRef.current) clearTimeout(rateDebounceRef.current);
+      if (startDateDebounceRef.current) clearTimeout(startDateDebounceRef.current);
+      if (rolesDebounceRef.current) clearTimeout(rolesDebounceRef.current);
+      if (timezoneDebounceRef.current) clearTimeout(timezoneDebounceRef.current);
+    };
+  }, []);
 
   return (
     <BaseNode selected={selected}>
@@ -272,10 +460,7 @@ export function TeamMemberNode({
         <NodeHeaderTitle>
           <input
             value={typedData.title}
-            onChange={(e) => {
-              const updatedData: TeamMemberData = { ...typedData, title: e.target.value };
-              updateNodeData(id, updatedData);
-            }}
+            onChange={handleTitleChange}
             className="bg-transparent outline-none placeholder:text-muted-foreground"
             placeholder="Team Member Name"
           />
@@ -296,7 +481,7 @@ export function TeamMemberNode({
             <Label>Hours per Day</Label>
             <Input
               type="number"
-              value={typedData.hoursPerDay ?? 12}
+              value={typedData.hoursPerDay ?? 8}
               onChange={handleHoursPerDayChange}
               onBlur={(e) => validateHoursPerDay(Number(e.target.value))}
               min={0}
@@ -320,7 +505,7 @@ export function TeamMemberNode({
             <Label>Days per Week</Label>
             <Input
               type="number"
-              value={typedData.daysPerWeek ?? 6}
+              value={typedData.daysPerWeek ?? 5}
               onChange={handleDaysPerWeekChange}
               onBlur={(e) => validateDaysPerWeek(Number(e.target.value))}
               min={0}
@@ -451,10 +636,7 @@ export function TeamMemberNode({
             <Label>Timezone</Label>
             <Select 
               value={typedData.timezone} 
-              onValueChange={(timezone: string) => {
-                const updatedData: TeamMemberData = { ...typedData, timezone };
-                updateNodeData(id, updatedData);
-              }}
+              onValueChange={handleTimezoneChange}
             >
               <SelectTrigger className="bg-transparent">
                 <SelectValue placeholder="Select timezone" />
@@ -501,10 +683,7 @@ export function TeamMemberNode({
           <Label>Bio</Label>
           <Textarea
             value={typedData.bio || ''}
-            onChange={(e) => {
-              const updatedData: TeamMemberData = { ...typedData, bio: e.target.value };
-              updateNodeData(id, updatedData);
-            }}
+            onChange={handleBioChange}
             placeholder="Team member's bio..."
             className="min-h-[80px] resize-y bg-transparent"
           />

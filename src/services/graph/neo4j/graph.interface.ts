@@ -40,6 +40,9 @@ export interface IGraphStorage<T = any> {
   getEdge(edgeId: string): Promise<GraphEdge | null>;
   updateEdge(edgeId: string, properties: Partial<GraphEdge['properties']>): Promise<GraphEdge>;
   deleteEdge(edgeId: string): Promise<void>;
+  
+  // Graph-wide operations
+  resetGraph(): Promise<void>;
 
   // Lifecycle methods
   close(): Promise<void>;

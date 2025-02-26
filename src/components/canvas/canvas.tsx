@@ -399,7 +399,13 @@ export default function Canvas() {
                 return;
             }
             
-            const createdEdge = await GraphApiClient.createEdge(sourceNode.type as NodeType, edgeData);
+            // Map node types to match API_URLS keys
+            let nodeType = sourceNode.type;
+            if (nodeType === 'team_member' || nodeType === 'teammember') {
+                nodeType = 'teamMember';
+            }
+            
+            const createdEdge = await GraphApiClient.createEdge(nodeType as NodeType, edgeData);
             console.log(`${sourceNode.type} edge created in database:`, createdEdge);
             
             // Update the edge in the UI with the data from the database
@@ -451,8 +457,14 @@ export default function Canvas() {
                 y: position.y - 50 
             };
 
+            // Map node types to match API_URLS keys
+            let nodeType = type;
+            if (nodeType === 'team_member' || nodeType === 'teammember') {
+                nodeType = 'teamMember';
+            }
+
             // Create the node directly in the database first
-            const createdNode = await GraphApiClient.createNode(type as NodeType, {
+            const createdNode = await GraphApiClient.createNode(nodeType as NodeType, {
                 title: `New ${label}`,
                 description: `A new ${label.toLowerCase()} node`,
                 position: nodePosition,

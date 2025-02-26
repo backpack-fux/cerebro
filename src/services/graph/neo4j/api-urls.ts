@@ -4,7 +4,7 @@ export const API_URLS = {
     milestone: '/api/graph/milestone',
     feature: '/api/graph/feature',
     team: '/api/graph/team',
-    teamMember: '/api/graph/teamMember',
+    teamMember: '/api/graph/team-member',
     provider: '/api/graph/provider',
     option: '/api/graph/option',
     calendar: '/api/graph/calendar',

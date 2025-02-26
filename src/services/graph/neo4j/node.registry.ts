@@ -5,6 +5,8 @@ import { neo4jStorage } from '@/services/graph/neo4j/neo4j.provider';
 import { RFMetaNodeData } from '@/services/graph/meta/meta.types';
 import { RFMilestoneNodeData } from '@/services/graph/milestone/milestone.types';
 import { IGraphStorage } from '@/services/graph/neo4j/graph.interface';
+import { TeamMemberService } from '@/services/graph/team-member/team-member.service';
+import { RFTeamMemberNodeData } from '@/services/graph/team-member/team-member.types';
 
 interface NodeService {
   create(params: any): Promise<any>;
@@ -20,7 +22,7 @@ export const nodeServiceRegistry = {
   'milestone': new MilestoneService(neo4jStorage as IGraphStorage<RFMilestoneNodeData>),
   //'feature': /* new FeatureService(neo4jStorage as IGraphStorage<FeatureNodeData>) */,
   //'team': /* new TeamService(neo4jStorage as IGraphStorage<TeamNodeData>) */,
-  //'teamMember': /* new TeamMemberService(neo4jStorage as IGraphStorage<TeamMemberNodeData>) */,
+  'teamMember': new TeamMemberService(neo4jStorage as IGraphStorage<RFTeamMemberNodeData>),
   //'provider': /* new ProviderService(neo4jStorage as IGraphStorage<ProviderNodeData>) */,
   //'option': /* new OptionService(neo4jStorage as IGraphStorage<OptionNodeData>) */,
   //'calendar': /* new CalendarService(neo4jStorage as IGraphStorage<CalendarNodeData>) */,
