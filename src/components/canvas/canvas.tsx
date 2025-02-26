@@ -10,29 +10,17 @@ import {
     Connection,
     addEdge,
     Node,
-    Edge,
     NodeChange,
-    EdgeChange,
     NodePositionChange,
 } from "@xyflow/react";
 import { nodeTypes } from "@/components/nodes";
 import { Console } from "@/components/console/console";
-import { useCallback, useEffect, useState, useMemo } from "react";
-import { MetaHandlers } from "@/services/graph/meta/meta.handlers";
-import { MilestoneHandlers } from "@/services/graph/milestone/milestone.handlers";
+import { useCallback, useEffect, useState } from "react";
+import { GraphApiClient } from "@/services/graph/neo4j/api-client";
+import { NodeType } from "@/services/graph/neo4j/api-urls";
 
 // Configure panning buttons (1 = middle mouse, 2 = right mouse)
-const panOnDragButtons = [1, 2];
-
-// Node handler registry - maps node types to their respective handlers
-// This makes it easy to add new node types without modifying the core logic
-interface NodeHandler {
-    create: (params: any) => Promise<any>;
-    update: (params: any) => Promise<any>;
-    delete: (id: string) => Promise<any>;
-    createEdge: (edge: any) => Promise<any>;
-    deleteEdge: (id: string) => Promise<any>;
-}
+const panOnDragButtons = [1];
 
 export default function Canvas() {
     // Use any type to avoid TypeScript errors with complex node structures
@@ -43,103 +31,6 @@ export default function Canvas() {
     const [deletingNodes, setDeletingNodes] = useState<Set<string>>(new Set());
     const [deletingEdges, setDeletingEdges] = useState<Set<string>>(new Set());
     const [updatingNodePositions, setUpdatingNodePositions] = useState<Set<string>>(new Set());
-    
-    // Create a registry of node handlers
-    const nodeHandlers = useMemo<Record<string, NodeHandler>>(() => ({
-        'meta': {
-            create: MetaHandlers.create.bind(MetaHandlers),
-            update: MetaHandlers.update.bind(MetaHandlers),
-            delete: MetaHandlers.delete.bind(MetaHandlers),
-            createEdge: MetaHandlers.createMetaEdge.bind(MetaHandlers),
-            deleteEdge: MetaHandlers.deleteMetaEdge.bind(MetaHandlers)
-        },
-        'milestone': {
-            create: MilestoneHandlers.create.bind(MilestoneHandlers),
-            update: MilestoneHandlers.update.bind(MilestoneHandlers),
-            delete: MilestoneHandlers.delete.bind(MilestoneHandlers),
-            createEdge: MilestoneHandlers.createMilestoneEdge.bind(MilestoneHandlers),
-            deleteEdge: MilestoneHandlers.deleteMilestoneEdge.bind(MilestoneHandlers)
-        }
-        // Add more node types here as needed
-    }), []);
-    
-    // Helper function to get the appropriate handler for a node
-    const getNodeHandler = useCallback((nodeType: string | undefined): NodeHandler | null => {
-        if (!nodeType) {
-            console.warn('No node type provided');
-            return null;
-        }
-        
-        const handler = nodeHandlers[nodeType];
-        if (!handler) {
-            console.warn(`No handler registered for node type: ${nodeType}`);
-            return null;
-        }
-        return handler;
-    }, [nodeHandlers]);
-    
-    // Helper function to check if a node is temporary
-    const isTemporaryNode = useCallback((node: Node): boolean => {
-        // Log all node details for debugging
-        if (node.id.includes('milestone')) {
-            console.log('Checking node:', {
-                id: node.id,
-                type: node.type,
-                data: node.data,
-                isDataTemporary: node.data?.isTemporary
-            });
-        }
-        
-        // Check if the node has an explicit temporary flag
-        if (node.data?.isTemporary === true) {
-            if (node.id.includes('milestone')) {
-                console.log(`Node ${node.id} has isTemporary flag, treating as temporary`);
-            }
-            return true;
-        }
-        
-        // For milestone nodes, we need special handling
-        if (node.id.startsWith('milestone-')) {
-            // Log for debugging
-            console.log(`Detailed milestone node check for ${node.id}:`, {
-                id: node.id,
-                type: node.type,
-                hasUUID: /^milestone-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(node.id),
-                hasTimestamp: /^milestone-\d+$/.test(node.id)
-            });
-            
-            // If it's a UUID format with milestone- prefix, it's from the database
-            if (/^milestone-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(node.id)) {
-                console.log(`Node ${node.id} has UUID format with milestone- prefix, treating as permanent`);
-                return false;
-            }
-            
-            // If it's just milestone-[number], it's likely a temporary node
-            if (/^milestone-\d+$/.test(node.id)) {
-                console.log(`Node ${node.id} appears to be a temporary node with timestamp`);
-                return true;
-            }
-            
-            // Default to treating as temporary for safety
-            console.log(`Node ${node.id} has milestone- prefix but unknown format, treating as temporary`);
-            return true;
-        }
-        
-        // Check for meta- prefix (legacy temporary nodes)
-        if (node.id.startsWith('meta-')) {
-            return true;
-        }
-        
-        // Check for type-timestamp pattern (another way to identify temporary nodes)
-        if (node.id.includes('-') && 
-            node.id.split('-')[0] === node.type && 
-            !isNaN(Number(node.id.split('-')[1]))) {
-            return true;
-        }
-        
-        // If none of the above conditions are met, the node is not temporary
-        return false;
-    }, []);
     
     // Fetch graph data on component mount
     useEffect(() => {
@@ -201,25 +92,11 @@ export default function Canvas() {
         setDeletingNodes(prev => new Set(prev).add(nodeId));
         
         try {
-            // Check if this is a temporary node
-            if (isTemporaryNode(nodeToDelete)) {
-                console.log(`Detected temporary node ID: ${nodeId}, removing from UI only`);
-                // Just remove it from the UI, no need to call the API
-                return;
-            }
-            
-            // Get the appropriate handler for this node type
-            const handler = getNodeHandler(nodeToDelete.type);
-            if (!handler) {
-                console.warn(`No handler found for node type: ${nodeToDelete.type}, removing from UI only`);
-                return;
-            }
-            
             console.log(`Deleting ${nodeToDelete.type} node: ${nodeId}`);
             
             // Try to delete the node
             try {
-                await handler.delete(nodeId);
+                await GraphApiClient.deleteNode(nodeToDelete.type as NodeType, nodeId);
                 console.log(`Successfully deleted ${nodeToDelete.type} node: ${nodeId}`);
             } catch (error) {
                 // If the error is a 404, the node doesn't exist in the database
@@ -249,7 +126,7 @@ export default function Canvas() {
                 return newSet;
             });
         }
-    }, [nodes, setNodes, isTemporaryNode, getNodeHandler]);
+    }, [nodes, setNodes]);
     
     // Handle edge deletion
     const handleEdgeDelete = useCallback(async (edgeId: string) => {
@@ -270,14 +147,7 @@ export default function Canvas() {
                 return;
             }
             
-            // Get the appropriate handler for this node type
-            const handler = getNodeHandler(sourceNode.type);
-            if (!handler) {
-                console.warn(`No handler found for node type: ${sourceNode.type}, removing from UI only`);
-                return;
-            }
-            
-            await handler.deleteEdge(edgeId);
+            await GraphApiClient.deleteEdge(sourceNode.type as NodeType, edgeId);
             console.log(`Successfully deleted ${sourceNode.type} edge: ${edgeId}`);
         } catch (error) {
             console.error(`Error deleting edge ${edgeId}:`, error);
@@ -295,7 +165,7 @@ export default function Canvas() {
                 return newSet;
             });
         }
-    }, [edges, setEdges, nodes, getNodeHandler]);
+    }, [edges, setEdges, nodes]);
     
     // Handle node position updates with better UX
     const handleNodePositionChange = useCallback(async (change: NodePositionChange) => {
@@ -304,15 +174,9 @@ export default function Canvas() {
         // Skip if we're already updating this node's position or if position is undefined
         if (updatingNodePositions.has(id) || !position) return;
         
-        // Get the current node to check if it's temporary
+        // Get the current node
         const currentNode = nodes.find(node => node.id === id);
         if (!currentNode) return;
-        
-        // Check if this is a temporary node
-        if (isTemporaryNode(currentNode)) {
-            console.log(`Skipping position update for temporary node: ${id}`);
-            return;
-        }
         
         // Mark node as being updated
         setUpdatingNodePositions(prev => new Set(prev).add(id));
@@ -337,17 +201,11 @@ export default function Canvas() {
                     Math.abs((currentNode.position.y || 0) - initialPosition.y) > 5;
                 
                 if (significantChange) {
-                    // Get the appropriate handler for this node type
-                    const handler = getNodeHandler(currentNode.type);
-                    if (!handler) {
-                        console.warn(`No handler found for node type: ${currentNode.type}, skipping position update`);
-                        return;
-                    }
-                    
-                    await handler.update({ 
-                        id, 
-                        position: currentNode.position 
-                    });
+                    await GraphApiClient.updateNode(
+                        currentNode.type as NodeType,
+                        id,
+                        { position: currentNode.position }
+                    );
                     console.log(`Updated position for ${currentNode.type} node ${id}:`, currentNode.position);
                 } else {
                     console.log(`Skipping position update for node ${id} (change too small)`);
@@ -363,22 +221,11 @@ export default function Canvas() {
                 });
             }
         }, 1000); // 1 second debounce
-    }, [updatingNodePositions, nodes, isTemporaryNode, getNodeHandler]);
+    }, [updatingNodePositions, nodes]);
     
     // Track when a node has finished moving (on mouse up)
     const onNodeDragStop = useCallback(async (event: React.MouseEvent, node: Node) => {
         console.log(`Node drag stopped for ${node.id}`, node.position);
-        
-        // Check if this is a temporary node
-        if (isTemporaryNode(node)) {
-            console.log(`Node ID: ${node.id}`);
-            console.log(`Is temporary node check: true`);
-            console.log(`Skipping temporary node: ${node.id}`);
-            return;
-        }
-        
-        console.log(`Node ID: ${node.id}`);
-        console.log(`Is temporary node check: false`);
         
         // Save the final position after drag
         if (node.position) {
@@ -387,7 +234,6 @@ export default function Canvas() {
             // The issue might be with how we're passing the position data
             // Let's ensure we're passing it in the format expected by the API
             const updateData = {
-                id: node.id,
                 position: {
                     x: node.position.x,
                     y: node.position.y
@@ -397,20 +243,17 @@ export default function Canvas() {
             console.log('Sending update with data:', updateData);
             
             try {
-                // Get the appropriate handler for this node type
-                const handler = getNodeHandler(node.type);
-                if (!handler) {
-                    console.warn(`No handler found for node type: ${node.type}, skipping position update`);
-                    return;
-                }
-                
-                await handler.update(updateData);
+                await GraphApiClient.updateNode(
+                    node.type as NodeType,
+                    node.id,
+                    updateData
+                );
                 console.log(`Successfully updated position for ${node.type} node ${node.id}`);
             } catch (error) {
                 console.error(`Failed to update position for node ${node.id}:`, error);
             }
         }
-    }, [isTemporaryNode, getNodeHandler]);
+    }, []);
     
     // Custom handler for node changes to intercept position changes and deletions
     const handleNodesChange = useCallback(
@@ -504,14 +347,7 @@ export default function Canvas() {
                 return;
             }
             
-            // Get the appropriate handler for this node type
-            const handler = getNodeHandler(sourceNode.type);
-            if (!handler) {
-                console.warn(`No handler found for node type: ${sourceNode.type}, skipping edge creation`);
-                return;
-            }
-            
-            const createdEdge = await handler.createEdge(edgeData);
+            const createdEdge = await GraphApiClient.createEdge(sourceNode.type as NodeType, edgeData);
             console.log(`${sourceNode.type} edge created in database:`, createdEdge);
             
             // Update the edge in the UI with the data from the database
@@ -528,7 +364,7 @@ export default function Canvas() {
             console.error('Error creating edge:', error);
             setError(`Failed to create edge: ${error instanceof Error ? error.message : 'Unknown error'}`);
         }
-    }, [edges, setEdges, nodes, getNodeHandler]);
+    }, [edges, setEdges, nodes]);
 
     return (
       <div className={`h-full w-full`}>

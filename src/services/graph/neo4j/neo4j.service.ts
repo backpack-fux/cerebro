@@ -6,7 +6,7 @@ if (typeof window !== 'undefined') {
   
 import neo4j, { Driver, Node as Neo4jNode, Relationship as Neo4jRelationship } from 'neo4j-driver';
 import { IGraphStorage, GraphNode, GraphEdge, GraphData } from './graph.interface';
-import { NodeType, ReactFlowId, RelationshipType } from '../base-node/reactflow.types';
+import { NodeType, ReactFlowId } from '../base-node/reactflow.types';
 import { Neo4jConfig } from './neo4j.configs';
 import { CYPHER_QUERIES } from './cypher.configs';
 import { XYPosition } from '@xyflow/react';

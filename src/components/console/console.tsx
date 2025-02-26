@@ -1,22 +1,14 @@
 "use client";
 
 import { Panel } from "@xyflow/react";
-import { 
-  Box, 
-  Flag, 
-  Puzzle, 
-  Users, 
-  User, 
-  Building2, 
-  GitFork,
-  Calendar,
-  Code,
-  StickyNote
-} from "lucide-react";
+import { Box, Flag, Puzzle, Users, User, Building2, GitFork, Calendar, Code, StickyNote } from "lucide-react";
 import { useCallback, useState } from "react";
 import { useReactFlow } from "@xyflow/react";
 import { Button } from "@/components/ui/button";
-import { MetaHandlers } from "@/services/graph/meta/meta.handlers";
+import { GraphApiClient } from "@/services/graph/neo4j/api-client";
+import { NodeType } from "@/services/graph/neo4j/api-urls";
+import { Toaster } from "@/components/ui/sonner";
+import { toast } from "sonner";
 
 // Node type definitions with their respective icons and labels
 const nodeTypes = [
@@ -33,7 +25,7 @@ const nodeTypes = [
 ] as const;
 
 export function Console() {
-  const { addNodes, setNodes, getNodes, getViewport } = useReactFlow();
+  const { addNodes, getViewport } = useReactFlow();
   const [isCreating, setIsCreating] = useState<Record<string, boolean>>({});
 
   const createNode = useCallback(async (type: string, label: string) => {
@@ -58,70 +50,39 @@ export function Console() {
         y: position.y - 50 
       };
 
-      // Create a temporary node to show immediately in the UI
-      const tempId = `${type}-${Date.now()}`;
-      const newNode = {
-        id: tempId,
-        type,
+      // Create the node directly in the database first
+      const createdNode = await GraphApiClient.createNode(type as NodeType, {
+        title: `New ${label}`,
+        description: `A new ${label.toLowerCase()} node`,
         position: nodePosition,
-        data: { 
-          title: `New ${label}`,
-          description: `A new ${label.toLowerCase()} node`,
-          isTemporary: true // Mark as temporary for easier detection
-        },
+      });
+      
+      console.log(`${type} node created in database:`, createdNode);
+      
+      // Add the node to the UI only after successful creation
+      const permanentNode = {
+        ...createdNode,
+        position: nodePosition, // Use the original position to avoid jumps
       };
-
-      // Add the node to the UI immediately for better UX
-      addNodes(newNode);
-
-      // Only make API call for meta nodes for now
-      if (type === 'meta') {
-        try {
-          // Use MetaHandlers to create the node in the database
-          const createdNode = await MetaHandlers.create({
-            title: `New ${label}`,
-            description: `A new ${label.toLowerCase()} node`,
-            position: nodePosition,
-          });
-          
-          console.log('Node created in database:', createdNode);
-          
-          // Remove the temporary node and add the permanent one
-          const currentNodes = getNodes();
-          
-          // Ensure the position is correctly preserved
-          const permanentNode = {
-            ...createdNode,
-            position: nodePosition, // Use the original position to avoid jumps
-            data: {
-              ...createdNode.data,
-              isTemporary: false // Mark as permanent
-            }
-          };
-          
-          console.log('Replacing temporary node with permanent node:', {
-            tempId,
-            permanentNode
-          });
-          
-          setNodes(
-            currentNodes
-              .filter(node => node.id !== tempId) // Remove the temporary node
-              .concat(permanentNode)
-          );
-        } catch (error) {
-          console.error('Error creating node in database:', error);
-          // Keep the temporary node visible since the API call failed
-        }
-      }
+      
+      addNodes(permanentNode);
+      
+      // Show success message
+      toast(`Successfully created a new ${label} node.`, {
+        description: `The ${label.toLowerCase()} node has been added to the canvas.`,
+      });
     } catch (error) {
-      console.error('Error creating node:', error);
-      // You could add error handling UI here
+      console.error(`Error creating ${type} node:`, error);
+      
+      // Show error message
+      toast.error(`Failed to create ${label} node`, {
+        description: `${error instanceof Error ? error.message : 'Unknown error'}`,
+      });
     } finally {
       // Clear loading state
       setIsCreating(prev => ({ ...prev, [type]: false }));
     }
-  }, [addNodes, setNodes, getNodes, getViewport, isCreating]);
+  }, [addNodes, getViewport, isCreating]);
 
   return (
     <Panel 
@@ -149,4 +110,4 @@ export function Console() {
       </div>
     </Panel>
   );
-} 
+}
