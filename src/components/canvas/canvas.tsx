@@ -105,16 +105,29 @@ export default function Canvas() {
             try {
                 await GraphApiClient.deleteNode(nodeToDelete.type as NodeType, nodeId);
                 console.log(`Successfully deleted ${nodeToDelete.type} node: ${nodeId}`);
+                
+                // Show success toast
+                toast(`Node deleted`, {
+                    description: `The ${nodeToDelete.type} node has been removed.`
+                });
             } catch (error) {
                 // If the error is a 404, the node doesn't exist in the database
                 // We can still remove it from the UI
                 if (error instanceof Error && error.message.includes('404')) {
                     console.warn(`Node ${nodeId} not found in database, removing from UI only`);
+                    toast(`Node removed from canvas`, {
+                        description: `The node was already deleted from the database.`
+                    });
                 } else {
                     // For other errors, add the node back to the UI
                     console.error(`Error deleting node ${nodeId}:`, error);
                     setNodes((currentNodes: any[]) => [...currentNodes, nodeToDelete]);
                     setError(`Failed to delete node: ${error instanceof Error ? error.message : 'Unknown error'}`);
+                    
+                    // Show error toast
+                    toast.error(`Failed to delete node`, {
+                        description: `${error instanceof Error ? error.message : 'Unknown error'}`
+                    });
                 }
             }
         } catch (error) {
@@ -125,6 +138,11 @@ export default function Canvas() {
             
             // Show error message
             setError(`Failed to delete node: ${error instanceof Error ? error.message : 'Unknown error'}`);
+            
+            // Show error toast
+            toast.error(`Failed to delete node`, {
+                description: `${error instanceof Error ? error.message : 'Unknown error'}`
+            });
         } finally {
             // Remove from deleting set
             setDeletingNodes(prev => {
@@ -156,6 +174,11 @@ export default function Canvas() {
             
             await GraphApiClient.deleteEdge(sourceNode.type as NodeType, edgeId);
             console.log(`Successfully deleted ${sourceNode.type} edge: ${edgeId}`);
+            
+            // Show success toast
+            toast(`Connection removed`, {
+                description: `The connection has been deleted.`
+            });
         } catch (error) {
             console.error(`Error deleting edge ${edgeId}:`, error);
             
@@ -164,6 +187,11 @@ export default function Canvas() {
             
             // Show error message
             setError(`Failed to delete edge: ${error instanceof Error ? error.message : 'Unknown error'}`);
+            
+            // Show error toast
+            toast.error(`Failed to delete connection`, {
+                description: `${error instanceof Error ? error.message : 'Unknown error'}`
+            });
         } finally {
             // Remove from deleting set
             setDeletingEdges(prev => {
@@ -256,8 +284,19 @@ export default function Canvas() {
                     updateData
                 );
                 console.log(`Successfully updated position for ${node.type} node ${node.id}`);
+                
+                // Show success toast (but make it subtle since this happens often)
+                toast(`Position saved`, {
+                    description: `Node position has been updated.`,
+                    duration: 2000 // shorter duration for frequent operations
+                });
             } catch (error) {
                 console.error(`Failed to update position for node ${node.id}:`, error);
+                
+                // Show error toast
+                toast.error(`Failed to save position`, {
+                    description: `${error instanceof Error ? error.message : 'Unknown error'}`
+                });
             }
         }
     }, []);
@@ -308,6 +347,9 @@ export default function Canvas() {
         
         if (existingEdge) {
             console.log('Edge already exists between these nodes:', existingEdge);
+            toast.error(`Connection already exists`, {
+                description: `These nodes are already connected.`
+            });
             return; // Don't create a duplicate edge
         }
         
@@ -351,6 +393,9 @@ export default function Canvas() {
             const sourceNode = nodes.find(node => node.id === connection.source);
             if (!sourceNode) {
                 console.warn(`Source node not found for connection, skipping edge creation`);
+                toast.error(`Failed to create connection`, {
+                    description: `Source node not found.`
+                });
                 return;
             }
             
@@ -367,9 +412,19 @@ export default function Canvas() {
                         : edge
                 )
             );
+            
+            // Show success toast
+            toast(`Connection created`, {
+                description: `A new ${edgeLabel.toLowerCase()} connection has been established.`
+            });
         } catch (error) {
             console.error('Error creating edge:', error);
             setError(`Failed to create edge: ${error instanceof Error ? error.message : 'Unknown error'}`);
+            
+            // Show error toast
+            toast.error(`Failed to create connection`, {
+                description: `${error instanceof Error ? error.message : 'Unknown error'}`
+            });
         }
     }, [edges, setEdges, nodes]);
 
