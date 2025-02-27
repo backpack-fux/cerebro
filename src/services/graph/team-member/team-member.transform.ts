@@ -75,6 +75,8 @@ export function reactFlowToNeo4jEdge(edge: RFTeamMemberEdge): GraphEdge {
     properties: {
       label: edge.data?.label,
       memberSummary: edge.data?.memberSummary ? JSON.stringify(edge.data.memberSummary) : undefined,
+      allocation: edge.data?.allocation,
+      role: edge.data?.role,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     },
@@ -104,7 +106,9 @@ export function neo4jToReactFlowEdge(edge: Neo4jTeamMemberEdge): RFTeamMemberEdg
     data: {
       label: edge.properties?.label,
       edgeType: edge.type.toLowerCase(),
-      memberSummary
+      memberSummary,
+      allocation: edge.properties?.allocation,
+      role: edge.properties?.role
     }
   };
 }

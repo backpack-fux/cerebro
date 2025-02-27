@@ -16,6 +16,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Trash } from "lucide-react";
+import { Slider } from "@/components/ui/slider";
 import { RFTeamMemberNodeData } from "@/services/graph/team-member/team-member.types";
 import { RFTeamNodeData, Season, RosterMember } from '@/services/graph/team/team.types';
 import { GraphApiClient } from '@/services/graph/neo4j/api-client';
@@ -83,11 +84,13 @@ export function TeamNode({ id, data, selected }: NodeProps) {
         const memberNode = getNodes().find(n => n.id === conn.source);
         if (!memberNode) return null;
 
-        // Create a new roster member with 0% initial allocation
+        // Create a new roster member with default values
         const newMember: RosterMember = {
           memberId: memberNode.id,
-          role: (memberNode.data as any).role as Role,
-          allocation: 0,  // Start at 0% instead of 100%
+          // Get the role from the member node or default to "Developer"
+          role: (memberNode.data as any).roles?.[0] || "Developer",
+          // Start with a default allocation of 80%
+          allocation: 80,
           startDate: new Date().toISOString().split('T')[0],
           allocations: []
         };
@@ -212,7 +215,16 @@ export function TeamNode({ id, data, selected }: NodeProps) {
     if (rosterDebounceRef.current) clearTimeout(rosterDebounceRef.current);
     
     rosterDebounceRef.current = setTimeout(async () => {
-      await saveToBackend('roster', roster);
+      // Ensure each roster member has the required properties
+      const validRoster = roster.map(member => ({
+        memberId: member.memberId,
+        allocation: typeof member.allocation === 'number' ? member.allocation : 80,
+        role: member.role || "Developer",
+        startDate: member.startDate || new Date().toISOString().split('T')[0],
+        allocations: member.allocations || []
+      }));
+      
+      await saveToBackend('roster', validRoster);
       rosterDebounceRef.current = null;
     }, 1000);
   };
@@ -255,8 +267,8 @@ export function TeamNode({ id, data, selected }: NodeProps) {
 
   const handleSeasonChange = useCallback((updates: Partial<Season>) => {
     const defaultSeason: Season = {
-      startDate: new Date().toISOString().split('T')[0],
-      endDate: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+      startDate: '2025-01-01',
+      endDate: '2025-12-31',
       name: 'New Season'
     };
 
@@ -297,6 +309,36 @@ export function TeamNode({ id, data, selected }: NodeProps) {
     saveRosterToBackend(updatedRoster);
   }, [id, teamData, updateNodeData, edges, setEdges, roster]);
 
+  const handleAllocationChange = useCallback((memberId: string, allocation: number) => {
+    // Ensure roster is an array before using array methods
+    const rosterArray = Array.isArray(roster) ? roster : [];
+    const updatedRoster = rosterArray.map((member: RosterMember) => {
+      if (member.memberId === memberId) {
+        return { ...member, allocation };
+      }
+      return member;
+    });
+    
+    updateNodeData(id, {
+      ...teamData,
+      roster: updatedRoster
+    });
+    
+    saveRosterToBackend(updatedRoster);
+    
+    // Also update the team member node
+    const teamMember = getNodes().find(n => n.id === memberId);
+    if (teamMember) {
+      GraphApiClient.updateNode('teamMember' as NodeType, memberId, { allocation })
+        .catch(error => {
+          console.error(`Failed to update team member allocation:`, error);
+          toast.error("Failed to update allocation", {
+            description: "The team member allocation could not be updated."
+          });
+        });
+    }
+  }, [id, teamData, updateNodeData, getNodes, roster, saveRosterToBackend]);
+
   const handleDelete = useCallback(() => {
     // Delete the node from the backend
     GraphApiClient.deleteNode('team' as NodeType, id)
@@ -323,6 +365,24 @@ export function TeamNode({ id, data, selected }: NodeProps) {
       })
       .catch((error) => console.error('Failed to delete edge:', error));
   }, [setEdges]);
+
+  // Initialize season with defaults if it doesn't exist
+  useEffect(() => {
+    if (!teamData.season) {
+      const defaultSeason: Season = {
+        startDate: '2025-01-01',
+        endDate: '2025-12-31',
+        name: 'New Season'
+      };
+      
+      updateNodeData(id, {
+        ...teamData,
+        season: defaultSeason
+      });
+      
+      saveSeasonToBackend(defaultSeason);
+    }
+  }, [id, teamData, updateNodeData, saveSeasonToBackend]);
 
   // Clean up debounce timers on unmount
   useEffect(() => {
@@ -388,7 +448,7 @@ export function TeamNode({ id, data, selected }: NodeProps) {
               <Label className="text-xs">Start Date</Label>
               <Input
                 type="date"
-                value={teamData.season?.startDate || ''}
+                value={teamData.season?.startDate || '2025-01-01'}
                 onChange={(e) => handleSeasonChange({ startDate: e.target.value })}
                 className="bg-transparent"
               />
@@ -397,7 +457,7 @@ export function TeamNode({ id, data, selected }: NodeProps) {
               <Label className="text-xs">End Date</Label>
               <Input
                 type="date"
-                value={teamData.season?.endDate || ''}
+                value={teamData.season?.endDate || '2025-12-31'}
                 onChange={(e) => handleSeasonChange({ endDate: e.target.value })}
                 className="bg-transparent"
               />
@@ -463,21 +523,36 @@ export function TeamNode({ id, data, selected }: NodeProps) {
               if (!isTeamMemberNode(teamMember)) return null;
 
               return (
-                <div key={member.memberId} className="flex items-center gap-2 p-2 bg-muted/30 rounded-lg">
-                  <div className="flex-1">
+                <div key={member.memberId} className="space-y-2 p-2 bg-muted/30 rounded-lg">
+                  <div className="flex items-center justify-between">
                     <div className="font-medium">{String(teamMember.data.title || '')}</div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => removeRosterMember(member.memberId)}
+                      className="h-6 w-6 p-0"
+                    >
+                      <Trash className="h-4 w-4" />
+                    </Button>
+                  </div>
+                  
+                  <div className="space-y-1">
+                    <div className="flex justify-between items-center text-xs">
+                      <span className="text-muted-foreground">{member.role}</span>
+                      <span>{member.allocation}% allocated</span>
+                    </div>
+                    <Slider
+                      value={[member.allocation]}
+                      min={0}
+                      max={100}
+                      step={5}
+                      onValueChange={(values) => handleAllocationChange(member.memberId, values[0])}
+                      className="w-full"
+                    />
                     <div className="text-xs text-muted-foreground">
-                      {member.role} • {member.allocation}% allocated
+                      {Math.round((teamMember.data.weeklyCapacity * member.allocation) / 100)} hours per week
                     </div>
                   </div>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => removeRosterMember(member.memberId)}
-                    className="h-6 w-6 p-0"
-                  >
-                    <Trash className="h-4 w-4" />
-                  </Button>
                 </div>
               );
             })}

@@ -9,7 +9,7 @@ import {
   NodeHeaderMenuAction,
 } from '@/components/nodes/node-header';
 import { DropdownMenuItem } from "@radix-ui/react-dropdown-menu";
-import { useCallback, useMemo, useEffect, useRef } from "react";
+import { useCallback, useMemo, useEffect, useRef, useState } from "react";
 import { useReactFlow, useNodeConnections } from "@xyflow/react";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
@@ -29,6 +29,7 @@ import {
   EARLIEST_START_DATE
 } from '@/services/graph/team-member/team-member.types';
 import { BASE_ROLES } from '@/services/graph/shared/shared.types';
+import { Slider } from "@/components/ui/slider";
 
 export function TeamMemberNode({ 
   id, 
@@ -51,6 +52,7 @@ export function TeamMemberNode({
   const startDateDebounceRef = useRef<NodeJS.Timeout | null>(null);
   const rolesDebounceRef = useRef<NodeJS.Timeout | null>(null);
   const timezoneDebounceRef = useRef<NodeJS.Timeout | null>(null);
+  const allocationDebounceRef = useRef<NodeJS.Timeout | null>(null);
 
   // Helper function to save data to backend
   const saveToBackend = useCallback(async (updatedData: Partial<RFTeamMemberNodeData>) => {
@@ -326,6 +328,23 @@ export function TeamMemberNode({
     }, 1000); // 1 second debounce
   }, [id, memberData, updateNodeData, saveToBackend]);
 
+  // Add this after the timezone handler
+  const handleAllocationChange = useCallback((allocation: number) => {
+    const updatedData: Partial<RFTeamMemberNodeData> = { allocation };
+    updateNodeData(id, { ...memberData, ...updatedData });
+    
+    // Clear any existing debounce timer
+    if (allocationDebounceRef.current) {
+      clearTimeout(allocationDebounceRef.current);
+    }
+    
+    // Set a new debounce timer
+    allocationDebounceRef.current = setTimeout(async () => {
+      await saveToBackend(updatedData);
+      allocationDebounceRef.current = null;
+    }, 1000); // 1 second debounce
+  }, [id, memberData, updateNodeData, saveToBackend]);
+
   // Update connection handling to pass summary data
   useEffect(() => {
     const teamConnection = connections.find(conn => {
@@ -384,6 +403,7 @@ export function TeamMemberNode({
       if (startDateDebounceRef.current) clearTimeout(startDateDebounceRef.current);
       if (rolesDebounceRef.current) clearTimeout(rolesDebounceRef.current);
       if (timezoneDebounceRef.current) clearTimeout(timezoneDebounceRef.current);
+      if (allocationDebounceRef.current) clearTimeout(allocationDebounceRef.current);
     };
   }, []);
 
@@ -494,6 +514,25 @@ export function TeamMemberNode({
           <div className="flex justify-between items-center">
             <Label>Weekly Capacity</Label>
             <span className="text-sm font-mono">{memberData.weeklyCapacity || 0} hours</span>
+          </div>
+        </div>
+
+        {/* Team Allocation */}
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <Label>Team Allocation</Label>
+            <span className="text-xs font-medium">{memberData.allocation || 0}%</span>
+          </div>
+          <Slider
+            value={[memberData.allocation || 0]}
+            min={0}
+            max={100}
+            step={5}
+            onValueChange={(values) => handleAllocationChange(values[0])}
+            className="w-full"
+          />
+          <div className="text-xs text-muted-foreground">
+            {Math.round(((memberData.weeklyCapacity || 0) * (memberData.allocation || 0)) / 100)} hours per week
           </div>
         </div>
 

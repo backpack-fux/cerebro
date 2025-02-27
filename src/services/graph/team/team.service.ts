@@ -9,6 +9,13 @@ export class TeamService {
     console.log('[TeamService] Creating team node:', params);
     
     try {
+      // Default season if not provided
+      const defaultSeason = {
+        startDate: '2025-01-01',
+        endDate: '2025-12-31',
+        name: 'New Season'
+      };
+
       // Create a complete node with default values
       const node: RFTeamNode = {
         id: crypto.randomUUID(),
@@ -18,7 +25,7 @@ export class TeamService {
           title: params.title,
           description: params.description || '',
           name: params.title, // Default name to title
-          season: params.season,
+          season: params.season || defaultSeason, // Use default season if not provided
           roster: params.roster || [], // Initialize with empty roster if not provided
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
