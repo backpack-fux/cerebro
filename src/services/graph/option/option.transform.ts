@@ -2,6 +2,28 @@ import { RFOptionNode, RFOptionNodeData, Neo4jOptionNodeData, RFOptionEdge, Neo4
 import { GraphEdge, GraphNode } from '../neo4j/graph.interface';
 import { Node as Neo4jNode, Relationship as Neo4jRelationship } from 'neo4j-driver';
 
+/**
+ * Helper function to safely parse JSON strings
+ * @param jsonString The string to parse as JSON
+ * @param defaultValue The default value to return if parsing fails
+ * @returns The parsed JSON object or the default value
+ */
+function safeJsonParse<T>(jsonString: string | undefined, defaultValue: T): T {
+  if (!jsonString) return defaultValue;
+  
+  // Check if the string is a valid JSON before attempting to parse
+  if (typeof jsonString !== 'string' || !jsonString.trim().startsWith('{') && !jsonString.trim().startsWith('[')) {
+    return defaultValue;
+  }
+  
+  try {
+    return JSON.parse(jsonString) as T;
+  } catch (e) {
+    console.warn('Failed to parse JSON string:', e);
+    return defaultValue;
+  }
+}
+
 export function reactFlowToNeo4j(optionNode: RFOptionNode): Neo4jOptionNodeData {
   const data = optionNode.data as RFOptionNodeData; // Cast to ensure type safety
   return {
@@ -29,57 +51,12 @@ export function reactFlowToNeo4j(optionNode: RFOptionNode): Neo4jOptionNodeData 
 }
 
 export function neo4jToReactFlow(neo4jData: Neo4jOptionNodeData): RFOptionNode {
-  // Parse JSON strings back to objects
-  let teamMembers: string[] = [];
-  let memberAllocations: MemberAllocation[] = [];
-  let goals: Goal[] = [];
-  let risks: Risk[] = [];
-  let teamAllocations: TeamAllocation[] = [];
-
-  try {
-    if (neo4jData.teamMembers) {
-      try {
-        const parsedTeamMembers = JSON.parse(neo4jData.teamMembers);
-        teamMembers = Array.isArray(parsedTeamMembers) ? parsedTeamMembers : [];
-      } catch (e) {
-        console.warn('Failed to parse teamMembers string:', e);
-      }
-    }
-    if (neo4jData.memberAllocations) {
-      try {
-        const parsedMemberAllocations = JSON.parse(neo4jData.memberAllocations);
-        memberAllocations = Array.isArray(parsedMemberAllocations) ? parsedMemberAllocations : [];
-      } catch (e) {
-        console.warn('Failed to parse memberAllocations string:', e);
-      }
-    }
-    if (neo4jData.goals) {
-      try {
-        const parsedGoals = JSON.parse(neo4jData.goals);
-        goals = Array.isArray(parsedGoals) ? parsedGoals : [];
-      } catch (e) {
-        console.warn('Failed to parse goals string:', e);
-      }
-    }
-    if (neo4jData.risks) {
-      try {
-        const parsedRisks = JSON.parse(neo4jData.risks);
-        risks = Array.isArray(parsedRisks) ? parsedRisks : [];
-      } catch (e) {
-        console.warn('Failed to parse risks string:', e);
-      }
-    }
-    if (neo4jData.teamAllocations) {
-      try {
-        const parsedTeamAllocations = JSON.parse(neo4jData.teamAllocations);
-        teamAllocations = Array.isArray(parsedTeamAllocations) ? parsedTeamAllocations : [];
-      } catch (e) {
-        console.warn('Failed to parse teamAllocations string:', e);
-      }
-    }
-  } catch (error) {
-    console.error('Error in neo4jToReactFlow:', error);
-  }
+  // Parse JSON strings back to objects using the safe parser
+  const teamMembers = safeJsonParse<string[]>(neo4jData.teamMembers, []);
+  const memberAllocations = safeJsonParse<MemberAllocation[]>(neo4jData.memberAllocations, []);
+  const goals = safeJsonParse<Goal[]>(neo4jData.goals, []);
+  const risks = safeJsonParse<Risk[]>(neo4jData.risks, []);
+  const teamAllocations = safeJsonParse<TeamAllocation[]>(neo4jData.teamAllocations, []);
 
   return {
     id: neo4jData.id,
@@ -168,57 +145,12 @@ export function transformOptionNode(node: Neo4jNode): GraphNode<RFOptionNodeData
     ...properties 
   } = node.properties;
 
-  // Parse JSON strings back to objects
-  let teamMembersData: string[] = [];
-  let memberAllocationsData: MemberAllocation[] = [];
-  let goalsData: Goal[] = [];
-  let risksData: Risk[] = [];
-  let teamAllocationsData: TeamAllocation[] = [];
-
-  try {
-    if (teamMembers) {
-      try {
-        const parsedTeamMembers = JSON.parse(teamMembers as string);
-        teamMembersData = Array.isArray(parsedTeamMembers) ? parsedTeamMembers : [];
-      } catch (e) {
-        console.warn('Failed to parse teamMembers string:', e);
-      }
-    }
-    if (memberAllocations) {
-      try {
-        const parsedMemberAllocations = JSON.parse(memberAllocations as string);
-        memberAllocationsData = Array.isArray(parsedMemberAllocations) ? parsedMemberAllocations : [];
-      } catch (e) {
-        console.warn('Failed to parse memberAllocations string:', e);
-      }
-    }
-    if (goals) {
-      try {
-        const parsedGoals = JSON.parse(goals as string);
-        goalsData = Array.isArray(parsedGoals) ? parsedGoals : [];
-      } catch (e) {
-        console.warn('Failed to parse goals string:', e);
-      }
-    }
-    if (risks) {
-      try {
-        const parsedRisks = JSON.parse(risks as string);
-        risksData = Array.isArray(parsedRisks) ? parsedRisks : [];
-      } catch (e) {
-        console.warn('Failed to parse risks string:', e);
-      }
-    }
-    if (teamAllocations) {
-      try {
-        const parsedTeamAllocations = JSON.parse(teamAllocations as string);
-        teamAllocationsData = Array.isArray(parsedTeamAllocations) ? parsedTeamAllocations : [];
-      } catch (e) {
-        console.warn('Failed to parse teamAllocations string:', e);
-      }
-    }
-  } catch (error) {
-    console.error('Error in transformOptionNode:', error);
-  }
+  // Parse JSON strings back to objects using the safe parser
+  const teamMembersData = safeJsonParse<string[]>(teamMembers as string, []);
+  const memberAllocationsData = safeJsonParse<MemberAllocation[]>(memberAllocations as string, []);
+  const goalsData = safeJsonParse<Goal[]>(goals as string, []);
+  const risksData = safeJsonParse<Risk[]>(risks as string, []);
+  const teamAllocationsData = safeJsonParse<TeamAllocation[]>(teamAllocations as string, []);
 
   return {
     id: id as string,

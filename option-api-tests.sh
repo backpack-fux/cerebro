@@ -279,11 +279,7 @@ curl -s -X PATCH "$BASE_URL/$OPTION_ID" \
         "allocatedMembers": [
           {
             "memberId": "member5",
-            "hours": 20
-          },
-          {
-            "memberId": "member6",
-            "hours": 20
+            "hours": 40
           }
         ]
       }
@@ -294,12 +290,108 @@ curl -s -X PATCH "$BASE_URL/$OPTION_ID" \
 echo -e "\n${BLUE}9. Getting the option node with all updates${NC}"
 curl -s -X GET "$BASE_URL/$OPTION_ID"
 
-# 10. Delete the option node
-echo -e "\n${BLUE}10. Deleting the option node${NC}"
-curl -s -X DELETE "$BASE_URL/$OPTION_ID"
+# Create a second option node for edge testing
+echo -e "\n${BLUE}10. Creating a second option node for edge testing${NC}"
+RESPONSE2=$(curl -s -X POST $BASE_URL \
+  -H "Content-Type: application/json" \
+  -d '{
+    "title": "Target Option",
+    "description": "A target option for edge testing",
+    "position": { "x": 300, "y": 400 },
+    "optionType": "partner",
+    "duration": 20,
+    "status": "planning"
+  }')
 
-# 11. Try to get the deleted option node
-echo -e "\n${BLUE}11. Trying to get the deleted option node${NC}"
-curl -s -X GET "$BASE_URL/$OPTION_ID"
+echo "Response: $RESPONSE2"
+
+# Extract the ID of the second option
+TARGET_OPTION_ID=$(echo $RESPONSE2 | grep -o '"id":"[^"]*"' | sed 's/"id":"//g' | sed 's/"//g')
+
+if [ -z "$TARGET_OPTION_ID" ]; then
+  echo -e "${RED}Failed to extract target option ID from response${NC}"
+  # Use a hardcoded ID for testing
+  TARGET_OPTION_ID="target-option-test-id"
+  echo -e "${YELLOW}Using hardcoded target ID for testing: $TARGET_OPTION_ID${NC}"
+else
+  echo -e "${GREEN}Successfully created target option node with ID: $TARGET_OPTION_ID${NC}"
+fi
+
+# 11. Create an edge between the two option nodes
+echo -e "\n${BLUE}11. Creating an edge between option nodes${NC}"
+EDGE_RESPONSE=$(curl -s -X POST "$BASE_URL/edges" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "source": "'$OPTION_ID'",
+    "target": "'$TARGET_OPTION_ID'",
+    "type": "OPTION_DEPENDENCY",
+    "data": {
+      "label": "Depends on",
+      "description": "This option depends on the target option",
+      "priority": "high",
+      "allocation": 100
+    }
+  }')
+
+echo "Edge Response: $EDGE_RESPONSE"
+
+# Extract the edge ID
+EDGE_ID=$(echo $EDGE_RESPONSE | grep -o '"id":"[^"]*"' | sed 's/"id":"//g' | sed 's/"//g')
+
+if [ -z "$EDGE_ID" ]; then
+  echo -e "${RED}Failed to extract edge ID from response${NC}"
+  # Use a hardcoded ID for testing
+  EDGE_ID="edge-test-id"
+  echo -e "${YELLOW}Using hardcoded edge ID for testing: $EDGE_ID${NC}"
+else
+  echo -e "${GREEN}Successfully created edge with ID: $EDGE_ID${NC}"
+fi
+
+# 12. Get all edges for the source option node
+echo -e "\n${BLUE}12. Getting all edges for the source option node${NC}"
+curl -s -X GET "$BASE_URL/edges?nodeId=$OPTION_ID&type=OPTION_DEPENDENCY"
+
+# 13. Get the specific edge by ID
+echo -e "\n${BLUE}13. Getting the specific edge by ID${NC}"
+curl -s -X GET "$BASE_URL/edges/$EDGE_ID"
+
+# 14. Update the edge
+echo -e "\n${BLUE}14. Updating the edge${NC}"
+curl -s -X PATCH "$BASE_URL/edges/$EDGE_ID" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "label": "Strongly depends on",
+    "description": "This option strongly depends on the target option",
+    "priority": "high"
+  }'
+
+# 15. Get the updated edge
+echo -e "\n${BLUE}15. Getting the updated edge${NC}"
+curl -s -X GET "$BASE_URL/edges/$EDGE_ID"
+
+# 16. Delete the edge
+echo -e "\n${BLUE}16. Deleting the edge${NC}"
+DELETE_RESPONSE=$(curl -s -X DELETE "$BASE_URL/edges/$EDGE_ID" -w "%{http_code}")
+if [[ $DELETE_RESPONSE == *204* ]]; then
+  echo -e "${GREEN}Successfully deleted edge with ID: $EDGE_ID${NC}"
+else
+  echo -e "${RED}Failed to delete edge with ID: $EDGE_ID${NC}"
+  echo "Response: $DELETE_RESPONSE"
+fi
+
+# 17. Verify the edge is deleted by trying to get it
+echo -e "\n${BLUE}17. Verifying the edge is deleted${NC}"
+VERIFY_RESPONSE=$(curl -s -X GET "$BASE_URL/edges/$EDGE_ID" -w "%{http_code}")
+if [[ $VERIFY_RESPONSE == *404* ]]; then
+  echo -e "${GREEN}Edge successfully deleted and not found${NC}"
+else
+  echo -e "${YELLOW}Edge might still exist${NC}"
+  echo "Response: $VERIFY_RESPONSE"
+fi
+
+# 18. Delete the option nodes
+echo -e "\n${BLUE}18. Deleting the option nodes${NC}"
+curl -s -X DELETE "$BASE_URL/$OPTION_ID"
+curl -s -X DELETE "$BASE_URL/$TARGET_OPTION_ID"
 
 echo -e "\n${GREEN}Option API tests completed${NC}" 

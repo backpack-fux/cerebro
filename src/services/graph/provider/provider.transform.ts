@@ -2,6 +2,28 @@ import { RFProviderNode, RFProviderNodeData, Neo4jProviderNodeData, RFProviderEd
 import { GraphEdge, GraphNode } from '../neo4j/graph.interface';
 import { Node as Neo4jNode, Relationship as Neo4jRelationship } from 'neo4j-driver';
 
+/**
+ * Helper function to safely parse JSON strings
+ * @param jsonString The string to parse as JSON
+ * @param defaultValue The default value to return if parsing fails
+ * @returns The parsed JSON object or the default value
+ */
+function safeJsonParse<T>(jsonString: string | undefined, defaultValue: T): T {
+  if (!jsonString) return defaultValue;
+  
+  // Check if the string is a valid JSON before attempting to parse
+  if (typeof jsonString !== 'string' || !jsonString.trim().startsWith('{') && !jsonString.trim().startsWith('[')) {
+    return defaultValue;
+  }
+  
+  try {
+    return JSON.parse(jsonString) as T;
+  } catch (e) {
+    console.warn('Failed to parse JSON string:', e);
+    return defaultValue;
+  }
+}
+
 export function reactFlowToNeo4j(providerNode: RFProviderNode): Neo4jProviderNodeData {
   const data = providerNode.data as RFProviderNodeData; // Cast to ensure type safety
   return {
@@ -22,39 +44,10 @@ export function reactFlowToNeo4j(providerNode: RFProviderNode): Neo4jProviderNod
 }
 
 export function neo4jToReactFlow(neo4jData: Neo4jProviderNodeData): RFProviderNode {
-  // Parse JSON strings back to objects
-  let costs: ProviderCost[] = [];
-  let ddItems: DDItem[] = [];
-  let teamAllocations: TeamAllocation[] = [];
-
-  try {
-    if (neo4jData.costs) {
-      try {
-        const parsedCosts = JSON.parse(neo4jData.costs);
-        costs = Array.isArray(parsedCosts) ? parsedCosts : [];
-      } catch (e) {
-        console.warn('Failed to parse costs string:', e);
-      }
-    }
-    if (neo4jData.ddItems) {
-      try {
-        const parsedDDItems = JSON.parse(neo4jData.ddItems);
-        ddItems = Array.isArray(parsedDDItems) ? parsedDDItems : [];
-      } catch (e) {
-        console.warn('Failed to parse ddItems string:', e);
-      }
-    }
-    if (neo4jData.teamAllocations) {
-      try {
-        const parsedTeamAllocations = JSON.parse(neo4jData.teamAllocations);
-        teamAllocations = Array.isArray(parsedTeamAllocations) ? parsedTeamAllocations : [];
-      } catch (e) {
-        console.warn('Failed to parse teamAllocations string:', e);
-      }
-    }
-  } catch (error) {
-    console.error('Error in neo4jToReactFlow:', error);
-  }
+  // Parse JSON strings back to objects using the safe parser
+  const costs = safeJsonParse<ProviderCost[]>(neo4jData.costs, []);
+  const ddItems = safeJsonParse<DDItem[]>(neo4jData.ddItems, []);
+  const teamAllocations = safeJsonParse<TeamAllocation[]>(neo4jData.teamAllocations, []);
 
   return {
     id: neo4jData.id,
@@ -134,39 +127,10 @@ export function transformProviderNode(node: Neo4jNode): GraphNode<RFProviderNode
     ...properties 
   } = node.properties;
 
-  // Parse JSON strings back to objects
-  let costsData: ProviderCost[] = [];
-  let ddItemsData: DDItem[] = [];
-  let teamAllocationsData: TeamAllocation[] = [];
-
-  try {
-    if (costs) {
-      try {
-        const parsedCosts = JSON.parse(costs as string);
-        costsData = Array.isArray(parsedCosts) ? parsedCosts : [];
-      } catch (e) {
-        console.warn('Failed to parse costs string:', e);
-      }
-    }
-    if (ddItems) {
-      try {
-        const parsedDDItems = JSON.parse(ddItems as string);
-        ddItemsData = Array.isArray(parsedDDItems) ? parsedDDItems : [];
-      } catch (e) {
-        console.warn('Failed to parse ddItems string:', e);
-      }
-    }
-    if (teamAllocations) {
-      try {
-        const parsedTeamAllocations = JSON.parse(teamAllocations as string);
-        teamAllocationsData = Array.isArray(parsedTeamAllocations) ? parsedTeamAllocations : [];
-      } catch (e) {
-        console.warn('Failed to parse teamAllocations string:', e);
-      }
-    }
-  } catch (error) {
-    console.error('Error in transformProviderNode:', error);
-  }
+  // Parse JSON strings back to objects using the safe parser
+  const costsData = safeJsonParse<ProviderCost[]>(costs as string, []);
+  const ddItemsData = safeJsonParse<DDItem[]>(ddItems as string, []);
+  const teamAllocationsData = safeJsonParse<TeamAllocation[]>(teamAllocations as string, []);
 
   return {
     id: id as string,

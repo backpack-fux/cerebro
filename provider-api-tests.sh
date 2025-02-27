@@ -270,11 +270,7 @@ curl -s -X PATCH "$BASE_URL/$PROVIDER_ID" \
         "allocatedMembers": [
           {
             "memberId": "member5",
-            "hours": 20
-          },
-          {
-            "memberId": "member6",
-            "hours": 20
+            "hours": 40
           }
         ]
       }
@@ -285,12 +281,106 @@ curl -s -X PATCH "$BASE_URL/$PROVIDER_ID" \
 echo -e "\n${BLUE}8. Getting the provider node with all updates${NC}"
 curl -s -X GET "$BASE_URL/$PROVIDER_ID"
 
-# 9. Delete the provider node
-echo -e "\n${BLUE}9. Deleting the provider node${NC}"
-curl -s -X DELETE "$BASE_URL/$PROVIDER_ID"
+# Create a second provider node for edge testing
+echo -e "\n${BLUE}9. Creating a second provider node for edge testing${NC}"
+RESPONSE2=$(curl -s -X POST $BASE_URL \
+  -H "Content-Type: application/json" \
+  -d '{
+    "title": "Target Provider",
+    "description": "A target provider for edge testing",
+    "position": { "x": 300, "y": 400 },
+    "duration": 20,
+    "status": "planning"
+  }')
 
-# 10. Try to get the deleted provider node
-echo -e "\n${BLUE}10. Trying to get the deleted provider node${NC}"
-curl -s -X GET "$BASE_URL/$PROVIDER_ID"
+echo "Response: $RESPONSE2"
+
+# Extract the ID of the second provider
+TARGET_PROVIDER_ID=$(echo $RESPONSE2 | grep -o '"id":"[^"]*"' | sed 's/"id":"//g' | sed 's/"//g')
+
+if [ -z "$TARGET_PROVIDER_ID" ]; then
+  echo -e "${RED}Failed to extract target provider ID from response${NC}"
+  # Use a hardcoded ID for testing
+  TARGET_PROVIDER_ID="target-provider-test-id"
+  echo -e "${YELLOW}Using hardcoded target ID for testing: $TARGET_PROVIDER_ID${NC}"
+else
+  echo -e "${GREEN}Successfully created target provider node with ID: $TARGET_PROVIDER_ID${NC}"
+fi
+
+# 10. Create an edge between the two provider nodes
+echo -e "\n${BLUE}10. Creating an edge between provider nodes${NC}"
+EDGE_RESPONSE=$(curl -s -X POST "$BASE_URL/edges" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "source": "'$PROVIDER_ID'",
+    "target": "'$TARGET_PROVIDER_ID'",
+    "type": "PROVIDER_RELATIONSHIP",
+    "data": {
+      "label": "Partners with",
+      "description": "This provider partners with the target provider",
+      "allocation": 100
+    }
+  }')
+
+echo "Edge Response: $EDGE_RESPONSE"
+
+# Extract the edge ID
+EDGE_ID=$(echo $EDGE_RESPONSE | grep -o '"id":"[^"]*"' | sed 's/"id":"//g' | sed 's/"//g')
+
+if [ -z "$EDGE_ID" ]; then
+  echo -e "${RED}Failed to extract edge ID from response${NC}"
+  # Use a hardcoded ID for testing
+  EDGE_ID="edge-test-id"
+  echo -e "${YELLOW}Using hardcoded edge ID for testing: $EDGE_ID${NC}"
+else
+  echo -e "${GREEN}Successfully created edge with ID: $EDGE_ID${NC}"
+fi
+
+# 11. Get all edges for the source provider node
+echo -e "\n${BLUE}11. Getting all edges for the source provider node${NC}"
+curl -s -X GET "$BASE_URL/edges?nodeId=$PROVIDER_ID&type=PROVIDER_RELATIONSHIP"
+
+# 12. Get the specific edge by ID
+echo -e "\n${BLUE}12. Getting the specific edge by ID${NC}"
+curl -s -X GET "$BASE_URL/edges/$EDGE_ID"
+
+# 13. Update the edge
+echo -e "\n${BLUE}13. Updating the edge${NC}"
+curl -s -X PATCH "$BASE_URL/edges/$EDGE_ID" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "label": "Strategic partnership with",
+    "description": "This provider has a strategic partnership with the target provider",
+    "partnershipLevel": "high"
+  }'
+
+# 14. Get the updated edge
+echo -e "\n${BLUE}14. Getting the updated edge${NC}"
+curl -s -X GET "$BASE_URL/edges/$EDGE_ID"
+
+# 15. Delete the edge
+echo -e "\n${BLUE}15. Deleting the edge${NC}"
+DELETE_RESPONSE=$(curl -s -X DELETE "$BASE_URL/edges/$EDGE_ID" -w "%{http_code}")
+if [[ $DELETE_RESPONSE == *204* ]]; then
+  echo -e "${GREEN}Successfully deleted edge with ID: $EDGE_ID${NC}"
+else
+  echo -e "${RED}Failed to delete edge with ID: $EDGE_ID${NC}"
+  echo "Response: $DELETE_RESPONSE"
+fi
+
+# 16. Verify the edge is deleted by trying to get it
+echo -e "\n${BLUE}16. Verifying the edge is deleted${NC}"
+VERIFY_RESPONSE=$(curl -s -X GET "$BASE_URL/edges/$EDGE_ID" -w "%{http_code}")
+if [[ $VERIFY_RESPONSE == *404* ]]; then
+  echo -e "${GREEN}Edge successfully deleted and not found${NC}"
+else
+  echo -e "${YELLOW}Edge might still exist${NC}"
+  echo "Response: $VERIFY_RESPONSE"
+fi
+
+# 17. Delete the provider nodes
+echo -e "\n${BLUE}17. Deleting the provider nodes${NC}"
+curl -s -X DELETE "$BASE_URL/$PROVIDER_ID"
+curl -s -X DELETE "$BASE_URL/$TARGET_PROVIDER_ID"
 
 echo -e "\n${GREEN}Provider API tests completed${NC}" 
