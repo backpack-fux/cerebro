@@ -9,8 +9,8 @@ import {
   NodeHeaderMenuAction,
 } from '@/components/nodes/node-header';
 import { DropdownMenuItem } from "@radix-ui/react-dropdown-menu";
-import { useReactFlow } from "@xyflow/react";
-import { useCallback } from "react";
+import { useReactFlow, useEdges } from "@xyflow/react";
+import { useCallback, useRef, useState, useEffect } from "react";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
@@ -22,110 +22,154 @@ import { useTeamAllocation } from "@/hooks/useTeamAllocation";
 import { useDurationInput } from "@/hooks/useDurationInput";
 import { Slider } from "@/components/ui/slider";
 import { useNodeStatus } from "@/hooks/useNodeStatus";
+import { 
+  RFProviderNodeData, 
+  ProviderCost, 
+  DDItem, 
+  CostType, 
+  FixedCost, 
+  UnitCost, 
+  RevenueCost, 
+  TieredCost, 
+  DDStatus,
+  TierRange
+} from '@/services/graph/provider/provider.types';
+import { API_URLS } from '@/services/graph/neo4j/api-urls';
+import { toast } from "sonner";
 
-export type CostType = 'fixed' | 'unit' | 'revenue' | 'tiered';
-
-export type FixedCost = {
-  type: 'fixed';
-  amount: number;
-  frequency: 'monthly' | 'annual';
-};
-
-export type UnitCost = {
-  type: 'unit';
-  unitPrice: number;
-  unitType: string;
-  minimumUnits?: number;
-  maximumUnits?: number;
-};
-
-export type RevenueCost = {
-  type: 'revenue';
-  percentage: number;
-  minimumMonthly?: number;
-};
-
-export type TierRange = {
-  min: number;
-  max?: number;
-  unitPrice: number;
-};
-
-export type TieredCost = {
-  type: 'tiered';
-  unitType: string;
-  tiers: TierRange[];
-  minimumMonthly?: number;
-};
-
-export type ProviderCost = {
-  id: string;
-  name: string;
-  costType: CostType;
-  details: FixedCost | UnitCost | RevenueCost | TieredCost;
-};
-
-export type DDStatus = 'pending' | 'in_progress' | 'completed' | 'blocked';
-
-export type DDItem = {
-  id: string;
-  name: string;
-  status: DDStatus;
-  notes?: string;
-  dueDate?: string;
-  assignee?: string; // Could be team member ID
-};
-
-export type ProviderNodeData = Node<{
-  title: string;
-  description?: string;
-  duration?: number;
-  costs?: ProviderCost[];
-  ddItems?: DDItem[];
-  teamAllocations?: Array<{
-    teamId: string;
-    requestedHours: number;
-    allocatedMembers: Array<{
-      memberId: string;
-      hours: number;
-    }>;
-  }>;
-}>;
-
-export function ProviderNode({ id, data, selected }: NodeProps<ProviderNodeData>) {
-  const { updateNodeData, setNodes } = useReactFlow();
+export function ProviderNode({ id, data, selected }: NodeProps) {
+  // Cast data to the correct type for internal use
+  const typedData = data as RFProviderNodeData;
+  
+  const { updateNodeData, setNodes, setEdges } = useReactFlow();
+  const edges = useEdges();
+  
+  // Refs for debounce timers
+  const titleDebounceRef = useRef<NodeJS.Timeout | null>(null);
+  const descriptionDebounceRef = useRef<NodeJS.Timeout | null>(null);
+  const costsDebounceRef = useRef<NodeJS.Timeout | null>(null);
+  const ddItemsDebounceRef = useRef<NodeJS.Timeout | null>(null);
+  const durationDebounceRef = useRef<NodeJS.Timeout | null>(null);
+  
   const {
     connectedTeams,
     requestTeamAllocation,
     costs,
     CostSummary
-  } = useTeamAllocation(id, data);
+  } = useTeamAllocation(id, typedData);
 
-  const { status, getStatusColor, cycleStatus } = useNodeStatus(id, data, updateNodeData, {
+  const { status, getStatusColor, cycleStatus } = useNodeStatus(id, typedData, updateNodeData, {
     canBeActive: true,
     defaultStatus: 'planning'
   });
 
+  // Save data to backend
+  const saveToBackend = async (field: string, value: any) => {
+    try {
+      const response = await fetch(`${API_URLS['provider']}/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ [field]: value }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to update provider node: ${response.status} ${response.statusText}`);
+      }
+      
+      console.log(`Updated provider node ${id} ${field}`);
+    } catch (error) {
+      console.error(`Failed to update provider node ${id}:`, error);
+      toast.error(`Update Failed: Failed to save ${field} to the server.`);
+    }
+  };
+
+  // Save costs to backend
+  const saveCostsToBackend = async (costs: ProviderCost[]) => {
+    if (costsDebounceRef.current) clearTimeout(costsDebounceRef.current);
+    
+    costsDebounceRef.current = setTimeout(async () => {
+      await saveToBackend('costs', costs);
+      costsDebounceRef.current = null;
+    }, 1000);
+  };
+
+  // Save DD items to backend
+  const saveDDItemsToBackend = async (ddItems: DDItem[]) => {
+    if (ddItemsDebounceRef.current) clearTimeout(ddItemsDebounceRef.current);
+    
+    ddItemsDebounceRef.current = setTimeout(async () => {
+      await saveToBackend('ddItems', ddItems);
+      ddItemsDebounceRef.current = null;
+    }, 1000);
+  };
+
+  // Save duration to backend
+  const saveDurationToBackend = async (duration: number) => {
+    if (durationDebounceRef.current) clearTimeout(durationDebounceRef.current);
+    
+    durationDebounceRef.current = setTimeout(async () => {
+      await saveToBackend('duration', duration);
+      durationDebounceRef.current = null;
+    }, 1000);
+  };
+
   const handleTitleChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    updateNodeData(id, { ...data, title: e.target.value });
-  }, [id, data, updateNodeData]);
+    const newTitle = e.target.value;
+    updateNodeData(id, { ...typedData, title: newTitle });
+    
+    if (titleDebounceRef.current) clearTimeout(titleDebounceRef.current);
+    
+    titleDebounceRef.current = setTimeout(async () => {
+      await saveToBackend('title', newTitle);
+      titleDebounceRef.current = null;
+    }, 1000);
+  }, [id, typedData, updateNodeData]);
 
   const handleDescriptionChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    updateNodeData(id, { ...data, description: e.target.value });
-  }, [id, data, updateNodeData]);
+    const newDescription = e.target.value;
+    updateNodeData(id, { ...typedData, description: newDescription });
+    
+    if (descriptionDebounceRef.current) clearTimeout(descriptionDebounceRef.current);
+    
+    descriptionDebounceRef.current = setTimeout(async () => {
+      await saveToBackend('description', newDescription);
+      descriptionDebounceRef.current = null;
+    }, 1000);
+  }, [id, typedData, updateNodeData]);
 
   const handleDelete = useCallback(() => {
-    setNodes((nodes) => nodes.filter((node) => node.id !== id));
-  }, [id, setNodes]);
+    // Delete the node from the backend
+    fetch(`${API_URLS['provider']}/${id}`, { method: 'DELETE' })
+      .then(() => {
+        setNodes((nodes) => nodes.filter((node) => node.id !== id));
+        
+        // Also delete connected edges
+        const connectedEdges = edges.filter((edge) => edge.source === id || edge.target === id);
+        connectedEdges.forEach((edge) => {
+          fetch(`${API_URLS['provider']}/edges/${edge.id}`, { method: 'DELETE' })
+            .catch((error) => console.error('Failed to delete edge:', error));
+        });
+      })
+      .catch((error) => {
+        console.error('Failed to delete provider node:', error);
+        toast.error("Delete Failed: Failed to delete the provider node from the server.");
+      });
+  }, [id, setNodes, edges]);
 
-  const duration = useDurationInput(id, data, updateNodeData, {
+  // Customize the duration input hook to save to backend
+  const duration = useDurationInput(id, typedData, (nodeId, updatedData) => {
+    updateNodeData(nodeId, updatedData);
+    if (updatedData.duration !== typedData.duration) {
+      saveDurationToBackend(updatedData.duration || 0);
+    }
+  }, {
     maxDays: 90,
     label: "Integration Duration",
     fieldName: "duration",
     tip: 'Estimated time to integrate with this provider'
   });
 
-  // Handle allocation changes
+  // Handle allocation changes with backend saving
   const handleAllocationChange = useCallback((memberId: string, percentage: number) => {
     const teamId = connectedTeams.find(team => 
       team.availableBandwidth.some(m => m.memberId === memberId)
@@ -134,9 +178,11 @@ export function ProviderNode({ id, data, selected }: NodeProps<ProviderNodeData>
     if (!teamId) return;
 
     // Update the allocation
-    const hoursRequested = (percentage / 100) * 8 * (data.duration || 1); // Convert % to hours
+    const hoursRequested = (percentage / 100) * 8 * (typedData.duration || 1); // Convert % to hours
     requestTeamAllocation(teamId, hoursRequested, [memberId]);
-  }, [connectedTeams, data.duration, requestTeamAllocation]);
+    
+    // The team allocation is saved by the requestTeamAllocation function
+  }, [connectedTeams, typedData.duration, requestTeamAllocation]);
 
   const addCost = useCallback(() => {
     const newCost: ProviderCost = {
@@ -149,27 +195,33 @@ export function ProviderNode({ id, data, selected }: NodeProps<ProviderNodeData>
         frequency: 'monthly'
       }
     };
+    const updatedCosts = [...(typedData.costs || []), newCost];
     updateNodeData(id, { 
-      ...data, 
-      costs: [...(data.costs || []), newCost] 
+      ...typedData, 
+      costs: updatedCosts
     });
-  }, [id, data, updateNodeData]);
+    saveCostsToBackend(updatedCosts);
+  }, [id, typedData, updateNodeData]);
 
   const updateCost = useCallback((costId: string, updates: Partial<ProviderCost>) => {
+    const updatedCosts = (typedData.costs || []).map(cost => 
+      cost.id === costId ? { ...cost, ...updates } : cost
+    );
     updateNodeData(id, {
-      ...data,
-      costs: (data.costs || []).map(cost => 
-        cost.id === costId ? { ...cost, ...updates } : cost
-      )
+      ...typedData,
+      costs: updatedCosts
     });
-  }, [id, data, updateNodeData]);
+    saveCostsToBackend(updatedCosts);
+  }, [id, typedData, updateNodeData]);
 
   const removeCost = useCallback((costId: string) => {
+    const updatedCosts = (typedData.costs || []).filter(cost => cost.id !== costId);
     updateNodeData(id, {
-      ...data,
-      costs: (data.costs || []).filter(cost => cost.id !== costId)
+      ...typedData,
+      costs: updatedCosts
     });
-  }, [id, data, updateNodeData]);
+    saveCostsToBackend(updatedCosts);
+  }, [id, typedData, updateNodeData]);
 
   const addDDItem = useCallback(() => {
     const newItem: DDItem = {
@@ -177,11 +229,44 @@ export function ProviderNode({ id, data, selected }: NodeProps<ProviderNodeData>
       name: '',
       status: 'pending'
     };
+    const updatedItems = [...(typedData.ddItems || []), newItem];
     updateNodeData(id, {
-      ...data,
-      ddItems: [...(data.ddItems || []), newItem]
+      ...typedData,
+      ddItems: updatedItems
     });
-  }, [id, data, updateNodeData]);
+    saveDDItemsToBackend(updatedItems);
+  }, [id, typedData, updateNodeData]);
+
+  const updateDDItem = useCallback((item: DDItem) => {
+    const updatedItems = (typedData.ddItems || []).map(i => 
+      i.id === item.id ? item : i
+    );
+    updateNodeData(id, {
+      ...typedData,
+      ddItems: updatedItems
+    });
+    saveDDItemsToBackend(updatedItems);
+  }, [id, typedData, updateNodeData]);
+
+  const removeDDItem = useCallback((itemId: string) => {
+    const updatedItems = (typedData.ddItems || []).filter(i => i.id !== itemId);
+    updateNodeData(id, {
+      ...typedData,
+      ddItems: updatedItems
+    });
+    saveDDItemsToBackend(updatedItems);
+  }, [id, typedData, updateNodeData]);
+
+  // Clean up debounce timers on unmount
+  useEffect(() => {
+    return () => {
+      if (titleDebounceRef.current) clearTimeout(titleDebounceRef.current);
+      if (descriptionDebounceRef.current) clearTimeout(descriptionDebounceRef.current);
+      if (costsDebounceRef.current) clearTimeout(costsDebounceRef.current);
+      if (ddItemsDebounceRef.current) clearTimeout(ddItemsDebounceRef.current);
+      if (durationDebounceRef.current) clearTimeout(durationDebounceRef.current);
+    };
+  }, []);
 
   return (
     <BaseNode selected={selected}>
@@ -196,7 +281,7 @@ export function ProviderNode({ id, data, selected }: NodeProps<ProviderNodeData>
               {status}
             </Badge>
             <input
-              value={data.title}
+              value={typedData.title}
               onChange={handleTitleChange}
               className="bg-transparent outline-none placeholder:text-muted-foreground"
               placeholder="Provider Name"
@@ -208,6 +293,23 @@ export function ProviderNode({ id, data, selected }: NodeProps<ProviderNodeData>
             <DropdownMenuItem onSelect={handleDelete} className="cursor-pointer">
               Delete
             </DropdownMenuItem>
+            {edges
+              .filter((edge) => edge.source === id || edge.target === id)
+              .map((edge) => (
+                <DropdownMenuItem
+                  key={edge.id}
+                  onSelect={() => {
+                    fetch(`${API_URLS['provider']}/edges/${edge.id}`, { method: 'DELETE' })
+                      .then(() => {
+                        setEdges((eds) => eds.filter((e) => e.id !== edge.id));
+                      })
+                      .catch((error) => console.error('Failed to delete edge:', error));
+                  }}
+                  className="cursor-pointer text-red-500"
+                >
+                  Disconnect {(edge.data?.label as string) || 'Edge'}
+                </DropdownMenuItem>
+              ))}
           </NodeHeaderMenuAction>
         </NodeHeaderActions>
       </NodeHeader>
@@ -254,13 +356,13 @@ export function ProviderNode({ id, data, selected }: NodeProps<ProviderNodeData>
                   {/* Member Allocation Controls */}
                   <div className="space-y-4">
                     {team.availableBandwidth.map(member => {
-                      const allocation = data.teamAllocations
+                      const allocation = typedData.teamAllocations
                         ?.find(a => a.teamId === team.teamId)
                         ?.allocatedMembers
                         .find(m => m.memberId === member.memberId);
                       
                       const percentage = allocation 
-                        ? (allocation.hours / 8 / (data.duration || 1)) * 100 
+                        ? (allocation.hours / 8 / (typedData.duration || 1)) * 100 
                         : 0;
 
                       return (
@@ -297,7 +399,7 @@ export function ProviderNode({ id, data, selected }: NodeProps<ProviderNodeData>
           </div>
 
           <div className="space-y-4">
-            {(data.costs || []).map(cost => (
+            {(typedData.costs || []).map(cost => (
               <CostStructure
                 key={cost.id}
                 cost={cost}
@@ -310,29 +412,19 @@ export function ProviderNode({ id, data, selected }: NodeProps<ProviderNodeData>
 
         {/* Due Diligence Section */}
         <DueDiligenceSection
-          items={data.ddItems || []}
-          onUpdate={(item) => {
-            updateNodeData(id, {
-              ...data,
-              ddItems: data.ddItems?.map(i => i.id === item.id ? item : i)
-            });
-          }}
+          items={typedData.ddItems || []}
+          onUpdate={updateDDItem}
           onAdd={addDDItem}
-          onRemove={(itemId) => {
-            updateNodeData(id, {
-              ...data,
-              ddItems: data.ddItems?.filter(i => i.id !== itemId)
-            });
-          }}
+          onRemove={removeDDItem}
         />
 
         {/* Cost Summary */}
         {costs && costs.allocations.length > 0 && (
-          <CostSummary costs={costs} duration={data.duration} />
+          <CostSummary costs={costs} duration={typedData.duration} />
         )}
 
         <Textarea
-          value={data.description || ''}
+          value={typedData.description || ''}
           onChange={handleDescriptionChange}
           placeholder="Describe this provider..."
           className="min-h-[80px] resize-y bg-transparent"

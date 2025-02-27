@@ -103,7 +103,13 @@ export default function Canvas() {
             
             // Try to delete the node
             try {
-                await GraphApiClient.deleteNode(nodeToDelete.type as NodeType, nodeId);
+                // Map node types to match API_URLS keys
+                let nodeType = nodeToDelete.type;
+                if (nodeType === 'team_member' || nodeType === 'teammember') {
+                    nodeType = 'teamMember';
+                }
+                
+                await GraphApiClient.deleteNode(nodeType as NodeType, nodeId);
                 console.log(`Successfully deleted ${nodeToDelete.type} node: ${nodeId}`);
                 
                 // Show success toast

@@ -1,8 +1,7 @@
 // app/api/graph/meta/route.ts
 import { NextRequest, NextResponse } from 'next/server';
-import { MetaService } from '@/services/graph/meta/meta.service';
 import { metaService } from '@/services/graph/neo4j/neo4j.provider';
-import { CreateMetaNodeParams, RFMetaNode, UpdateMetaNodeParams, RFMetaEdge } from '@/services/graph/meta/meta.types';
+import { CreateMetaNodeParams } from '@/services/graph/meta/meta.types';
 
 export async function POST(req: NextRequest) {
   try {

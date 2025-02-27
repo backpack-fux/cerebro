@@ -7,6 +7,15 @@ import { RFMilestoneNodeData } from '@/services/graph/milestone/milestone.types'
 import { IGraphStorage } from '@/services/graph/neo4j/graph.interface';
 import { TeamMemberService } from '@/services/graph/team-member/team-member.service';
 import { RFTeamMemberNodeData } from '@/services/graph/team-member/team-member.types';
+import { FeatureService } from '../feature/feature.service';
+import { TeamService } from '../team/team.service';
+import { RFFeatureNodeData } from '@/services/graph/feature/feature.types';
+import { RFTeamNodeData } from '@/services/graph/team/team.types';
+import { ProviderService } from '../provider/provider.service';
+import { RFProviderNodeData } from '@/services/graph/provider/provider.types';
+import { RFOptionNodeData } from '../option/option.types';
+import { OptionService } from '../option/option.service';
+
 
 interface NodeService {
   create(params: any): Promise<any>;
@@ -20,15 +29,14 @@ interface NodeService {
 export const nodeServiceRegistry = {
   'meta': new MetaService(neo4jStorage as IGraphStorage<RFMetaNodeData>),
   'milestone': new MilestoneService(neo4jStorage as IGraphStorage<RFMilestoneNodeData>),
-  //'feature': /* new FeatureService(neo4jStorage as IGraphStorage<FeatureNodeData>) */,
-  //'team': /* new TeamService(neo4jStorage as IGraphStorage<TeamNodeData>) */,
+  'feature': new FeatureService(neo4jStorage as IGraphStorage<RFFeatureNodeData>),
+  'team': new TeamService(neo4jStorage as IGraphStorage<RFTeamNodeData>),
   'teamMember': new TeamMemberService(neo4jStorage as IGraphStorage<RFTeamMemberNodeData>),
-  //'provider': /* new ProviderService(neo4jStorage as IGraphStorage<ProviderNodeData>) */,
-  //'option': /* new OptionService(neo4jStorage as IGraphStorage<OptionNodeData>) */,
-  //'calendar': /* new CalendarService(neo4jStorage as IGraphStorage<CalendarNodeData>) */,
-  //'code': /* new CodeService(neo4jStorage as IGraphStorage<CodeNodeData>) */,
-  //'notes': /* new NotesService(neo4jStorage as IGraphStorage<NotesNodeData>) */,
-  // Add more node types as needed
+  'provider': new ProviderService(neo4jStorage as IGraphStorage<RFProviderNodeData>),
+  'option': new OptionService(neo4jStorage as IGraphStorage<RFOptionNodeData>),
+  //'calendar': new CalendarService(neo4jStorage as IGraphStorage<RFCalendarNodeData>),
+  //'code': new CodeService(neo4jStorage as IGraphStorage<RFCodeNodeData>),
+  //'notes': new NotesService(neo4jStorage as IGraphStorage<RFNotesNodeData>),
 };
 
 export function getNodeService(nodeType: string): NodeService | null {

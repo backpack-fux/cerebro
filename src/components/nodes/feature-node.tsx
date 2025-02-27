@@ -1,6 +1,6 @@
 "use client";
 
-import { Handle, Position, type NodeProps, type Node, useReactFlow } from "@xyflow/react";
+import { Handle, Position, type NodeProps, useReactFlow } from "@xyflow/react";
 import { BaseNode } from '@/components/nodes/base-node';
 import { 
   NodeHeader,
@@ -9,7 +9,7 @@ import {
   NodeHeaderMenuAction,
 } from '@/components/nodes/node-header';
 import { DropdownMenuItem } from "@radix-ui/react-dropdown-menu";
-import { useCallback, useState, useMemo } from "react";
+import { useCallback, useState, useMemo, useRef, useEffect } from "react";
 import { Textarea } from "@/components/ui/textarea";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
@@ -27,33 +27,14 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Checkbox } from "@/components/ui/checkbox";
-
-export type BuildType = 'internal' | 'external';
-export type TimeUnit = 'days' | 'weeks';
-
-// Add this type to define member allocation
-interface MemberAllocation {
-  memberId: string;
-  timePercentage: number;
-}
-
-// Update FeatureNodeData to include allocations
-export type FeatureNodeData = Node<{
-  title: string;
-  description?: string;
-  buildType?: BuildType;
-  cost?: number;
-  duration?: number;
-  timeUnit?: TimeUnit;
-  teamMembers?: string[]; // Array of team member node IDs
-  memberAllocations?: MemberAllocation[]; // Add this field
-  teamAllocations?: {
-    teamId: string;
-    requestedHours: number;
-    allocatedMembers: { memberId: string; hours: number }[];
-  }[];
-  availableBandwidth: { memberId: string; dailyRate: number }[];
-}>;
+import { toast } from "sonner";
+import { GraphApiClient } from '@/services/graph/neo4j/api-client';
+import { NodeType } from '@/services/graph/neo4j/api-urls';
+import { 
+  RFFeatureNodeData, 
+  BuildType, 
+  TeamAllocation
+} from '@/services/graph/feature/feature.types';
 
 // Add this type for managing selected members in the dialog
 interface MemberSelection {
@@ -61,56 +42,112 @@ interface MemberSelection {
   hours: number;
 }
 
-export function FeatureNode({ id, data, selected }: NodeProps<FeatureNodeData>) {
-  const { updateNodeData, setNodes } = useReactFlow();
+export function FeatureNode({ id, data, selected }: NodeProps) {
+  const { updateNodeData, setNodes, setEdges } = useReactFlow();
   const [selectedTeamId, setSelectedTeamId] = useState<string | null>(null);
+  
+  // Cast data to the correct type
+  const featureData = data as RFFeatureNodeData;
+  
+  // Refs for debounce timers
+  const saveDebounceRef = useRef<NodeJS.Timeout | null>(null);
   
   const {
     connectedTeams,
     requestTeamAllocation,
     costs,
     CostSummary
-  } = useTeamAllocation(id, data);
+  } = useTeamAllocation(id, featureData);
 
-  const { status, getStatusColor, cycleStatus } = useNodeStatus(id, data, updateNodeData, {
+  const { status, getStatusColor, cycleStatus } = useNodeStatus(id, featureData, updateNodeData, {
     canBeActive: true, // Features can be "active" after completion
     defaultStatus: 'planning'
   });
+  
+  // Function to save data to backend
+  const saveToBackend = useCallback(async (updatedData: Partial<RFFeatureNodeData>) => {
+    if (saveDebounceRef.current) {
+      clearTimeout(saveDebounceRef.current);
+    }
+    
+    saveDebounceRef.current = setTimeout(async () => {
+      try {
+        await GraphApiClient.updateNode('feature' as NodeType, id, updatedData);
+        console.log(`Updated feature ${id}`);
+      } catch (error) {
+        console.error(`Failed to update feature ${id}:`, error);
+        toast.error("Your changes couldn't be saved to the database.");
+      }
+      saveDebounceRef.current = null;
+    }, 1000);
+  }, [id]);
 
   const handleTitleChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    updateNodeData(id, { ...data, title: e.target.value });
-  }, [id, data, updateNodeData]);
+    const newTitle = e.target.value;
+    updateNodeData(id, { ...featureData, title: newTitle });
+    saveToBackend({ title: newTitle });
+  }, [id, featureData, updateNodeData, saveToBackend]);
 
   const handleDescriptionChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    updateNodeData(id, { ...data, description: e.target.value });
-  }, [id, data, updateNodeData]);
+    const newDescription = e.target.value;
+    updateNodeData(id, { ...featureData, description: newDescription });
+    saveToBackend({ description: newDescription });
+  }, [id, featureData, updateNodeData, saveToBackend]);
 
   const handleBuildTypeChange = useCallback((value: BuildType) => {
-    updateNodeData(id, { ...data, buildType: value });
-  }, [id, data, updateNodeData]);
+    updateNodeData(id, { ...featureData, buildType: value });
+    saveToBackend({ buildType: value });
+  }, [id, featureData, updateNodeData, saveToBackend]);
 
-  const duration = useDurationInput(id, data, updateNodeData, {
+  const duration = useDurationInput(id, featureData, updateNodeData, {
     maxDays: 72,
     label: "Time to Build",
     fieldName: "duration",
     tip: 'Use "w" for weeks (e.g. "2w" = 2 weeks) or ↑↓ keys. Hold Shift for week increments.'
   });
+  
+  // Override the duration change handler to save to backend
+  useEffect(() => {
+    if (featureData.duration !== undefined) {
+      saveToBackend({ duration: featureData.duration });
+    }
+  }, [featureData.duration, saveToBackend]);
 
   const handleDelete = useCallback(() => {
-    setNodes((nodes) => nodes.filter((node) => node.id !== id));
-  }, [id, setNodes]);
+    // First delete the node from the database
+    GraphApiClient.deleteNode('feature' as NodeType, id)
+      .then(() => {
+        console.log(`Successfully deleted feature node ${id}`);
+        // Then remove it from the UI
+        setNodes((nodes) => nodes.filter((node) => node.id !== id));
+        
+        // Also delete associated edges
+        setEdges((edges) => {
+          const connectedEdges = edges.filter((edge) => edge.source === id || edge.target === id);
+          connectedEdges.forEach((edge) => {
+            GraphApiClient.deleteEdge('feature' as NodeType, edge.id)
+              .catch((error) => console.error(`Failed to delete edge ${edge.id}:`, error));
+          });
+          return edges.filter((edge) => edge.source !== id && edge.target !== id);
+        });
+      })
+      .catch((error) => {
+        console.error(`Failed to delete feature node ${id}:`, error);
+        toast.error("The feature couldn't be deleted from the database.");
+      });
+  }, [id, setNodes, setEdges]);
 
   // Calculate total allocated hours and costs
   const teamAllocations = useMemo(() => {
     return connectedTeams.map(team => {
-      const allocation = data.teamAllocations?.find(a => a.teamId === team.teamId);
+      const allocation = featureData.teamAllocations?.find(a => a.teamId === team.teamId);
       return {
         ...team,
         requestedHours: allocation?.requestedHours || 0,
         allocatedMembers: allocation?.allocatedMembers || []
       };
     });
-  }, [connectedTeams, data.teamAllocations]);
+  }, [connectedTeams, featureData.teamAllocations]);
 
   // Add state for managing member selection
   const [selectedMembers, setSelectedMembers] = useState<MemberSelection[]>([]);
@@ -125,10 +162,38 @@ export function FeatureNode({ id, data, selected }: NodeProps<FeatureNodeData>) 
       totalHours,
       selectedMembers.map(m => m.memberId)
     );
+    
+    // Update the team allocations in the node data
+    const updatedTeamAllocations = [...(featureData.teamAllocations || [])];
+    const existingAllocationIndex = updatedTeamAllocations.findIndex(a => a.teamId === selectedTeamId);
+    
+    if (existingAllocationIndex >= 0) {
+      // Update existing allocation
+      updatedTeamAllocations[existingAllocationIndex] = {
+        ...updatedTeamAllocations[existingAllocationIndex],
+        requestedHours: totalHours,
+        allocatedMembers: selectedMembers.map(m => ({ memberId: m.memberId, hours: totalHours / selectedMembers.length }))
+      };
+    } else {
+      // Create new allocation
+      updatedTeamAllocations.push({
+        teamId: selectedTeamId,
+        requestedHours: totalHours,
+        allocatedMembers: selectedMembers.map(m => ({ memberId: m.memberId, hours: totalHours / selectedMembers.length }))
+      });
+    }
+    
+    // Update the node data
+    updateNodeData(id, { ...featureData, teamAllocations: updatedTeamAllocations });
+    
+    // Save to backend
+    saveToBackend({ teamAllocations: updatedTeamAllocations });
+    
+    // Reset state
     setSelectedTeamId(null);
     setSelectedMembers([]);
     setTotalHours(0);
-  }, [selectedTeamId, totalHours, selectedMembers, requestTeamAllocation]);
+  }, [selectedTeamId, totalHours, selectedMembers, requestTeamAllocation, featureData, id, updateNodeData, saveToBackend]);
 
   // Handle allocation changes
   const handleAllocationChange = useCallback((memberId: string, percentage: number) => {
@@ -138,10 +203,57 @@ export function FeatureNode({ id, data, selected }: NodeProps<FeatureNodeData>) 
 
     if (!teamId) return;
 
-    // Update the allocation
-    const hoursRequested = (percentage / 100) * 8 * (data.duration || 1); // Convert % to hours
+    // Calculate hours based on percentage
+    const hoursRequested = (percentage / 100) * 8 * (featureData.duration || 1);
+    
+    // Update the team allocations in the node data
+    const updatedTeamAllocations: TeamAllocation[] = [...(featureData.teamAllocations || [])];
+    const existingAllocationIndex = updatedTeamAllocations.findIndex(a => a.teamId === teamId);
+    
+    if (existingAllocationIndex >= 0) {
+      // Update existing allocation
+      const existingAllocation = updatedTeamAllocations[existingAllocationIndex];
+      const existingMemberIndex = existingAllocation.allocatedMembers.findIndex(m => m.memberId === memberId);
+      
+      if (existingMemberIndex >= 0) {
+        // Update existing member allocation
+        existingAllocation.allocatedMembers[existingMemberIndex].hours = hoursRequested;
+      } else {
+        // Add new member allocation
+        existingAllocation.allocatedMembers.push({ memberId, hours: hoursRequested });
+      }
+      
+      // Update total requested hours
+      existingAllocation.requestedHours = existingAllocation.allocatedMembers.reduce(
+        (total, member) => total + member.hours, 0
+      );
+      
+      updatedTeamAllocations[existingAllocationIndex] = existingAllocation;
+    } else {
+      // Create new allocation
+      updatedTeamAllocations.push({
+        teamId,
+        requestedHours: hoursRequested,
+        allocatedMembers: [{ memberId, hours: hoursRequested }]
+      });
+    }
+    
+    // Update the node data
+    updateNodeData(id, { ...featureData, teamAllocations: updatedTeamAllocations });
+    
+    // Save to backend
+    saveToBackend({ teamAllocations: updatedTeamAllocations });
+    
+    // Also call the hook function for UI updates
     requestTeamAllocation(teamId, hoursRequested, [memberId]);
-  }, [connectedTeams, data.duration, requestTeamAllocation]);
+  }, [connectedTeams, featureData, id, updateNodeData, saveToBackend, requestTeamAllocation]);
+  
+  // Clean up timers on unmount
+  useEffect(() => {
+    return () => {
+      if (saveDebounceRef.current) clearTimeout(saveDebounceRef.current);
+    };
+  }, []);
 
   return (
     <BaseNode selected={selected}>
@@ -156,7 +268,7 @@ export function FeatureNode({ id, data, selected }: NodeProps<FeatureNodeData>) 
               {status}
             </Badge>
             <input
-              value={data.title}
+              value={featureData.title}
               onChange={handleTitleChange}
               className="bg-transparent outline-none placeholder:text-muted-foreground"
               placeholder="Feature Title"
@@ -174,7 +286,7 @@ export function FeatureNode({ id, data, selected }: NodeProps<FeatureNodeData>) 
 
       <div className="px-3 pb-3 space-y-4">
         <Textarea
-          value={data.description || ''}
+          value={featureData.description || ''}
           onChange={handleDescriptionChange}
           placeholder="Describe this feature..."
           className="min-h-[100px] w-full resize-y bg-transparent"
@@ -183,7 +295,7 @@ export function FeatureNode({ id, data, selected }: NodeProps<FeatureNodeData>) 
         <div className="space-y-2">
           <Label>Build Type</Label>
           <RadioGroup
-            value={data.buildType}
+            value={featureData.buildType}
             onValueChange={handleBuildTypeChange}
             className="flex gap-4"
           >
@@ -237,13 +349,13 @@ export function FeatureNode({ id, data, selected }: NodeProps<FeatureNodeData>) 
                   {/* Member Allocation Controls */}
                   <div className="space-y-4">
                     {team.availableBandwidth.map(member => {
-                      const allocation = data.teamAllocations
+                      const allocation = featureData.teamAllocations
                         ?.find(a => a.teamId === team.teamId)
                         ?.allocatedMembers
                         .find(m => m.memberId === member.memberId);
                       
                       const percentage = allocation 
-                        ? (allocation.hours / 8 / (data.duration || 1)) * 100 
+                        ? (allocation.hours / 8 / (featureData.duration || 1)) * 100 
                         : 0;
 
                       return (
@@ -339,7 +451,7 @@ export function FeatureNode({ id, data, selected }: NodeProps<FeatureNodeData>) 
 
         {/* Cost Summary */}
         {costs && costs.allocations.length > 0 && (
-          <CostSummary costs={costs} duration={data.duration} />
+          <CostSummary costs={costs} duration={featureData.duration} />
         )}
       </div>
 

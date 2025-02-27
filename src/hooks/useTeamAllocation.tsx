@@ -178,15 +178,32 @@ export function useTeamAllocation(nodeId: string, data: FeatureNodeData) {
       })
       .filter((id): id is string => id !== null);
 
+    // Ensure teamAllocations is an array
+    let teamAllocationsArray: Array<TeamAllocation> = [];
+    
+    if (Array.isArray(data.teamAllocations)) {
+      teamAllocationsArray = data.teamAllocations;
+    } else if (typeof data.teamAllocations === 'string') {
+      try {
+        teamAllocationsArray = JSON.parse(data.teamAllocations);
+        if (!Array.isArray(teamAllocationsArray)) {
+          teamAllocationsArray = [];
+        }
+      } catch (e) {
+        console.warn('Failed to parse teamAllocations string:', e);
+        teamAllocationsArray = [];
+      }
+    }
+
     // Initialize allocations for new team connections
-    const currentTeams = new Set(data.teamAllocations?.map(a => a.teamId));
+    const currentTeams = new Set(teamAllocationsArray.map(a => a.teamId));
     const newTeams = connectedTeamIds.filter(teamId => !currentTeams.has(teamId));
 
     if (newTeams.length > 0) {
       updateNodeData(nodeId, {
         ...data,
         teamAllocations: [
-          ...(data.teamAllocations || []),
+          ...teamAllocationsArray,
           ...newTeams.map(teamId => ({
             teamId,
             requestedHours: 0,
@@ -297,8 +314,25 @@ export function useTeamAllocation(nodeId: string, data: FeatureNodeData) {
     });
 
     // Update feature/option node allocations
+    // Ensure teamAllocations is an array
+    let teamAllocationsArray: Array<TeamAllocation> = [];
+    
+    if (Array.isArray(data.teamAllocations)) {
+      teamAllocationsArray = data.teamAllocations;
+    } else if (typeof data.teamAllocations === 'string') {
+      try {
+        teamAllocationsArray = JSON.parse(data.teamAllocations);
+        if (!Array.isArray(teamAllocationsArray)) {
+          teamAllocationsArray = [];
+        }
+      } catch (e) {
+        console.warn('Failed to parse teamAllocations string:', e);
+        teamAllocationsArray = [];
+      }
+    }
+
     const updatedTeamAllocations = [
-      ...(data.teamAllocations?.filter(a => a.teamId !== teamId) || []),
+      ...teamAllocationsArray.filter(a => a.teamId !== teamId),
       {
         teamId,
         requestedHours,
@@ -317,8 +351,40 @@ export function useTeamAllocation(nodeId: string, data: FeatureNodeData) {
 
   // Calculate costs based on team allocations
   const costs = useMemo(() => {
-    const allocations = data.teamAllocations?.flatMap(teamAllocation => 
-      teamAllocation.allocatedMembers.map(member => {
+    // Ensure teamAllocations is an array
+    let teamAllocationsArray: Array<TeamAllocation> = [];
+    
+    if (Array.isArray(data.teamAllocations)) {
+      teamAllocationsArray = data.teamAllocations;
+    } else if (typeof data.teamAllocations === 'string') {
+      try {
+        teamAllocationsArray = JSON.parse(data.teamAllocations);
+        if (!Array.isArray(teamAllocationsArray)) {
+          teamAllocationsArray = [];
+        }
+      } catch (e) {
+        console.warn('Failed to parse teamAllocations string:', e);
+        teamAllocationsArray = [];
+      }
+    }
+    
+    const allocations = teamAllocationsArray.flatMap(teamAllocation => {
+      // Ensure teamAllocation is a valid object
+      if (!teamAllocation || typeof teamAllocation !== 'object') {
+        return [];
+      }
+      
+      // Ensure allocatedMembers is an array
+      const allocatedMembers = Array.isArray(teamAllocation.allocatedMembers) 
+        ? teamAllocation.allocatedMembers 
+        : [];
+      
+      return allocatedMembers.map(member => {
+        // Ensure member is a valid object
+        if (!member || typeof member !== 'object') {
+          return null;
+        }
+        
         const team = connectedTeams.find(t => t.teamId === teamAllocation.teamId);
         const bandwidthMember = team?.availableBandwidth.find(bw => bw.memberId === member.memberId);
         
@@ -339,7 +405,7 @@ export function useTeamAllocation(nodeId: string, data: FeatureNodeData) {
           cost
         };
       })
-    ).filter((allocation): allocation is NonNullable<typeof allocation> => allocation !== null);
+    }).filter((allocation): allocation is NonNullable<typeof allocation> => allocation !== null);
 
     return {
       dailyCost: allocations?.reduce((sum, a) => sum + a.member.dailyRate * (a.allocation / 100), 0) || 0,

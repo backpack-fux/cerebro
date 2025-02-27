@@ -1,6 +1,6 @@
 "use client";
 
-import { Handle, Position, type NodeProps, type Node, useReactFlow, useNodeConnections } from "@xyflow/react";
+import { Handle, Position, type NodeProps, useReactFlow, useNodeConnections, useEdges, Node } from "@xyflow/react";
 import { BaseNode } from '@/components/nodes/base-node';
 import { 
   NodeHeader,
@@ -9,63 +9,22 @@ import {
   NodeHeaderMenuAction,
 } from '@/components/nodes/node-header';
 import { DropdownMenuItem } from "@radix-ui/react-dropdown-menu";
-import { useCallback, useMemo, useEffect } from "react";
+import { useCallback, useMemo, useEffect, useRef, useState } from "react";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Trash } from "lucide-react";
-import { Role } from "./team-member-node";
+import { RFTeamMemberNodeData } from "@/services/graph/team-member/team-member.types";
+import { RFTeamNodeData, Season, RosterMember } from '@/services/graph/team/team.types';
+import { GraphApiClient } from '@/services/graph/neo4j/api-client';
+import { NodeType } from '@/services/graph/neo4j/api-urls';
+import { Role } from '@/services/graph/shared/shared.types';
+import { toast } from "sonner";
 
-type Season = {
-  startDate: string;
-  endDate: string;
-  name: string;
-  goals?: string[];
-};
-
-// First, let's properly type the team member node data
-type TeamMemberNodeData = {
-  title: string;
-  weeklyCapacity: number;
-  dailyRate?: number;
-  allocations?: {
-    nodeId: string;
-    percentage: number;
-  }[];
-};
-
-type RosterMember = {
-  memberId: string;
-  allocation: number; // Total percentage of member's time allocated to this team
-  role: Role;
-  startDate?: string;
-  endDate?: string;
-  allocations?: {
-    nodeId: string; // ID of feature/provider/option
-    percentage: number; // Percentage of their team allocation
-  }[];
-};
-
-// First, let's create a type for the member we're creating from connections
-type NewRosterMember = {
-  memberId: string;
-  role: Role;
-  allocation: number;
-  startDate: string;  // This is required for new members
-  allocations: never[];  // Empty array for new members
-};
-
-export type TeamNodeData = Node<{
-  title: string;
-  description?: string;
-  season?: Season;
-  roster: RosterMember[]; // Make roster non-optional with empty array default
-}>;
-
-// Improve the type guard
-function isTeamMemberNode(node: Node | undefined): node is Node<TeamMemberNodeData> {
+// Type guard for team member nodes
+function isTeamMemberNode(node: any): node is { id: string, data: RFTeamMemberNodeData } {
   return Boolean(
     node?.type === 'teamMember' && 
     node.data && 
@@ -74,9 +33,44 @@ function isTeamMemberNode(node: Node | undefined): node is Node<TeamMemberNodeDa
   );
 }
 
-export function TeamNode({ id, data, selected }: NodeProps<TeamNodeData>) {
-  const { updateNodeData, setNodes, getNodes } = useReactFlow();
+export function TeamNode({ id, data, selected }: NodeProps) {
+  const { updateNodeData, setNodes, getNodes, setEdges } = useReactFlow();
   const connections = useNodeConnections({ id });
+  const edges = useEdges();
+  
+  // Cast data to the correct type
+  const teamData = data as RFTeamNodeData;
+  
+  // Local state for title and description to avoid excessive API calls
+  const [title, setTitle] = useState(teamData.title);
+  const [description, setDescription] = useState(teamData.description || '');
+  
+  // Refs for debounce timers
+  const titleDebounceRef = useRef<NodeJS.Timeout | null>(null);
+  const descriptionDebounceRef = useRef<NodeJS.Timeout | null>(null);
+  const seasonDebounceRef = useRef<NodeJS.Timeout | null>(null);
+  const rosterDebounceRef = useRef<NodeJS.Timeout | null>(null);
+  
+  // Ensure roster is always an array
+  const roster = useMemo(() => {
+    if (Array.isArray(teamData.roster)) {
+      return teamData.roster;
+    } else if (typeof teamData.roster === 'string') {
+      try {
+        return JSON.parse(teamData.roster);
+      } catch (e) {
+        console.warn('Failed to parse roster string:', e);
+        return [];
+      }
+    }
+    return [];
+  }, [teamData.roster]);
+  
+  // Update local state when props change
+  useEffect(() => {
+    setTitle(teamData.title);
+    setDescription(teamData.description || '');
+  }, [teamData.title, teamData.description]);
 
   // Watch for member connections
   useEffect(() => {
@@ -90,38 +84,45 @@ export function TeamNode({ id, data, selected }: NodeProps<TeamNodeData>) {
         if (!memberNode) return null;
 
         // Create a new roster member with 0% initial allocation
-        const newMember: NewRosterMember = {
+        const newMember: RosterMember = {
           memberId: memberNode.id,
-          role: memberNode.data.role as Role,
+          role: (memberNode.data as any).role as Role,
           allocation: 0,  // Start at 0% instead of 100%
           startDate: new Date().toISOString().split('T')[0],
           allocations: []
         };
         return newMember;
       })
-      .filter((member): member is NewRosterMember => member !== null);
+      .filter((member): member is RosterMember => member !== null);
 
+    // Ensure roster is an array before using array methods
+    const rosterArray = Array.isArray(roster) ? roster : [];
+    
     // Add new members to roster
-    const currentMemberIds = new Set(data.roster?.map(m => m.memberId));
+    const currentMemberIds = new Set(rosterArray.map((m: RosterMember) => m.memberId));
     const newMembers = connectedMembers.filter(member => !currentMemberIds.has(member.memberId));
 
     if (newMembers.length > 0) {
+      const updatedRoster = [...rosterArray, ...newMembers];
       updateNodeData(id, {
-        ...data,
-        roster: [...(data.roster || []), ...newMembers]
+        ...teamData,
+        roster: updatedRoster
       });
+      
+      // Save to backend
+      saveRosterToBackend(updatedRoster);
     }
-  }, [connections, data, id, updateNodeData, getNodes]);
+  }, [connections, teamData, id, updateNodeData, getNodes, roster]);
 
   // Initialize data with defaults
   const initialData = {
-    ...data,
-    roster: data.roster || []
+    ...teamData,
+    roster
   };
 
   // Calculate season progress
   const seasonProgress = useMemo(() => {
-    if (!data.season?.startDate || !data.season?.endDate) {
+    if (!teamData.season?.startDate || !teamData.season?.endDate) {
       return {
         progress: 0,
         daysRemaining: 0,
@@ -131,8 +132,8 @@ export function TeamNode({ id, data, selected }: NodeProps<TeamNodeData>) {
       };
     }
 
-    const start = new Date(data.season.startDate);
-    const end = new Date(data.season.endDate);
+    const start = new Date(teamData.season.startDate);
+    const end = new Date(teamData.season.endDate);
     const now = new Date();
     
     const total = end.getTime() - start.getTime();
@@ -148,35 +149,40 @@ export function TeamNode({ id, data, selected }: NodeProps<TeamNodeData>) {
       hasStarted: now >= start,
       hasEnded: now > end
     };
-  }, [data.season]);
+  }, [teamData.season]);
 
   // Update bandwidth calculation with proper typing
   const bandwidth = useMemo(() => {
+    // Ensure roster is an array before using array methods
+    const rosterArray = Array.isArray(roster) ? roster : [];
+    
     const teamMembers = getNodes()
       .filter(node => 
         node.type === 'teamMember' && 
-        initialData.roster.some(member => member.memberId === node.id)
+        rosterArray.some((member: RosterMember) => member.memberId === node.id)
       )
       .filter(isTeamMemberNode);
 
     // Calculate total team bandwidth from member allocations
-    const total = initialData.roster.reduce((sum, member) => {
+    const total = rosterArray.reduce((sum: number, member: RosterMember) => {
       const teamMember = teamMembers.find(tm => tm.id === member.memberId);
       if (teamMember) {
-        return sum + (teamMember.data.weeklyCapacity * (member.allocation / 100));
+        const weeklyCapacity = Number(teamMember.data.weeklyCapacity);
+        return sum + (weeklyCapacity * (member.allocation / 100));
       }
       return sum;
     }, 0);
 
     // Calculate allocated bandwidth to work nodes
-    const allocated = initialData.roster.reduce((sum, member) => {
+    const allocated = rosterArray.reduce((sum: number, member: RosterMember) => {
       const memberAllocations = member.allocations || [];
       const teamMember = teamMembers.find(tm => tm.id === member.memberId);
       if (!teamMember) return sum;
 
-      const memberTotal = memberAllocations.reduce((memberSum: number, allocation) => {
+      const memberTotal = memberAllocations.reduce((memberSum: number, allocation: any) => {
+        const weeklyCapacity = Number(teamMember.data.weeklyCapacity);
         return memberSum + (allocation.percentage / 100) * 
-          (teamMember.data.weeklyCapacity * (member.allocation / 100));
+          (weeklyCapacity * (member.allocation / 100));
       }, 0);
 
       return sum + memberTotal;
@@ -188,15 +194,64 @@ export function TeamNode({ id, data, selected }: NodeProps<TeamNodeData>) {
       available: total - allocated,
       utilizationRate: total > 0 ? (allocated / total) * 100 : 0
     };
-  }, [initialData.roster, getNodes]);
+  }, [roster, getNodes]);
+
+  // Save data to backend
+  const saveToBackend = async (field: string, value: any) => {
+    try {
+      const response = await GraphApiClient.updateNode('team' as NodeType, id, { [field]: value });
+      console.log(`Updated team node ${id} ${field}`);
+    } catch (error) {
+      console.error(`Failed to update team node ${id}:`, error);
+      toast.error(`Update Failed: Failed to save ${field} to the server.`);
+    }
+  };
+
+  // Save roster to backend
+  const saveRosterToBackend = async (roster: RosterMember[]) => {
+    if (rosterDebounceRef.current) clearTimeout(rosterDebounceRef.current);
+    
+    rosterDebounceRef.current = setTimeout(async () => {
+      await saveToBackend('roster', roster);
+      rosterDebounceRef.current = null;
+    }, 1000);
+  };
+
+  // Save season to backend
+  const saveSeasonToBackend = async (season: Season) => {
+    if (seasonDebounceRef.current) clearTimeout(seasonDebounceRef.current);
+    
+    seasonDebounceRef.current = setTimeout(async () => {
+      await saveToBackend('season', season);
+      seasonDebounceRef.current = null;
+    }, 1000);
+  };
 
   const handleTitleChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    updateNodeData(id, { ...data, title: e.target.value });
-  }, [id, data, updateNodeData]);
+    const newTitle = e.target.value;
+    setTitle(newTitle);
+    updateNodeData(id, { ...teamData, title: newTitle });
+    
+    if (titleDebounceRef.current) clearTimeout(titleDebounceRef.current);
+    
+    titleDebounceRef.current = setTimeout(async () => {
+      await saveToBackend('title', newTitle);
+      titleDebounceRef.current = null;
+    }, 1000);
+  }, [id, teamData, updateNodeData]);
 
   const handleDescriptionChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    updateNodeData(id, { ...data, description: e.target.value });
-  }, [id, data, updateNodeData]);
+    const newDescription = e.target.value;
+    setDescription(newDescription);
+    updateNodeData(id, { ...teamData, description: newDescription });
+    
+    if (descriptionDebounceRef.current) clearTimeout(descriptionDebounceRef.current);
+    
+    descriptionDebounceRef.current = setTimeout(async () => {
+      await saveToBackend('description', newDescription);
+      descriptionDebounceRef.current = null;
+    }, 1000);
+  }, [id, teamData, updateNodeData]);
 
   const handleSeasonChange = useCallback((updates: Partial<Season>) => {
     const defaultSeason: Season = {
@@ -205,29 +260,88 @@ export function TeamNode({ id, data, selected }: NodeProps<TeamNodeData>) {
       name: 'New Season'
     };
 
+    const updatedSeason = { ...(teamData.season || defaultSeason), ...updates };
+    
     updateNodeData(id, {
-      ...data,
-      season: { ...(data.season || defaultSeason), ...updates }
+      ...teamData,
+      season: updatedSeason
     });
-  }, [id, data, updateNodeData]);
+    
+    saveSeasonToBackend(updatedSeason);
+  }, [id, teamData, updateNodeData]);
 
   const removeRosterMember = useCallback((memberId: string) => {
+    // Ensure roster is an array before using array methods
+    const rosterArray = Array.isArray(roster) ? roster : [];
+    const updatedRoster = rosterArray.filter((member: RosterMember) => member.memberId !== memberId);
+    
     updateNodeData(id, {
-      ...data,
-      roster: data.roster?.filter(member => member.memberId !== memberId) || []
+      ...teamData,
+      roster: updatedRoster
     });
-  }, [id, data, updateNodeData]);
+    
+    // Also delete the edge
+    const edge = edges.find(e => 
+      (e.source === id && e.target === memberId) || 
+      (e.target === id && e.source === memberId)
+    );
+    
+    if (edge) {
+      GraphApiClient.deleteEdge('team' as NodeType, edge.id)
+        .then(() => {
+          setEdges((eds) => eds.filter((e) => e.id !== edge.id));
+        })
+        .catch((error) => console.error('Failed to delete edge:', error));
+    }
+    
+    saveRosterToBackend(updatedRoster);
+  }, [id, teamData, updateNodeData, edges, setEdges, roster]);
 
   const handleDelete = useCallback(() => {
-    setNodes((nodes) => nodes.filter((node) => node.id !== id));
-  }, [id, setNodes]);
+    // Delete the node from the backend
+    GraphApiClient.deleteNode('team' as NodeType, id)
+      .then(() => {
+        setNodes((nodes) => nodes.filter((node) => node.id !== id));
+        
+        // Also delete connected edges
+        const connectedEdges = edges.filter((edge) => edge.source === id || edge.target === id);
+        connectedEdges.forEach((edge) => {
+          GraphApiClient.deleteEdge('team' as NodeType, edge.id)
+            .catch((error) => console.error('Failed to delete edge:', error));
+        });
+      })
+      .catch((error) => {
+        console.error('Failed to delete team node:', error);
+        toast.error("Delete Failed: Failed to delete the team node from the server.");
+      });
+  }, [id, setNodes, edges]);
+
+  const handleDisconnect = useCallback((edgeId: string) => {
+    GraphApiClient.deleteEdge('team' as NodeType, edgeId)
+      .then(() => {
+        setEdges((eds) => eds.filter((e) => e.id !== edgeId));
+      })
+      .catch((error) => console.error('Failed to delete edge:', error));
+  }, [setEdges]);
+
+  // Clean up debounce timers on unmount
+  useEffect(() => {
+    return () => {
+      if (titleDebounceRef.current) clearTimeout(titleDebounceRef.current);
+      if (descriptionDebounceRef.current) clearTimeout(descriptionDebounceRef.current);
+      if (seasonDebounceRef.current) clearTimeout(seasonDebounceRef.current);
+      if (rosterDebounceRef.current) clearTimeout(rosterDebounceRef.current);
+    };
+  }, []);
+
+  const connectedEdges = edges.filter((edge) => edge.source === id || edge.target === id);
 
   return (
     <BaseNode selected={selected}>
       <NodeHeader>
         <NodeHeaderTitle>
           <input
-            value={data.title}
+            value={title}
             onChange={handleTitleChange}
             className="bg-transparent outline-none placeholder:text-muted-foreground"
             placeholder="Team Name"
@@ -238,6 +352,15 @@ export function TeamNode({ id, data, selected }: NodeProps<TeamNodeData>) {
             <DropdownMenuItem onSelect={handleDelete} className="cursor-pointer">
               Delete
             </DropdownMenuItem>
+            {connectedEdges.map((edge) => (
+              <DropdownMenuItem
+                key={edge.id}
+                onSelect={() => handleDisconnect(edge.id)}
+                className="cursor-pointer text-red-500"
+              >
+                Disconnect {String(edge.data?.label || 'Edge')}
+              </DropdownMenuItem>
+            ))}
           </NodeHeaderMenuAction>
         </NodeHeaderActions>
       </NodeHeader>
@@ -265,7 +388,7 @@ export function TeamNode({ id, data, selected }: NodeProps<TeamNodeData>) {
               <Label className="text-xs">Start Date</Label>
               <Input
                 type="date"
-                value={data.season?.startDate || ''}
+                value={teamData.season?.startDate || ''}
                 onChange={(e) => handleSeasonChange({ startDate: e.target.value })}
                 className="bg-transparent"
               />
@@ -274,14 +397,14 @@ export function TeamNode({ id, data, selected }: NodeProps<TeamNodeData>) {
               <Label className="text-xs">End Date</Label>
               <Input
                 type="date"
-                value={data.season?.endDate || ''}
+                value={teamData.season?.endDate || ''}
                 onChange={(e) => handleSeasonChange({ endDate: e.target.value })}
                 className="bg-transparent"
               />
             </div>
           </div>
           
-          {data.season && (
+          {Boolean(teamData.season) && (
             <div className="space-y-1">
               <div className="flex justify-between text-xs">
                 <span className="text-muted-foreground">Progress</span>
@@ -330,19 +453,19 @@ export function TeamNode({ id, data, selected }: NodeProps<TeamNodeData>) {
           <div className="flex items-center justify-between">
             <Label>Team Roster</Label>
             <span className="text-xs text-muted-foreground">
-              {data.roster?.length || 0} members
+              {Array.isArray(roster) ? roster.length : 0} members
             </span>
           </div>
 
           <div className="space-y-2">
-            {data.roster?.map(member => {
+            {Array.isArray(roster) && roster.map((member: RosterMember) => {
               const teamMember = getNodes().find(n => n.id === member.memberId);
               if (!isTeamMemberNode(teamMember)) return null;
 
               return (
                 <div key={member.memberId} className="flex items-center gap-2 p-2 bg-muted/30 rounded-lg">
                   <div className="flex-1">
-                    <div className="font-medium">{teamMember.data.title}</div>
+                    <div className="font-medium">{String(teamMember.data.title || '')}</div>
                     <div className="text-xs text-muted-foreground">
                       {member.role} • {member.allocation}% allocated
                     </div>
@@ -362,7 +485,7 @@ export function TeamNode({ id, data, selected }: NodeProps<TeamNodeData>) {
         </div>
 
         <Textarea
-          value={data.description || ''}
+          value={description}
           onChange={handleDescriptionChange}
           placeholder="Team description..."
           className="min-h-[80px] resize-y bg-transparent"

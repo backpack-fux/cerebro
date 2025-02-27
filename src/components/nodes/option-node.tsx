@@ -1,6 +1,6 @@
 "use client";
 
-import { Handle, Position, type NodeProps, type Node } from "@xyflow/react";
+import { Handle, Position, type NodeProps, useReactFlow } from "@xyflow/react";
 import { BaseNode } from '@/components/nodes/base-node';
 import { 
   NodeHeader,
@@ -9,7 +9,6 @@ import {
   NodeHeaderMenuAction,
 } from '@/components/nodes/node-header';
 import { DropdownMenuItem } from "@radix-ui/react-dropdown-menu";
-import { useReactFlow } from "@xyflow/react";
 import { useCallback, useMemo } from "react";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
@@ -22,71 +21,74 @@ import { useTeamAllocation } from "@/hooks/useTeamAllocation";
 import { Slider } from "@/components/ui/slider";
 import { useDurationInput } from "@/hooks/useDurationInput";
 import { useNodeStatus } from "@/hooks/useNodeStatus";
+import { 
+  RFOptionNodeData, 
+  Goal, 
+  Risk, 
+  OptionType,
+  TeamAllocation
+} from '@/services/graph/option/option.types';
+import { GraphApiClient } from '@/services/graph/neo4j/api-client';
+import { NodeType } from '@/services/graph/neo4j/api-urls';
+import { toast } from "sonner";
 
-type Goal = {
-  id: string;
-  description: string;
-  impact: 'high' | 'medium' | 'low';
-};
-
-type Risk = {
-  id: string;
-  description: string;
-  severity: 'high' | 'medium' | 'low';
-  mitigation?: string;
-};
-
-export type OptionType = 'customer' | 'contract' | 'partner';
-
-export type MemberAllocation = {
-  memberId: string;
-  timePercentage: number;
-};
-
-export type OptionNodeData = Node<{
-  title: string;
-  description?: string;
-  optionType?: OptionType;
-  transactionFeeRate?: number;
-  monthlyVolume?: number;
-  duration?: number;
-  teamMembers?: string[];
-  memberAllocations?: MemberAllocation[];
-  goals: Goal[];
-  risks: Risk[];
-  buildDuration?: number;
-  timeToClose?: number;
-  teamAllocations?: Array<{
-    teamId: string;
-    requestedHours: number;
-    allocatedMembers: Array<{
-      memberId: string;
-      hours: number;
-    }>;
-  }>;
-}>;
-
-export function OptionNode({ id, data, selected }: NodeProps<OptionNodeData>) {
-  const { updateNodeData, setNodes } = useReactFlow();
+export function OptionNode({ id, data, selected }: NodeProps) {
+  const { updateNodeData, setNodes, setEdges, getEdges } = useReactFlow();
+  
+  // Cast data to the correct type
+  const optionData = data as RFOptionNodeData;
+  
+  // Ensure complex objects are always arrays
+  const goals = Array.isArray(optionData.goals) ? optionData.goals : [];
+  const risks = Array.isArray(optionData.risks) ? optionData.risks : [];
+  const teamMembers = Array.isArray(optionData.teamMembers) ? optionData.teamMembers : [];
+  const memberAllocations = Array.isArray(optionData.memberAllocations) ? optionData.memberAllocations : [];
+  const teamAllocations = Array.isArray(optionData.teamAllocations) ? optionData.teamAllocations : [];
+  
+  // Update optionData with the ensured arrays
+  const safeOptionData = {
+    ...optionData,
+    goals,
+    risks,
+    teamMembers,
+    memberAllocations,
+    teamAllocations
+  };
+  
   const {
     connectedTeams,
     requestTeamAllocation,
     costs,
     CostSummary
-  } = useTeamAllocation(id, data);
+  } = useTeamAllocation(id, safeOptionData);
 
-  const { status, getStatusColor, cycleStatus } = useNodeStatus(id, data, updateNodeData, {
+  const { status, getStatusColor, cycleStatus } = useNodeStatus(id, safeOptionData, updateNodeData, {
     canBeActive: true,
     defaultStatus: 'planning'
   });
 
+  // Save data to backend
+  const saveToBackend = async (field: string, value: any) => {
+    try {
+      await GraphApiClient.updateNode('option' as NodeType, id, { [field]: value });
+      console.log(`Updated option node ${id} ${field}`);
+    } catch (error) {
+      console.error(`Failed to update option node ${id}:`, error);
+      toast.error(`Update Failed: Failed to save ${field} to the server.`);
+    }
+  };
+
   const handleTitleChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    updateNodeData(id, { ...data, title: e.target.value });
-  }, [id, data, updateNodeData]);
+    const newTitle = e.target.value;
+    updateNodeData(id, { ...safeOptionData, title: newTitle });
+    saveToBackend('title', newTitle);
+  }, [id, safeOptionData, updateNodeData]);
 
   const handleDescriptionChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    updateNodeData(id, { ...data, description: e.target.value });
-  }, [id, data, updateNodeData]);
+    const newDescription = e.target.value;
+    updateNodeData(id, { ...safeOptionData, description: newDescription });
+    saveToBackend('description', newDescription);
+  }, [id, safeOptionData, updateNodeData]);
 
   const addGoal = useCallback(() => {
     const newGoal: Goal = {
@@ -94,27 +96,33 @@ export function OptionNode({ id, data, selected }: NodeProps<OptionNodeData>) {
       description: '',
       impact: 'medium'
     };
+    const updatedGoals = [...goals, newGoal];
     updateNodeData(id, { 
-      ...data, 
-      goals: [...(data.goals || []), newGoal] 
+      ...safeOptionData, 
+      goals: updatedGoals
     });
-  }, [id, data, updateNodeData]);
+    saveToBackend('goals', updatedGoals);
+  }, [id, safeOptionData, goals, updateNodeData]);
 
   const updateGoal = useCallback((goalId: string, updates: Partial<Goal>) => {
+    const updatedGoals = goals.map(goal => 
+      goal.id === goalId ? { ...goal, ...updates } : goal
+    );
     updateNodeData(id, {
-      ...data,
-      goals: data.goals.map(goal => 
-        goal.id === goalId ? { ...goal, ...updates } : goal
-      )
+      ...safeOptionData,
+      goals: updatedGoals
     });
-  }, [id, data, updateNodeData]);
+    saveToBackend('goals', updatedGoals);
+  }, [id, safeOptionData, goals, updateNodeData]);
 
   const removeGoal = useCallback((goalId: string) => {
+    const updatedGoals = goals.filter(goal => goal.id !== goalId);
     updateNodeData(id, {
-      ...data,
-      goals: data.goals.filter(goal => goal.id !== goalId)
+      ...safeOptionData,
+      goals: updatedGoals
     });
-  }, [id, data, updateNodeData]);
+    saveToBackend('goals', updatedGoals);
+  }, [id, safeOptionData, goals, updateNodeData]);
 
   const addRisk = useCallback(() => {
     const newRisk: Risk = {
@@ -122,51 +130,75 @@ export function OptionNode({ id, data, selected }: NodeProps<OptionNodeData>) {
       description: '',
       severity: 'medium'
     };
+    const updatedRisks = [...risks, newRisk];
     updateNodeData(id, { 
-      ...data, 
-      risks: [...(data.risks || []), newRisk] 
+      ...safeOptionData, 
+      risks: updatedRisks
     });
-  }, [id, data, updateNodeData]);
+    saveToBackend('risks', updatedRisks);
+  }, [id, safeOptionData, risks, updateNodeData]);
 
   const updateRisk = useCallback((riskId: string, updates: Partial<Risk>) => {
+    const updatedRisks = risks.map(risk => 
+      risk.id === riskId ? { ...risk, ...updates } : risk
+    );
     updateNodeData(id, {
-      ...data,
-      risks: data.risks.map(risk => 
-        risk.id === riskId ? { ...risk, ...updates } : risk
-      )
+      ...safeOptionData,
+      risks: updatedRisks
     });
-  }, [id, data, updateNodeData]);
+    saveToBackend('risks', updatedRisks);
+  }, [id, safeOptionData, risks, updateNodeData]);
 
   const removeRisk = useCallback((riskId: string) => {
+    const updatedRisks = risks.filter(risk => risk.id !== riskId);
     updateNodeData(id, {
-      ...data,
-      risks: data.risks.filter(risk => risk.id !== riskId)
+      ...safeOptionData,
+      risks: updatedRisks
     });
-  }, [id, data, updateNodeData]);
+    saveToBackend('risks', updatedRisks);
+  }, [id, safeOptionData, risks, updateNodeData]);
 
   const handleDelete = useCallback(() => {
-    setNodes((nodes) => nodes.filter((node) => node.id !== id));
-  }, [id, setNodes]);
+    // Delete the node from the backend
+    GraphApiClient.deleteNode('option' as NodeType, id)
+      .then(() => {
+        setNodes((nodes) => nodes.filter((node) => node.id !== id));
+        
+        // Also delete connected edges
+        const connectedEdges = getEdges().filter((edge) => edge.source === id || edge.target === id);
+        connectedEdges.forEach((edge) => {
+          GraphApiClient.deleteEdge('option' as NodeType, edge.id)
+            .catch((error) => console.error('Failed to delete edge:', error));
+        });
+      })
+      .catch((error) => {
+        console.error('Failed to delete option node:', error);
+        toast.error("Delete Failed: Failed to delete the option node from the server.");
+      });
+  }, [id, setNodes, getEdges]);
 
   const handleOptionTypeChange = useCallback((value: OptionType) => {
-    updateNodeData(id, { ...data, optionType: value });
-  }, [id, data, updateNodeData]);
+    updateNodeData(id, { ...safeOptionData, optionType: value });
+    saveToBackend('optionType', value);
+  }, [id, safeOptionData, updateNodeData]);
 
   const handleTransactionFeeChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const value = parseFloat(e.target.value);
     if (!isNaN(value) && value >= 0 && value <= 100) {
-      updateNodeData(id, { ...data, transactionFeeRate: value });
+      updateNodeData(id, { ...safeOptionData, transactionFeeRate: value });
+      saveToBackend('transactionFeeRate', value);
     }
-  }, [id, data, updateNodeData]);
+  }, [id, safeOptionData, updateNodeData]);
 
   const handleMonthlyVolumeChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const value = parseFloat(e.target.value);
     if (!isNaN(value) && value >= 0) {
-      updateNodeData(id, { ...data, monthlyVolume: value });
+      updateNodeData(id, { ...safeOptionData, monthlyVolume: value });
+      saveToBackend('monthlyVolume', value);
     }
-  }, [id, data, updateNodeData]);
+  }, [id, safeOptionData, updateNodeData]);
 
-  const duration = useDurationInput(id, data, updateNodeData, {
+  const duration = useDurationInput(id, safeOptionData, updateNodeData, {
     maxDays: 90,
     label: "Time to Close",
     fieldName: "duration",
@@ -175,11 +207,11 @@ export function OptionNode({ id, data, selected }: NodeProps<OptionNodeData>) {
 
   // Calculate expected monthly value
   const expectedMonthlyValue = useMemo(() => {
-    if (data.transactionFeeRate && data.monthlyVolume) {
-      return (data.transactionFeeRate / 100) * data.monthlyVolume;
+    if (safeOptionData.transactionFeeRate && safeOptionData.monthlyVolume) {
+      return (safeOptionData.transactionFeeRate / 100) * safeOptionData.monthlyVolume;
     }
     return 0;
-  }, [data.transactionFeeRate, data.monthlyVolume]);
+  }, [safeOptionData.transactionFeeRate, safeOptionData.monthlyVolume]);
 
   // Add this calculation after the expectedMonthlyValue memo
   const payoffDetails = useMemo(() => {
@@ -205,10 +237,60 @@ export function OptionNode({ id, data, selected }: NodeProps<OptionNodeData>) {
 
     if (!teamId) return;
 
-    // Update the allocation
-    const hoursRequested = (percentage / 100) * 8 * (data.duration || 1); // Convert % to hours
+    // Calculate hours based on percentage
+    const hoursRequested = (percentage / 100) * 8 * (safeOptionData.duration || 1); // Convert % to hours
+    
+    // Update the team allocations in the node data
+    let updatedTeamAllocations = [...teamAllocations];
+    
+    // Find if this team already has an allocation
+    const existingTeamIndex = updatedTeamAllocations.findIndex(a => a.teamId === teamId);
+    
+    if (existingTeamIndex >= 0) {
+      // Update existing team allocation
+      const existingTeam = updatedTeamAllocations[existingTeamIndex];
+      const existingMemberIndex = existingTeam.allocatedMembers.findIndex(m => m.memberId === memberId);
+      
+      if (existingMemberIndex >= 0) {
+        // Update existing member allocation
+        updatedTeamAllocations[existingTeamIndex].allocatedMembers[existingMemberIndex].hours = hoursRequested;
+      } else {
+        // Add new member to existing team
+        updatedTeamAllocations[existingTeamIndex].allocatedMembers.push({
+          memberId,
+          hours: hoursRequested
+        });
+      }
+      
+      // Update requested hours total
+      updatedTeamAllocations[existingTeamIndex].requestedHours = 
+        updatedTeamAllocations[existingTeamIndex].allocatedMembers.reduce(
+          (sum, member) => sum + member.hours, 0
+        );
+    } else {
+      // Create new team allocation
+      updatedTeamAllocations.push({
+        teamId,
+        requestedHours: hoursRequested,
+        allocatedMembers: [{
+          memberId,
+          hours: hoursRequested
+        }]
+      });
+    }
+    
+    // Update node data
+    updateNodeData(id, {
+      ...safeOptionData,
+      teamAllocations: updatedTeamAllocations
+    });
+    
+    // Save to backend
+    saveToBackend('teamAllocations', updatedTeamAllocations);
+    
+    // Also update via the hook for UI consistency
     requestTeamAllocation(teamId, hoursRequested, [memberId]);
-  }, [connectedTeams, data.duration, requestTeamAllocation]);
+  }, [connectedTeams, safeOptionData, id, updateNodeData, requestTeamAllocation]);
 
   return (
     <BaseNode selected={selected}>
@@ -223,7 +305,7 @@ export function OptionNode({ id, data, selected }: NodeProps<OptionNodeData>) {
               {status}
             </Badge>
             <input
-              value={data.title}
+              value={safeOptionData.title}
               onChange={handleTitleChange}
               className="bg-transparent outline-none placeholder:text-muted-foreground"
               placeholder="Option Title"
@@ -243,7 +325,7 @@ export function OptionNode({ id, data, selected }: NodeProps<OptionNodeData>) {
         <div className="space-y-2">
           <Label>Option Type</Label>
           <RadioGroup
-            value={data.optionType}
+            value={safeOptionData.optionType}
             onValueChange={handleOptionTypeChange}
             className="flex gap-4"
           >
@@ -277,14 +359,14 @@ export function OptionNode({ id, data, selected }: NodeProps<OptionNodeData>) {
           </RadioGroup>
         </div>
 
-        {data.optionType === 'customer' && (
+        {safeOptionData.optionType === 'customer' && (
           <div className="space-y-4 p-3 bg-muted/30 rounded-lg">
             <div className="space-y-2">
               <Label>Transaction Fee Rate</Label>
               <div className="relative">
                 <Input
                   type="number"
-                  value={data.transactionFeeRate || ''}
+                  value={safeOptionData.transactionFeeRate || ''}
                   onChange={handleTransactionFeeChange}
                   className="pr-8 bg-transparent"
                   placeholder="0.00"
@@ -306,7 +388,7 @@ export function OptionNode({ id, data, selected }: NodeProps<OptionNodeData>) {
                 </span>
                 <Input
                   type="number"
-                  value={data.monthlyVolume || ''}
+                  value={safeOptionData.monthlyVolume || ''}
                   onChange={handleMonthlyVolumeChange}
                   className="pl-7 bg-transparent"
                   placeholder="0.00"
@@ -316,19 +398,19 @@ export function OptionNode({ id, data, selected }: NodeProps<OptionNodeData>) {
               </div>
             </div>
 
-            {(data.transactionFeeRate || data.monthlyVolume) && (
+            {(safeOptionData.transactionFeeRate || safeOptionData.monthlyVolume) && (
               <div className="space-y-1 pt-2 border-t">
-                {data.transactionFeeRate && data.transactionFeeRate > 0 && (
+                {safeOptionData.transactionFeeRate && safeOptionData.transactionFeeRate > 0 && (
                   <div className="text-xs text-muted-foreground flex justify-between">
                     <span>Fee Rate:</span>
-                    <span>${data.transactionFeeRate.toFixed(2)} per $100</span>
+                    <span>${safeOptionData.transactionFeeRate.toFixed(2)} per $100</span>
                   </div>
                 )}
-                {data.monthlyVolume && data.monthlyVolume > 0 && (
+                {safeOptionData.monthlyVolume && safeOptionData.monthlyVolume > 0 && (
                   <div className="text-xs text-muted-foreground flex justify-between">
                     <span>Monthly Volume:</span>
                     <span>
-                      ${data.monthlyVolume.toLocaleString('en-US', { 
+                      ${safeOptionData.monthlyVolume.toLocaleString('en-US', { 
                         minimumFractionDigits: 2, 
                         maximumFractionDigits: 2 
                       })}
@@ -405,13 +487,13 @@ export function OptionNode({ id, data, selected }: NodeProps<OptionNodeData>) {
                   {/* Member Allocation Controls */}
                   <div className="space-y-4">
                     {team.availableBandwidth.map(member => {
-                      const allocation = data.teamAllocations
+                      const allocation = safeOptionData.teamAllocations
                         ?.find(a => a.teamId === team.teamId)
                         ?.allocatedMembers
                         .find(m => m.memberId === member.memberId);
                       
                       const percentage = allocation 
-                        ? (allocation.hours / 8 / (data.duration || 1)) * 100 
+                        ? (allocation.hours / 8 / (safeOptionData.duration || 1)) * 100 
                         : 0;
 
                       return (
@@ -440,11 +522,11 @@ export function OptionNode({ id, data, selected }: NodeProps<OptionNodeData>) {
 
         {/* Cost Summary */}
         {costs && costs.allocations.length > 0 && (
-          <CostSummary costs={costs} duration={data.duration} />
+          <CostSummary costs={costs} duration={safeOptionData.duration} />
         )}
 
         <Textarea
-          value={data.description || ''}
+          value={safeOptionData.description || ''}
           onChange={handleDescriptionChange}
           placeholder="Describe this option..."
           className="min-h-[80px] resize-y bg-transparent"
@@ -464,7 +546,7 @@ export function OptionNode({ id, data, selected }: NodeProps<OptionNodeData>) {
             </Button>
           </div>
           <div className="space-y-2">
-            {data.goals?.map(goal => (
+            {goals.map(goal => (
               <div key={goal.id} className="flex gap-2 items-start">
                 <Textarea
                   value={goal.description}
@@ -510,7 +592,7 @@ export function OptionNode({ id, data, selected }: NodeProps<OptionNodeData>) {
             </Button>
           </div>
           <div className="space-y-3">
-            {data.risks?.map(risk => (
+            {risks.map(risk => (
               <div key={risk.id} className="space-y-2">
                 <div className="flex gap-2 items-start">
                   <Textarea

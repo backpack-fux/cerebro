@@ -1,5 +1,6 @@
 import { Node, XYPosition, Edge as RFEdge } from "@xyflow/react";
 import { ReactFlowNodeBase } from "@/services/graph/base-node/reactflow.types";
+import { Role, BASE_ROLES } from "@/services/graph/shared/shared.types";
 
 // Common timezones - can be expanded
 export const TIMEZONES = [
@@ -20,15 +21,9 @@ export const TIMEZONES = [
 export const DEFAULT_START_DATE = '2025-01-01';
 export const EARLIEST_START_DATE = '2020-01-01';
 
-// Role type and base roles
-export type Role = string;
-
-export const BASE_ROLES = [
-  'operator',
-  'builder', 
-  'compliance',
-  'ambassador',
-] as const;
+// Re-export Role and BASE_ROLES for backward compatibility
+export type { Role };
+export { BASE_ROLES };
 
 // Team allocation interface
 export interface TeamAllocation {

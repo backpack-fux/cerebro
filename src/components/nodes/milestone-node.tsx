@@ -1,6 +1,6 @@
 "use client";
 
-import { Handle, Position, type NodeProps, type Node, useReactFlow } from "@xyflow/react";
+import { Handle, Position, type NodeProps, useReactFlow } from "@xyflow/react";
 import { BaseNode } from '@/components/nodes/base-node';
 import { 
   NodeHeader,
@@ -18,29 +18,19 @@ import { useMilestoneMetrics } from "@/hooks/useMilestoneMetrics";
 import { GraphApiClient } from '@/services/graph/neo4j/api-client';
 import { NodeType } from '@/services/graph/neo4j/api-urls';
 import { useEdges } from "@xyflow/react";
+import { RFMilestoneNodeData } from '@/services/graph/milestone/milestone.types';
 
-type KPI = {
-  id: string;
-  name: string;
-  target: number;
-  unit: string;
-};
-
-export type MilestoneNodeData = Node<{
-  title: string;
-  description?: string;
-  kpis?: KPI[];
-  status?: string;
-}>;
-
-export function MilestoneNode({ id, data, selected }: NodeProps<MilestoneNodeData>) {
+export function MilestoneNode({ id, data, selected }: NodeProps) {
   const { updateNodeData, setNodes, setEdges } = useReactFlow();
   const edges = useEdges();
   const metrics = useMilestoneMetrics(id);
   
+  // Cast data to the correct type
+  const milestoneData = data as RFMilestoneNodeData;
+  
   // Local state for title, description, and status to avoid excessive API calls
-  const [title, setTitle] = useState(data.title);
-  const [description, setDescription] = useState(data.description || '');
+  const [title, setTitle] = useState(milestoneData.title);
+  const [description, setDescription] = useState(milestoneData.description || '');
   
   // Refs for debounce timers
   const titleDebounceRef = useRef<NodeJS.Timeout | null>(null);
@@ -49,14 +39,14 @@ export function MilestoneNode({ id, data, selected }: NodeProps<MilestoneNodeDat
   
   // Update local state when props change
   useEffect(() => {
-    setTitle(data.title);
-    setDescription(data.description || '');
-  }, [data.title, data.description]);
+    setTitle(milestoneData.title);
+    setDescription(milestoneData.description || '');
+  }, [milestoneData.title, milestoneData.description]);
   
   // Override the handleStatusChange to include API persistence
   const persistStatusChange = useCallback((newStatus: NodeStatus) => {
     // Update ReactFlow state for consistency
-    updateNodeData(id, { ...data, status: newStatus });
+    updateNodeData(id, { ...milestoneData, status: newStatus });
     
     // Clear any existing debounce timer
     if (statusDebounceRef.current) {
@@ -76,7 +66,7 @@ export function MilestoneNode({ id, data, selected }: NodeProps<MilestoneNodeDat
       }
       statusDebounceRef.current = null;
     }, 1000); // 1 second debounce
-  }, [id, data, updateNodeData]);
+  }, [id, milestoneData, updateNodeData]);
 
   // Create a wrapper function that matches the signature expected by useNodeStatus
   const handleNodeStatusChange = useCallback((nodeId: string, nodeData: any) => {
@@ -88,7 +78,7 @@ export function MilestoneNode({ id, data, selected }: NodeProps<MilestoneNodeDat
   // Use the standard hook with our wrapper
   const { status, getStatusColor, cycleStatus } = useNodeStatus(
     id, 
-    data, 
+    milestoneData, 
     handleNodeStatusChange, 
     {
       canBeActive: true,
@@ -120,7 +110,7 @@ export function MilestoneNode({ id, data, selected }: NodeProps<MilestoneNodeDat
     // Update local state immediately for responsive UI
     setTitle(newTitle);
     // Update ReactFlow state for consistency
-    updateNodeData(id, { ...data, title: newTitle });
+    updateNodeData(id, { ...milestoneData, title: newTitle });
     
     // Clear any existing debounce timer
     if (titleDebounceRef.current) {
@@ -131,7 +121,7 @@ export function MilestoneNode({ id, data, selected }: NodeProps<MilestoneNodeDat
     titleDebounceRef.current = setTimeout(async () => {
       try {
         // Only make API call if value has changed
-        if (newTitle !== data.title) {
+        if (newTitle !== milestoneData.title) {
           // Persist the change to the database
           await GraphApiClient.updateNode('milestone' as NodeType, id, { 
             title: newTitle 
@@ -143,14 +133,14 @@ export function MilestoneNode({ id, data, selected }: NodeProps<MilestoneNodeDat
       }
       titleDebounceRef.current = null;
     }, 1000); // 1 second debounce
-  }, [id, data, updateNodeData]);
+  }, [id, milestoneData, updateNodeData]);
 
   const handleDescriptionChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const newDescription = e.target.value;
     // Update local state immediately for responsive UI
     setDescription(newDescription);
     // Update ReactFlow state for consistency
-    updateNodeData(id, { ...data, description: newDescription });
+    updateNodeData(id, { ...milestoneData, description: newDescription });
     
     // Clear any existing debounce timer
     if (descriptionDebounceRef.current) {
@@ -161,7 +151,7 @@ export function MilestoneNode({ id, data, selected }: NodeProps<MilestoneNodeDat
     descriptionDebounceRef.current = setTimeout(async () => {
       try {
         // Only make API call if value has changed
-        if (newDescription !== data.description) {
+        if (newDescription !== milestoneData.description) {
           // Persist the change to the database
           await GraphApiClient.updateNode('milestone' as NodeType, id, { 
             description: newDescription 
@@ -173,7 +163,7 @@ export function MilestoneNode({ id, data, selected }: NodeProps<MilestoneNodeDat
       }
       descriptionDebounceRef.current = null;
     }, 1000); // 1 second debounce
-  }, [id, data, updateNodeData]);
+  }, [id, milestoneData, updateNodeData]);
   
   // Clean up timers on unmount
   useEffect(() => {
