@@ -4,6 +4,40 @@ import { Node as Neo4jNode, Relationship as Neo4jRelationship } from 'neo4j-driv
 
 export function reactFlowToNeo4j(featureNode: RFFeatureNode): Neo4jFeatureNodeData {
   const data = featureNode.data as RFFeatureNodeData; // Cast to ensure type safety
+
+  // Check if teamAllocations is already a string to prevent double serialization
+  let teamAllocationsValue = undefined;
+  if (data.teamAllocations) {
+    if (typeof data.teamAllocations === 'string') {
+      // If it's already a string, check if it's valid JSON
+      try {
+        // Try to parse it to validate it's proper JSON
+        JSON.parse(data.teamAllocations);
+        // If it parses successfully, use it as is
+        teamAllocationsValue = data.teamAllocations;
+      } catch (e) {
+        // If it's not valid JSON, stringify it
+        teamAllocationsValue = JSON.stringify(data.teamAllocations);
+      }
+    } else {
+      // If it's an array, stringify it
+      teamAllocationsValue = JSON.stringify(data.teamAllocations);
+    }
+  }
+
+  // Similar checks for teamMembers and memberAllocations
+  let teamMembersValue = data.teamMembers ? 
+    (typeof data.teamMembers === 'string' ? 
+      ((() => { try { JSON.parse(data.teamMembers); return data.teamMembers; } catch (e) { return JSON.stringify(data.teamMembers); } })()) : 
+      JSON.stringify(data.teamMembers)) : 
+    undefined;
+
+  let memberAllocationsValue = data.memberAllocations ? 
+    (typeof data.memberAllocations === 'string' ? 
+      ((() => { try { JSON.parse(data.memberAllocations); return data.memberAllocations; } catch (e) { return JSON.stringify(data.memberAllocations); } })()) : 
+      JSON.stringify(data.memberAllocations)) : 
+    undefined;
+
   return {
     id: featureNode.id, // Use React Flow's string ID
     name: data.title || 'Untitled Feature', // Default fallback
@@ -13,9 +47,9 @@ export function reactFlowToNeo4j(featureNode: RFFeatureNode): Neo4jFeatureNodeDa
     cost: data.cost,
     duration: data.duration,
     timeUnit: data.timeUnit,
-    teamMembers: data.teamMembers ? JSON.stringify(data.teamMembers) : undefined,
-    memberAllocations: data.memberAllocations ? JSON.stringify(data.memberAllocations) : undefined,
-    teamAllocations: data.teamAllocations ? JSON.stringify(data.teamAllocations) : undefined,
+    teamMembers: teamMembersValue,
+    memberAllocations: memberAllocationsValue,
+    teamAllocations: teamAllocationsValue,
     status: data.status,
     createdAt: data.createdAt || new Date().toISOString(), // Default to now if not provided
     updatedAt: data.updatedAt || new Date().toISOString(), // Default to now if not provided

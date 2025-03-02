@@ -4,13 +4,54 @@ import { Node as Neo4jNode, Relationship as Neo4jRelationship } from 'neo4j-driv
 
 export function reactFlowToNeo4j(teamNode: RFTeamNode): Neo4jTeamNodeData {
   const data = teamNode.data as RFTeamNodeData; // Cast to ensure type safety
+  
+  // Check if season is already a string to prevent double serialization
+  let seasonValue = undefined;
+  if (data.season) {
+    if (typeof data.season === 'string') {
+      // If it's already a string, check if it's valid JSON
+      try {
+        // Try to parse it to validate it's proper JSON
+        JSON.parse(data.season);
+        // If it parses successfully, use it as is
+        seasonValue = data.season;
+      } catch (e) {
+        // If it's not valid JSON, stringify it
+        seasonValue = JSON.stringify(data.season);
+      }
+    } else {
+      // If it's an object, stringify it
+      seasonValue = JSON.stringify(data.season);
+    }
+  }
+  
+  // Check if roster is already a string to prevent double serialization
+  let rosterValue = undefined;
+  if (data.roster) {
+    if (typeof data.roster === 'string') {
+      // If it's already a string, check if it's valid JSON
+      try {
+        // Try to parse it to validate it's proper JSON
+        JSON.parse(data.roster);
+        // If it parses successfully, use it as is
+        rosterValue = data.roster;
+      } catch (e) {
+        // If it's not valid JSON, stringify it
+        rosterValue = JSON.stringify(data.roster);
+      }
+    } else {
+      // If it's an array, stringify it
+      rosterValue = JSON.stringify(data.roster);
+    }
+  }
+  
   return {
     id: teamNode.id, // Use React Flow's string ID
     name: data.title || 'Untitled Team', // Default fallback
     description: data.description,
     title: data.title,
-    season: data.season ? JSON.stringify(data.season) : undefined,
-    roster: data.roster ? JSON.stringify(data.roster) : undefined,
+    season: seasonValue,
+    roster: rosterValue,
     createdAt: data.createdAt || new Date().toISOString(), // Default to now if not provided
     updatedAt: data.updatedAt || new Date().toISOString(), // Default to now if not provided
     positionX: teamNode.position.x,

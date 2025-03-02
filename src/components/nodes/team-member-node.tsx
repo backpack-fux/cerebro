@@ -30,13 +30,22 @@ import {
 } from '@/services/graph/team-member/team-member.types';
 import { BASE_ROLES } from '@/services/graph/shared/shared.types';
 import { Slider } from "@/components/ui/slider";
+import { RosterMember, RFTeamNodeData } from '@/services/graph/team/team.types';
+
+// Type guard for team nodes
+function isTeamNode(node: Node | null | undefined): node is Node<RFTeamNodeData> {
+  return Boolean(
+    node?.type === 'team' && 
+    node?.data
+  );
+}
 
 export function TeamMemberNode({ 
   id, 
   data, 
   selected 
 }: NodeProps) {
-  const { updateNodeData, setNodes, getNodes } = useReactFlow();
+  const { updateNodeData, setNodes, getNodes, getNode } = useReactFlow();
   const { addError, clearErrors, getErrors } = useValidation();
   const connections = useNodeConnections({ id });
 
@@ -343,7 +352,37 @@ export function TeamMemberNode({
       await saveToBackend(updatedData);
       allocationDebounceRef.current = null;
     }, 1000); // 1 second debounce
-  }, [id, memberData, updateNodeData, saveToBackend]);
+
+    // Also update the team node if connected
+    const teamConnection = connections.find(conn => {
+      return (conn.source === id && isTeamNode(getNode(conn.target))) || 
+             (conn.target === id && isTeamNode(getNode(conn.source)));
+    });
+
+    if (teamConnection) {
+      const teamNodeId = teamConnection.source === id ? teamConnection.target : teamConnection.source;
+      const teamNode = getNode(teamNodeId);
+      
+      if (isTeamNode(teamNode)) {
+        // Ensure roster is an array before using array methods
+        const rosterArray = Array.isArray(teamNode.data.roster) ? teamNode.data.roster : [];
+        const updatedRoster = rosterArray.map((member: RosterMember) => {
+          if (member.memberId === id) {
+            return { ...member, allocation };
+          }
+          return member;
+        });
+        
+        updateNodeData(teamNodeId, {
+          ...teamNode.data,
+          roster: updatedRoster
+        });
+        
+        // Save the updated roster to the backend using GraphApiClient
+        GraphApiClient.updateNode('team', teamNodeId, { roster: updatedRoster });
+      }
+    }
+  }, [id, memberData, updateNodeData, saveToBackend, connections, getNode]);
 
   // Update connection handling to pass summary data
   useEffect(() => {

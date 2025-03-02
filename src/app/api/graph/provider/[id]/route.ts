@@ -3,6 +3,7 @@ import { ProviderService } from '@/services/graph/provider/provider.service';
 import { neo4jStorage } from '@/services/graph/neo4j/neo4j.provider';
 import { UpdateProviderNodeParams, Neo4jProviderNodeData, ProviderCost, DDItem, TeamAllocation } from '@/services/graph/provider/provider.types';
 import { neo4jToReactFlow } from '@/services/graph/provider/provider.transform';
+import { parseTeamAllocations } from '@/lib/utils';
 
 // Initialize the provider service
 const providerService = new ProviderService(neo4jStorage);
@@ -110,6 +111,18 @@ function isValidTeamAllocation(allocation: any): allocation is TeamAllocation {
  * @returns True if valid, false otherwise
  */
 function isValidTeamAllocations(allocations: any): allocations is TeamAllocation[] {
+  // If it's a string, try to parse it first
+  if (typeof allocations === 'string') {
+    try {
+      const parsed = JSON.parse(allocations);
+      return Array.isArray(parsed) && parsed.every(isValidTeamAllocation);
+    } catch (e) {
+      console.warn('[API] Failed to parse teamAllocations string:', e);
+      return false;
+    }
+  }
+  
+  // If it's already an array, validate directly
   return Array.isArray(allocations) && allocations.every(isValidTeamAllocation);
 }
 
@@ -240,6 +253,27 @@ export async function PATCH(request: NextRequest) {
     // Validate team allocations if provided
     if (updateData.teamAllocations !== undefined && !isValidTeamAllocations(updateData.teamAllocations)) {
       console.warn('[API] Invalid ProviderNode update request: Invalid teamAllocations array');
+      console.log('[API DEBUG] Raw teamAllocations received:', JSON.stringify(updateData.teamAllocations));
+      console.log('[API DEBUG] teamAllocations type:', typeof updateData.teamAllocations);
+      console.log('[API DEBUG] Is Array?', Array.isArray(updateData.teamAllocations));
+      
+      // Try to parse it if it's a string
+      if (typeof updateData.teamAllocations === 'string') {
+        try {
+          const parsed = JSON.parse(updateData.teamAllocations);
+          console.log('[API DEBUG] Parsed teamAllocations:', JSON.stringify(parsed));
+          console.log('[API DEBUG] Parsed is array?', Array.isArray(parsed));
+          
+          // If it parses to an array but still fails validation, show more details
+          if (Array.isArray(parsed)) {
+            const invalidItems = parsed.filter(item => !isValidTeamAllocation(item));
+            console.log('[API DEBUG] Invalid items in teamAllocations:', JSON.stringify(invalidItems));
+          }
+        } catch (e) {
+          console.log('[API DEBUG] Failed to parse teamAllocations string:', e);
+        }
+      }
+      
       return NextResponse.json(
         { error: 'Invalid teamAllocations array. Each allocation must have teamId, requestedHours, and allocatedMembers properties.' },
         { status: 400 }
@@ -265,8 +299,21 @@ export async function PATCH(request: NextRequest) {
     if (cleanUpdateData.ddItems) {
       cleanUpdateData.ddItems = JSON.stringify(cleanUpdateData.ddItems);
     }
-    if (cleanUpdateData.teamAllocations) {
-      cleanUpdateData.teamAllocations = JSON.stringify(cleanUpdateData.teamAllocations);
+    if (cleanUpdateData.teamAllocations !== undefined) {
+      // If it's a string, parse it back to an array for the service
+      if (typeof cleanUpdateData.teamAllocations === 'string') {
+        try {
+          const parsed = JSON.parse(cleanUpdateData.teamAllocations);
+          if (Array.isArray(parsed)) {
+            cleanUpdateData.teamAllocations = parsed;
+          }
+        } catch (e) {
+          console.warn('[API] Failed to parse teamAllocations string for service update:', e);
+          // Keep it as a string if parsing fails
+        }
+      }
+      
+      // The service will handle converting it to a string for Neo4j
     }
 
     console.log('[API] Updating ProviderNode with data:', {
@@ -303,10 +350,15 @@ export async function PATCH(request: NextRequest) {
     
     if (typeof updatedNode.data.teamAllocations === 'string') {
       try {
+        console.log('[API DEBUG] Before parse - teamAllocations string:', updatedNode.data.teamAllocations);
         updatedNode.data.teamAllocations = JSON.parse(updatedNode.data.teamAllocations);
+        console.log('[API DEBUG] After parse - teamAllocations:', JSON.stringify(updatedNode.data.teamAllocations));
       } catch (e) {
+        console.error('[API DEBUG] Error parsing teamAllocations:', e);
         updatedNode.data.teamAllocations = [];
       }
+    } else {
+      console.log('[API DEBUG] teamAllocations not a string:', typeof updatedNode.data.teamAllocations);
     }
 
     // Ensure the ID is included in the response

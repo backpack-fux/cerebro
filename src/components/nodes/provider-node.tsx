@@ -10,7 +10,7 @@ import {
 } from '@/components/nodes/node-header';
 import { DropdownMenuItem } from "@radix-ui/react-dropdown-menu";
 import { useReactFlow, useEdges } from "@xyflow/react";
-import { useCallback, useRef, useState, useEffect } from "react";
+import { useCallback, useRef, useState, useEffect, useMemo } from "react";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
@@ -32,17 +32,39 @@ import {
   RevenueCost, 
   TieredCost, 
   DDStatus,
-  TierRange
+  TierRange,
+  TeamAllocation
 } from '@/services/graph/provider/provider.types';
 import { API_URLS } from '@/services/graph/neo4j/api-urls';
 import { toast } from "sonner";
+import { parseTeamAllocations } from '@/lib/utils';
 
 export function ProviderNode({ id, data, selected }: NodeProps) {
+  // Add a very visible debug log
+  console.log('🔍 PROVIDER NODE RENDERING:', { id, data, teamAllocations: data.teamAllocations });
+  
   // Cast data to the correct type for internal use
   const typedData = data as RFProviderNodeData;
   
   const { updateNodeData, setNodes, setEdges } = useReactFlow();
   const edges = useEdges();
+  
+  // Ensure teamAllocations is always an array for UI rendering
+  const processedTeamAllocations = useMemo(() => {
+    if (Array.isArray(typedData.teamAllocations)) {
+      return typedData.teamAllocations;
+    } else if (typeof typedData.teamAllocations === 'string') {
+      try {
+        const parsed = JSON.parse(typedData.teamAllocations);
+        if (Array.isArray(parsed)) {
+          return parsed;
+        }
+      } catch (e) {
+        console.warn('Failed to parse teamAllocations string:', e);
+      }
+    }
+    return [];
+  }, [typedData.teamAllocations]);
   
   // Refs for debounce timers
   const titleDebounceRef = useRef<NodeJS.Timeout | null>(null);
@@ -50,22 +72,205 @@ export function ProviderNode({ id, data, selected }: NodeProps) {
   const costsDebounceRef = useRef<NodeJS.Timeout | null>(null);
   const ddItemsDebounceRef = useRef<NodeJS.Timeout | null>(null);
   const durationDebounceRef = useRef<NodeJS.Timeout | null>(null);
+  const teamAllocationsDebounceRef = useRef<{ timeout: NodeJS.Timeout | null }>({ timeout: null });
+  
+  // Track render count to debug refresh issues
+  const renderCountRef = useRef(0);
+  useEffect(() => {
+    renderCountRef.current += 1;
+    console.log(`🔄 ProviderNode render #${renderCountRef.current} for node ${id}`, {
+      teamAllocations: processedTeamAllocations,
+      teamAllocationsType: typeof processedTeamAllocations,
+      isArray: Array.isArray(processedTeamAllocations),
+      hasTeamAllocations: processedTeamAllocations && 
+        (Array.isArray(processedTeamAllocations) ? processedTeamAllocations.length > 0 : true)
+    });
+  });
+  
+  // Ensure data structure is properly initialized
+  useEffect(() => {
+    console.log('🔍 Data structure initialization effect running', {
+      id,
+      costs: typedData.costs,
+      costsType: typeof typedData.costs,
+      ddItems: typedData.ddItems,
+      ddItemsType: typeof typedData.ddItems,
+      teamAllocations: processedTeamAllocations,
+      teamAllocationsType: typeof processedTeamAllocations
+    });
+    
+    const updates: Partial<RFProviderNodeData> = {};
+    let needsUpdate = false;
+    
+    // Check if costs is not an array
+    if (typedData.costs !== undefined && !Array.isArray(typedData.costs)) {
+      console.warn('⚠️ Fixing costs data structure:', typedData.costs);
+      updates.costs = [];
+      needsUpdate = true;
+    }
+    
+    // Check if ddItems is not an array
+    if (typedData.ddItems !== undefined && !Array.isArray(typedData.ddItems)) {
+      console.warn('⚠️ Fixing ddItems data structure:', typedData.ddItems);
+      updates.ddItems = [];
+      needsUpdate = true;
+    }
+    
+    // Check if teamAllocations is not an array
+    if (processedTeamAllocations !== undefined && !Array.isArray(processedTeamAllocations)) {
+      console.warn('⚠️ Fixing teamAllocations data structure:', processedTeamAllocations);
+      
+      // If it's a string, try to parse it
+      if (typeof processedTeamAllocations === 'string') {
+        try {
+          console.log('🔍 Attempting to parse teamAllocations string in ProviderNode:', processedTeamAllocations);
+          const parsed = JSON.parse(processedTeamAllocations);
+          if (Array.isArray(parsed)) {
+            console.log('✅ Successfully parsed teamAllocations string to array in ProviderNode', {
+              length: parsed.length,
+              data: parsed
+            });
+            updates.teamAllocations = parsed;
+          } else {
+            console.warn('⚠️ Parsed teamAllocations is not an array in ProviderNode', {
+              parsed,
+              type: typeof parsed
+            });
+            updates.teamAllocations = [];
+          }
+        } catch (e) {
+          console.warn('❌ Failed to parse teamAllocations string in ProviderNode', {
+            error: e,
+            teamAllocations: processedTeamAllocations
+          });
+          updates.teamAllocations = [];
+        }
+      } else {
+        updates.teamAllocations = [];
+      }
+      
+      needsUpdate = true;
+    }
+    
+    // Update the node data if needed
+    if (needsUpdate) {
+      console.log('🔄 Updating node data with fixed structure', updates);
+      updateNodeData(id, { ...typedData, ...updates });
+    } else {
+      console.log('✅ No data structure fixes needed');
+    }
+  }, [id, typedData, updateNodeData, processedTeamAllocations]);
   
   const {
     connectedTeams,
     requestTeamAllocation,
+    removeMemberAllocation,
+    updateMemberAllocation,
     costs,
     CostSummary
   } = useTeamAllocation(id, typedData);
+
+  // Debug log to see what's happening with teamAllocations after refresh
+  useEffect(() => {
+    console.log('Provider Node Data after refresh:', {
+      id,
+      teamAllocations: processedTeamAllocations,
+      teamAllocationsType: typeof processedTeamAllocations,
+      isArray: Array.isArray(processedTeamAllocations),
+      connectedTeams
+    });
+  }, [id, typedData, connectedTeams, processedTeamAllocations]);
+
+  // Add an effect to ensure teamAllocations is always an array
+  useEffect(() => {
+    // If teamAllocations is undefined or null, initialize as empty array
+    if (typedData.teamAllocations === undefined || typedData.teamAllocations === null) {
+      console.log('🔄 Initializing teamAllocations as empty array');
+      updateNodeData(id, { ...typedData, teamAllocations: [] });
+      return;
+    }
+    
+    // If teamAllocations is not an array, try to convert it
+    if (!Array.isArray(typedData.teamAllocations)) {
+      console.log('🔄 Converting teamAllocations to array:', typedData.teamAllocations);
+      
+      // If it's a string, try to parse it
+      if (typeof typedData.teamAllocations === 'string') {
+        try {
+          const parsed = JSON.parse(typedData.teamAllocations);
+          if (Array.isArray(parsed)) {
+            console.log('✅ Successfully parsed teamAllocations string to array:', parsed);
+            updateNodeData(id, { ...typedData, teamAllocations: parsed });
+          } else {
+            console.warn('⚠️ Parsed teamAllocations is not an array, using empty array instead');
+            updateNodeData(id, { ...typedData, teamAllocations: [] });
+          }
+        } catch (e) {
+          console.warn('❌ Failed to parse teamAllocations string, using empty array instead:', e);
+          updateNodeData(id, { ...typedData, teamAllocations: [] });
+        }
+      } else {
+        console.warn('⚠️ teamAllocations is not an array or string, using empty array instead');
+        updateNodeData(id, { ...typedData, teamAllocations: [] });
+      }
+    }
+  }, [id, typedData, updateNodeData]);
 
   const { status, getStatusColor, cycleStatus } = useNodeStatus(id, typedData, updateNodeData, {
     canBeActive: true,
     defaultStatus: 'planning'
   });
 
+  // Helper function to calculate total allocation for a team member
+  const calculateTotalAllocation = useCallback((memberId: string) => {
+    // Find the member in the costs allocations
+    const allocation = costs.allocations.find(a => a.member.memberId === memberId);
+    return allocation ? allocation.allocation : 0;
+  }, [costs.allocations]);
+
   // Save data to backend
   const saveToBackend = async (field: string, value: any) => {
     try {
+      // Special handling for teamAllocations to ensure it's always an array
+      if (field === 'teamAllocations' && value !== undefined) {
+        // If it's already an array, use it as is
+        if (Array.isArray(value)) {
+          console.log(`Saving teamAllocations as array (${value.length} items)`, { value });
+        } 
+        // If it's a string, try to parse it
+        else if (typeof value === 'string') {
+          try {
+            const parsed = JSON.parse(value);
+            if (Array.isArray(parsed)) {
+              value = parsed;
+              console.log(`Parsed teamAllocations string to array (${value.length} items)`, { value });
+            } else {
+              console.warn('Parsed teamAllocations is not an array, using empty array instead', { parsed });
+              value = [];
+            }
+          } catch (e) {
+            console.warn('Failed to parse teamAllocations string, using empty array instead', { value, error: e });
+            value = [];
+          }
+        } 
+        // If it's neither an array nor a string, use an empty array
+        else {
+          console.warn('teamAllocations is neither an array nor a string, using empty array instead', { value, type: typeof value });
+          value = [];
+        }
+        
+        // Always update the node data with the array version before sending to backend
+        // This ensures the UI always has the array version
+        updateNodeData(id, { ...typedData, teamAllocations: value });
+        
+        // For Neo4j, we need to stringify the array
+        console.log('Converting teamAllocations array to string for Neo4j', { 
+          before: value,
+          after: JSON.stringify(value)
+        });
+        value = JSON.stringify(value);
+      }
+
       const response = await fetch(`${API_URLS['provider']}/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
@@ -83,9 +288,48 @@ export function ProviderNode({ id, data, selected }: NodeProps) {
     }
   };
 
+  // Save team allocations to backend with proper debouncing
+  const saveTeamAllocationsToBackend = useCallback(async (teamAllocations: TeamAllocation[]) => {
+    // Create a debounce ref if it doesn't exist yet
+    if (!teamAllocationsDebounceRef.current) {
+      teamAllocationsDebounceRef.current = { timeout: null };
+    }
+    
+    // Clear any existing timeout
+    if (teamAllocationsDebounceRef.current.timeout) {
+      clearTimeout(teamAllocationsDebounceRef.current.timeout);
+    }
+    
+    // Ensure teamAllocations is an array
+    if (!Array.isArray(teamAllocations)) {
+      console.warn('Cannot save teamAllocations: not an array', teamAllocations);
+      return;
+    }
+    
+    // Set a new debounce timer
+    teamAllocationsDebounceRef.current.timeout = setTimeout(async () => {
+      console.log('💾 Saving teamAllocations to backend:', teamAllocations);
+      
+      // Update the node data with the array version first
+      updateNodeData(id, { ...typedData, teamAllocations });
+      
+      // Then save to backend
+      await saveToBackend('teamAllocations', teamAllocations);
+      
+      // Clear the timeout reference
+      teamAllocationsDebounceRef.current.timeout = null;
+    }, 1000); // 1 second debounce
+  }, [id, typedData, updateNodeData, saveToBackend]);
+
   // Save costs to backend
   const saveCostsToBackend = async (costs: ProviderCost[]) => {
     if (costsDebounceRef.current) clearTimeout(costsDebounceRef.current);
+    
+    // Ensure costs is an array before saving
+    if (!Array.isArray(costs)) {
+      console.warn('Cannot save costs: costs is not an array', costs);
+      return;
+    }
     
     costsDebounceRef.current = setTimeout(async () => {
       await saveToBackend('costs', costs);
@@ -96,6 +340,12 @@ export function ProviderNode({ id, data, selected }: NodeProps) {
   // Save DD items to backend
   const saveDDItemsToBackend = async (ddItems: DDItem[]) => {
     if (ddItemsDebounceRef.current) clearTimeout(ddItemsDebounceRef.current);
+    
+    // Ensure ddItems is an array before saving
+    if (!Array.isArray(ddItems)) {
+      console.warn('Cannot save ddItems: ddItems is not an array', ddItems);
+      return;
+    }
     
     ddItemsDebounceRef.current = setTimeout(async () => {
       await saveToBackend('ddItems', ddItems);
@@ -177,12 +427,66 @@ export function ProviderNode({ id, data, selected }: NodeProps) {
 
     if (!teamId) return;
 
-    // Update the allocation
-    const hoursRequested = (percentage / 100) * 8 * (typedData.duration || 1); // Convert % to hours
-    requestTeamAllocation(teamId, hoursRequested, [memberId]);
+    // If percentage is 0, remove the allocation
+    if (percentage === 0) {
+      removeMemberAllocation(teamId, memberId);
+      return;
+    }
+
+    // Calculate hours based on percentage
+    const hoursRequested = (percentage / 100) * 8 * (typedData.duration || 1);
     
-    // The team allocation is saved by the requestTeamAllocation function
-  }, [connectedTeams, typedData.duration, requestTeamAllocation]);
+    // Use the utility function to ensure teamAllocations is an array
+    const currentTeamAllocations = parseTeamAllocations(processedTeamAllocations);
+    
+    // Update the team allocations in the node data
+    const updatedTeamAllocations: TeamAllocation[] = [...currentTeamAllocations];
+    const existingAllocationIndex = updatedTeamAllocations.findIndex(a => a.teamId === teamId);
+    
+    if (existingAllocationIndex >= 0) {
+      // Update existing allocation
+      const existingAllocation = updatedTeamAllocations[existingAllocationIndex];
+      const existingMemberIndex = existingAllocation.allocatedMembers.findIndex(m => m.memberId === memberId);
+      
+      if (existingMemberIndex >= 0) {
+        // Update existing member allocation
+        existingAllocation.allocatedMembers[existingMemberIndex].hours = hoursRequested;
+      } else {
+        // Add new member allocation
+        existingAllocation.allocatedMembers.push({ memberId, hours: hoursRequested });
+      }
+      
+      // Update total requested hours
+      existingAllocation.requestedHours = existingAllocation.allocatedMembers.reduce(
+        (total: number, member: { memberId: string; hours: number }) => total + member.hours, 0
+      );
+      
+      updatedTeamAllocations[existingAllocationIndex] = existingAllocation;
+    } else {
+      // Create new allocation
+      updatedTeamAllocations.push({
+        teamId,
+        requestedHours: hoursRequested,
+        allocatedMembers: [{ memberId, hours: hoursRequested }]
+      });
+    }
+    
+    // Update the node data
+    updateNodeData(id, { ...typedData, teamAllocations: updatedTeamAllocations });
+    
+    // Save to backend
+    saveTeamAllocationsToBackend(updatedTeamAllocations);
+    
+    // Also call the hook function for UI updates
+    updateMemberAllocation(teamId, memberId, hoursRequested);
+  }, [connectedTeams, typedData, id, updateNodeData, saveTeamAllocationsToBackend, updateMemberAllocation, removeMemberAllocation, processedTeamAllocations]);
+
+  const handleAddTeamMembers = useCallback((teamId: string, memberIds: string[], hours: number) => {
+    if (!teamId || !memberIds.length) return;
+    
+    // Request team allocation for the selected members
+    requestTeamAllocation(teamId, hours, memberIds);
+  }, [requestTeamAllocation]);
 
   const addCost = useCallback(() => {
     const newCost: ProviderCost = {
@@ -195,7 +499,11 @@ export function ProviderNode({ id, data, selected }: NodeProps) {
         frequency: 'monthly'
       }
     };
-    const updatedCosts = [...(typedData.costs || []), newCost];
+    
+    // Ensure costs is an array before adding to it
+    const currentCosts = Array.isArray(typedData.costs) ? typedData.costs : [];
+    const updatedCosts = [...currentCosts, newCost];
+    
     updateNodeData(id, { 
       ...typedData, 
       costs: updatedCosts
@@ -204,9 +512,16 @@ export function ProviderNode({ id, data, selected }: NodeProps) {
   }, [id, typedData, updateNodeData]);
 
   const updateCost = useCallback((costId: string, updates: Partial<ProviderCost>) => {
-    const updatedCosts = (typedData.costs || []).map(cost => 
+    // Ensure costs is an array before updating it
+    if (!Array.isArray(typedData.costs)) {
+      console.warn('Cannot update cost: costs is not an array', typedData.costs);
+      return;
+    }
+    
+    const updatedCosts = typedData.costs.map(cost => 
       cost.id === costId ? { ...cost, ...updates } : cost
     );
+    
     updateNodeData(id, {
       ...typedData,
       costs: updatedCosts
@@ -215,7 +530,14 @@ export function ProviderNode({ id, data, selected }: NodeProps) {
   }, [id, typedData, updateNodeData]);
 
   const removeCost = useCallback((costId: string) => {
-    const updatedCosts = (typedData.costs || []).filter(cost => cost.id !== costId);
+    // Ensure costs is an array before removing from it
+    if (!Array.isArray(typedData.costs)) {
+      console.warn('Cannot remove cost: costs is not an array', typedData.costs);
+      return;
+    }
+    
+    const updatedCosts = typedData.costs.filter(cost => cost.id !== costId);
+    
     updateNodeData(id, {
       ...typedData,
       costs: updatedCosts
@@ -229,7 +551,11 @@ export function ProviderNode({ id, data, selected }: NodeProps) {
       name: '',
       status: 'pending'
     };
-    const updatedItems = [...(typedData.ddItems || []), newItem];
+    
+    // Ensure ddItems is an array before adding to it
+    const currentItems = Array.isArray(typedData.ddItems) ? typedData.ddItems : [];
+    const updatedItems = [...currentItems, newItem];
+    
     updateNodeData(id, {
       ...typedData,
       ddItems: updatedItems
@@ -238,9 +564,16 @@ export function ProviderNode({ id, data, selected }: NodeProps) {
   }, [id, typedData, updateNodeData]);
 
   const updateDDItem = useCallback((item: DDItem) => {
-    const updatedItems = (typedData.ddItems || []).map(i => 
+    // Ensure ddItems is an array before updating it
+    if (!Array.isArray(typedData.ddItems)) {
+      console.warn('Cannot update ddItem: ddItems is not an array', typedData.ddItems);
+      return;
+    }
+    
+    const updatedItems = typedData.ddItems.map(i => 
       i.id === item.id ? item : i
     );
+    
     updateNodeData(id, {
       ...typedData,
       ddItems: updatedItems
@@ -249,7 +582,14 @@ export function ProviderNode({ id, data, selected }: NodeProps) {
   }, [id, typedData, updateNodeData]);
 
   const removeDDItem = useCallback((itemId: string) => {
-    const updatedItems = (typedData.ddItems || []).filter(i => i.id !== itemId);
+    // Ensure ddItems is an array before removing from it
+    if (!Array.isArray(typedData.ddItems)) {
+      console.warn('Cannot remove ddItem: ddItems is not an array', typedData.ddItems);
+      return;
+    }
+    
+    const updatedItems = typedData.ddItems.filter(i => i.id !== itemId);
+    
     updateNodeData(id, {
       ...typedData,
       ddItems: updatedItems
@@ -257,7 +597,7 @@ export function ProviderNode({ id, data, selected }: NodeProps) {
     saveDDItemsToBackend(updatedItems);
   }, [id, typedData, updateNodeData]);
 
-  // Clean up debounce timers on unmount
+  // Clean up timers on unmount
   useEffect(() => {
     return () => {
       if (titleDebounceRef.current) clearTimeout(titleDebounceRef.current);
@@ -265,11 +605,12 @@ export function ProviderNode({ id, data, selected }: NodeProps) {
       if (costsDebounceRef.current) clearTimeout(costsDebounceRef.current);
       if (ddItemsDebounceRef.current) clearTimeout(ddItemsDebounceRef.current);
       if (durationDebounceRef.current) clearTimeout(durationDebounceRef.current);
+      if (teamAllocationsDebounceRef.current?.timeout) clearTimeout(teamAllocationsDebounceRef.current.timeout);
     };
   }, []);
 
   return (
-    <BaseNode selected={selected}>
+    <BaseNode selected={selected} className="w-[400px]">
       <NodeHeader>
         <NodeHeaderTitle>
           <div className="flex items-center gap-2">
@@ -281,40 +622,35 @@ export function ProviderNode({ id, data, selected }: NodeProps) {
               {status}
             </Badge>
             <input
-              value={typedData.title}
+              value={typedData.title || 'Provider'}
               onChange={handleTitleChange}
               className="bg-transparent outline-none placeholder:text-muted-foreground"
-              placeholder="Provider Name"
+              placeholder="Provider name..."
             />
           </div>
         </NodeHeaderTitle>
         <NodeHeaderActions>
           <NodeHeaderMenuAction label="Provider node menu">
-            <DropdownMenuItem onSelect={handleDelete} className="cursor-pointer">
+            <DropdownMenuItem onClick={handleDelete}>
               Delete
             </DropdownMenuItem>
-            {edges
-              .filter((edge) => edge.source === id || edge.target === id)
-              .map((edge) => (
-                <DropdownMenuItem
-                  key={edge.id}
-                  onSelect={() => {
-                    fetch(`${API_URLS['provider']}/edges/${edge.id}`, { method: 'DELETE' })
-                      .then(() => {
-                        setEdges((eds) => eds.filter((e) => e.id !== edge.id));
-                      })
-                      .catch((error) => console.error('Failed to delete edge:', error));
-                  }}
-                  className="cursor-pointer text-red-500"
-                >
-                  Disconnect {(edge.data?.label as string) || 'Edge'}
-                </DropdownMenuItem>
-              ))}
           </NodeHeaderMenuAction>
         </NodeHeaderActions>
       </NodeHeader>
 
-      <div className="px-3 pb-3 space-y-4">
+      <div className="p-4 space-y-4">
+        <div>
+          <Label htmlFor={`description-${id}`}>Description</Label>
+          <Textarea
+            id={`description-${id}`}
+            value={typedData.description || ''}
+            onChange={handleDescriptionChange}
+            placeholder="Describe this provider..."
+            className="mt-1 resize-none"
+            rows={3}
+          />
+        </div>
+
         {/* Duration Input */}
         <div className="space-y-2">
           <Label>{duration.config.label}</Label>
@@ -337,59 +673,69 @@ export function ProviderNode({ id, data, selected }: NodeProps) {
           </div>
         </div>
 
-        {/* Team Allocations Section */}
-        <div className="space-y-2">
-          <Label>Team Allocations</Label>
-          
-          {connectedTeams.length === 0 ? (
-            <div className="text-sm text-muted-foreground">
-              Connect to teams to allocate resources
+        {/* Team Allocation Section */}
+        {connectedTeams.length > 0 && (
+          <div className="space-y-3">
+            <div className="flex justify-between items-center">
+              <Label>Team Allocations</Label>
             </div>
-          ) : (
-            <div className="space-y-4">
-              {connectedTeams.map(team => (
-                <div key={team.teamId} className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="font-medium">{team.title}</span>
-                  </div>
+            
+            {connectedTeams.length === 0 ? (
+              <div className="text-sm text-muted-foreground">
+                Connect to teams to allocate resources
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {connectedTeams.map(team => (
+                  <div key={team.teamId} className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="font-medium">{team.title}</span>
+                    </div>
 
-                  {/* Member Allocation Controls */}
-                  <div className="space-y-4">
-                    {team.availableBandwidth.map(member => {
-                      const allocation = typedData.teamAllocations
-                        ?.find(a => a.teamId === team.teamId)
-                        ?.allocatedMembers
-                        .find(m => m.memberId === member.memberId);
-                      
-                      const percentage = allocation 
-                        ? (allocation.hours / 8 / (typedData.duration || 1)) * 100 
-                        : 0;
+                    {/* Member Allocation Controls */}
+                    <div className="space-y-4">
+                      {team.availableBandwidth.map(member => {
+                        // Find if this member is already allocated
+                        const allocation = costs.allocations.find(a => 
+                          a.member.memberId === member.memberId
+                        );
+                        
+                        const percentage = calculateTotalAllocation(member.memberId);
+                        const availableHours = member.availableHours || 0;
 
-                      return (
-                        <div key={member.memberId} className="space-y-2">
-                          <div className="flex items-center justify-between text-sm">
-                            <span>{member.name}</span>
-                            <span className="text-muted-foreground">
-                              {percentage.toFixed(0)}% ({member.availableHours}h available)
-                            </span>
+                        return (
+                          <div key={member.memberId} className="space-y-2">
+                            <div className="flex items-center justify-between text-sm">
+                              <span>{member.name}</span>
+                              <span className="text-muted-foreground">
+                                {percentage.toFixed(0)}% ({availableHours}h available)
+                              </span>
+                            </div>
+                            <Slider
+                              value={[percentage]}
+                              onValueChange={([value]) => handleAllocationChange(member.memberId, value)}
+                              max={100}
+                              step={1}
+                            />
                           </div>
-                          <Slider
-                            value={[percentage]}
-                            onValueChange={([value]) => handleAllocationChange(member.memberId, value)}
-                            max={100}
-                            step={1}
-                          />
-                        </div>
-                      );
-                    })}
+                        );
+                      })}
+                    </div>
                   </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+                ))}
+              </div>
+            )}
 
-        {/* Cost Structures Section */}
+            {/* Cost Summary */}
+            {costs.allocations.length > 0 && (
+              <div className="mt-4 border-t pt-4">
+                <CostSummary costs={costs} duration={typedData.duration} />
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Costs Section */}
         <div className="space-y-2">
           <div className="flex items-center justify-between">
             <Label>Cost Structures</Label>
@@ -399,35 +745,26 @@ export function ProviderNode({ id, data, selected }: NodeProps) {
           </div>
 
           <div className="space-y-4">
-            {(typedData.costs || []).map(cost => (
-              <CostStructure
-                key={cost.id}
-                cost={cost}
-                onUpdate={(updates) => updateCost(cost.id, updates)}
-                onRemove={() => removeCost(cost.id)}
-              />
-            ))}
+            {Array.isArray(typedData.costs) 
+              ? typedData.costs.map(cost => (
+                <CostStructure
+                  key={cost.id}
+                  cost={cost}
+                  onUpdate={(updates) => updateCost(cost.id, updates)}
+                  onRemove={() => removeCost(cost.id)}
+                />
+              ))
+              : null
+            }
           </div>
         </div>
 
         {/* Due Diligence Section */}
         <DueDiligenceSection
-          items={typedData.ddItems || []}
+          items={Array.isArray(typedData.ddItems) ? typedData.ddItems : []}
           onUpdate={updateDDItem}
           onAdd={addDDItem}
           onRemove={removeDDItem}
-        />
-
-        {/* Cost Summary */}
-        {costs && costs.allocations.length > 0 && (
-          <CostSummary costs={costs} duration={typedData.duration} />
-        )}
-
-        <Textarea
-          value={typedData.description || ''}
-          onChange={handleDescriptionChange}
-          placeholder="Describe this provider..."
-          className="min-h-[80px] resize-y bg-transparent"
         />
       </div>
 

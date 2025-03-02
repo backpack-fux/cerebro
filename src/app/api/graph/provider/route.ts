@@ -3,6 +3,7 @@ import { ProviderService } from '@/services/graph/provider/provider.service';
 import { neo4jStorage } from '@/services/graph/neo4j/neo4j.provider';
 import { CreateProviderNodeParams, RFProviderNode, Neo4jProviderNodeData, ProviderCost, DDItem, TeamAllocation } from '@/services/graph/provider/provider.types';
 import { neo4jToReactFlow } from '@/services/graph/provider/provider.transform';
+import { parseTeamAllocations } from '@/lib/utils';
 
 // Initialize the provider service
 const providerService = new ProviderService(neo4jStorage);
@@ -110,6 +111,18 @@ function isValidTeamAllocation(allocation: any): allocation is TeamAllocation {
  * @returns True if valid, false otherwise
  */
 function isValidTeamAllocations(allocations: any): allocations is TeamAllocation[] {
+  // If it's a string, try to parse it first
+  if (typeof allocations === 'string') {
+    try {
+      const parsed = JSON.parse(allocations);
+      return Array.isArray(parsed) && parsed.every(isValidTeamAllocation);
+    } catch (e) {
+      console.warn('[API] Failed to parse teamAllocations string:', e);
+      return false;
+    }
+  }
+  
+  // If it's already an array, validate directly
   return Array.isArray(allocations) && allocations.every(isValidTeamAllocation);
 }
 
@@ -160,12 +173,54 @@ export async function POST(req: NextRequest) {
     }
     
     // If teamAllocations were provided, add them to the node
-    if (teamAllocations && isValidTeamAllocations(teamAllocations)) {
-      console.log('[API] Adding team allocations to provider node:', teamAllocations);
-      await providerService.update({
-        id: createdNode.id,
-        teamAllocations
-      });
+    if (teamAllocations !== undefined) {
+      console.log('[API] Adding team allocations to provider node:', 
+        typeof teamAllocations === 'string' ? teamAllocations : JSON.stringify(teamAllocations));
+      console.log('[API DEBUG] teamAllocations type:', typeof teamAllocations);
+      console.log('[API DEBUG] Is Array?', Array.isArray(teamAllocations));
+      
+      if (!isValidTeamAllocations(teamAllocations)) {
+        console.warn('[API] Invalid teamAllocations provided');
+        
+        // Try to parse it if it's a string
+        if (typeof teamAllocations === 'string') {
+          try {
+            const parsed = JSON.parse(teamAllocations);
+            console.log('[API DEBUG] Parsed teamAllocations:', JSON.stringify(parsed));
+            console.log('[API DEBUG] Parsed is array?', Array.isArray(parsed));
+            
+            // If it parses to an array but still fails validation, show more details
+            if (Array.isArray(parsed)) {
+              const invalidItems = parsed.filter(item => !isValidTeamAllocation(item));
+              console.log('[API DEBUG] Invalid items in teamAllocations:', JSON.stringify(invalidItems));
+            }
+          } catch (e) {
+            console.log('[API DEBUG] Failed to parse teamAllocations string:', e);
+          }
+        }
+      } else {
+        // For the provider service, we need to pass the original array or the parsed array
+        let teamAllocationsArray: TeamAllocation[] = [];
+        
+        // If it's a string, parse it back to an array for the service
+        if (typeof teamAllocations === 'string') {
+          try {
+            const parsed = JSON.parse(teamAllocations);
+            if (Array.isArray(parsed)) {
+              teamAllocationsArray = parsed;
+            }
+          } catch (e) {
+            console.warn('[API] Failed to parse teamAllocations string for service update:', e);
+          }
+        } else if (Array.isArray(teamAllocations)) {
+          teamAllocationsArray = teamAllocations;
+        }
+        
+        await providerService.update({
+          id: createdNode.id,
+          teamAllocations: teamAllocationsArray
+        });
+      }
     }
     
     // Retrieve the node to get the complete data

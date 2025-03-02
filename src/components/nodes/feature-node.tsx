@@ -1,6 +1,6 @@
 "use client";
 
-import { Handle, Position, type NodeProps, useReactFlow } from "@xyflow/react";
+import { Handle, Position, type NodeProps, useReactFlow, useEdges } from "@xyflow/react";
 import { BaseNode } from '@/components/nodes/base-node';
 import { 
   NodeHeader,
@@ -43,14 +43,35 @@ interface MemberSelection {
 }
 
 export function FeatureNode({ id, data, selected }: NodeProps) {
-  const { updateNodeData, setNodes, setEdges } = useReactFlow();
+  const { updateNodeData, setNodes, setEdges, getNodes } = useReactFlow();
+  const edges = useEdges();
   const [selectedTeamId, setSelectedTeamId] = useState<string | null>(null);
   
   // Cast data to the correct type
   const featureData = data as RFFeatureNodeData;
   
+  // Ensure teamAllocations is always an array for UI rendering
+  const processedTeamAllocations = useMemo(() => {
+    if (Array.isArray(featureData.teamAllocations)) {
+      return featureData.teamAllocations;
+    } else if (typeof featureData.teamAllocations === 'string') {
+      try {
+        const parsed = JSON.parse(featureData.teamAllocations);
+        if (Array.isArray(parsed)) {
+          return parsed;
+        }
+      } catch (e) {
+        console.warn('Failed to parse teamAllocations string:', e);
+      }
+    }
+    return [];
+  }, [featureData.teamAllocations]);
+  
   // Refs for debounce timers
-  const saveDebounceRef = useRef<NodeJS.Timeout | null>(null);
+  const titleDebounceRef = useRef<NodeJS.Timeout | null>(null);
+  const descriptionDebounceRef = useRef<NodeJS.Timeout | null>(null);
+  const durationDebounceRef = useRef<NodeJS.Timeout | null>(null);
+  const teamAllocationsDebounceRef = useRef<{ timeout: NodeJS.Timeout | null }>({ timeout: null });
   
   const {
     connectedTeams,
@@ -66,11 +87,11 @@ export function FeatureNode({ id, data, selected }: NodeProps) {
   
   // Function to save data to backend
   const saveToBackend = useCallback(async (updatedData: Partial<RFFeatureNodeData>) => {
-    if (saveDebounceRef.current) {
-      clearTimeout(saveDebounceRef.current);
+    if (titleDebounceRef.current) {
+      clearTimeout(titleDebounceRef.current);
     }
     
-    saveDebounceRef.current = setTimeout(async () => {
+    titleDebounceRef.current = setTimeout(async () => {
       try {
         await GraphApiClient.updateNode('feature' as NodeType, id, updatedData);
         console.log(`Updated feature ${id}`);
@@ -78,9 +99,42 @@ export function FeatureNode({ id, data, selected }: NodeProps) {
         console.error(`Failed to update feature ${id}:`, error);
         toast.error("Your changes couldn't be saved to the database.");
       }
-      saveDebounceRef.current = null;
+      titleDebounceRef.current = null;
     }, 1000);
   }, [id]);
+
+  // Save team allocations to backend with proper debouncing
+  const saveTeamAllocationsToBackend = useCallback(async (teamAllocations: TeamAllocation[]) => {
+    // Create a debounce ref if it doesn't exist yet
+    if (!teamAllocationsDebounceRef.current) {
+      teamAllocationsDebounceRef.current = { timeout: null };
+    }
+    
+    // Clear any existing timeout
+    if (teamAllocationsDebounceRef.current.timeout) {
+      clearTimeout(teamAllocationsDebounceRef.current.timeout);
+    }
+    
+    // Ensure teamAllocations is an array
+    if (!Array.isArray(teamAllocations)) {
+      console.warn('Cannot save teamAllocations: not an array', teamAllocations);
+      return;
+    }
+    
+    // Set a new debounce timer
+    teamAllocationsDebounceRef.current.timeout = setTimeout(async () => {
+      console.log('💾 Saving teamAllocations to backend:', teamAllocations);
+      
+      // Update the node data with the array version first
+      updateNodeData(id, { ...featureData, teamAllocations });
+      
+      // Then save to backend
+      await saveToBackend({ teamAllocations });
+      
+      // Clear the timeout reference
+      teamAllocationsDebounceRef.current.timeout = null;
+    }, 1000); // 1 second debounce
+  }, [id, featureData, updateNodeData, saveToBackend]);
 
   const handleTitleChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const newTitle = e.target.value;
@@ -140,14 +194,14 @@ export function FeatureNode({ id, data, selected }: NodeProps) {
   // Calculate total allocated hours and costs
   const teamAllocations = useMemo(() => {
     return connectedTeams.map(team => {
-      const allocation = featureData.teamAllocations?.find(a => a.teamId === team.teamId);
+      const allocation = processedTeamAllocations.find(a => a.teamId === team.teamId);
       return {
         ...team,
         requestedHours: allocation?.requestedHours || 0,
         allocatedMembers: allocation?.allocatedMembers || []
       };
     });
-  }, [connectedTeams, featureData.teamAllocations]);
+  }, [connectedTeams, processedTeamAllocations]);
 
   // Add state for managing member selection
   const [selectedMembers, setSelectedMembers] = useState<MemberSelection[]>([]);
@@ -164,7 +218,7 @@ export function FeatureNode({ id, data, selected }: NodeProps) {
     );
     
     // Update the team allocations in the node data
-    const updatedTeamAllocations = [...(featureData.teamAllocations || [])];
+    const updatedTeamAllocations = [...(processedTeamAllocations)];
     const existingAllocationIndex = updatedTeamAllocations.findIndex(a => a.teamId === selectedTeamId);
     
     if (existingAllocationIndex >= 0) {
@@ -187,13 +241,13 @@ export function FeatureNode({ id, data, selected }: NodeProps) {
     updateNodeData(id, { ...featureData, teamAllocations: updatedTeamAllocations });
     
     // Save to backend
-    saveToBackend({ teamAllocations: updatedTeamAllocations });
+    saveTeamAllocationsToBackend(updatedTeamAllocations);
     
     // Reset state
     setSelectedTeamId(null);
     setSelectedMembers([]);
     setTotalHours(0);
-  }, [selectedTeamId, totalHours, selectedMembers, requestTeamAllocation, featureData, id, updateNodeData, saveToBackend]);
+  }, [selectedTeamId, totalHours, selectedMembers, requestTeamAllocation, featureData, id, updateNodeData, saveTeamAllocationsToBackend, processedTeamAllocations]);
 
   // Handle allocation changes
   const handleAllocationChange = useCallback((memberId: string, percentage: number) => {
@@ -207,7 +261,7 @@ export function FeatureNode({ id, data, selected }: NodeProps) {
     const hoursRequested = (percentage / 100) * 8 * (featureData.duration || 1);
     
     // Update the team allocations in the node data
-    const updatedTeamAllocations: TeamAllocation[] = [...(featureData.teamAllocations || [])];
+    const updatedTeamAllocations: TeamAllocation[] = [...(processedTeamAllocations)];
     const existingAllocationIndex = updatedTeamAllocations.findIndex(a => a.teamId === teamId);
     
     if (existingAllocationIndex >= 0) {
@@ -242,18 +296,139 @@ export function FeatureNode({ id, data, selected }: NodeProps) {
     updateNodeData(id, { ...featureData, teamAllocations: updatedTeamAllocations });
     
     // Save to backend
-    saveToBackend({ teamAllocations: updatedTeamAllocations });
+    saveTeamAllocationsToBackend(updatedTeamAllocations);
     
     // Also call the hook function for UI updates
     requestTeamAllocation(teamId, hoursRequested, [memberId]);
-  }, [connectedTeams, featureData, id, updateNodeData, saveToBackend, requestTeamAllocation]);
+  }, [connectedTeams, featureData, id, updateNodeData, saveTeamAllocationsToBackend, requestTeamAllocation, processedTeamAllocations]);
+  
+  // Add an effect to ensure teamAllocations is always an array
+  useEffect(() => {
+    // If teamAllocations is undefined or null, initialize as empty array
+    if (featureData.teamAllocations === undefined || featureData.teamAllocations === null) {
+      console.log('🔄 Initializing teamAllocations as empty array');
+      updateNodeData(id, { ...featureData, teamAllocations: [] });
+      return;
+    }
+    
+    // If teamAllocations is not an array, try to convert it
+    if (!Array.isArray(featureData.teamAllocations)) {
+      console.log('🔄 Converting teamAllocations to array:', featureData.teamAllocations);
+      
+      // If it's a string, try to parse it
+      if (typeof featureData.teamAllocations === 'string') {
+        try {
+          const parsed = JSON.parse(featureData.teamAllocations);
+          if (Array.isArray(parsed)) {
+            console.log('✅ Successfully parsed teamAllocations string to array:', parsed);
+            updateNodeData(id, { ...featureData, teamAllocations: parsed });
+          } else {
+            console.warn('⚠️ Parsed teamAllocations is not an array, using empty array instead');
+            updateNodeData(id, { ...featureData, teamAllocations: [] });
+          }
+        } catch (e) {
+          console.warn('❌ Failed to parse teamAllocations string, using empty array instead:', e);
+          updateNodeData(id, { ...featureData, teamAllocations: [] });
+        }
+      } else {
+        console.warn('⚠️ teamAllocations is not an array or string, using empty array instead');
+        updateNodeData(id, { ...featureData, teamAllocations: [] });
+      }
+    }
+  }, [id, featureData, updateNodeData]);
   
   // Clean up timers on unmount
   useEffect(() => {
     return () => {
-      if (saveDebounceRef.current) clearTimeout(saveDebounceRef.current);
+      if (titleDebounceRef.current) clearTimeout(titleDebounceRef.current);
+      if (descriptionDebounceRef.current) clearTimeout(descriptionDebounceRef.current);
+      if (durationDebounceRef.current) clearTimeout(durationDebounceRef.current);
+      if (teamAllocationsDebounceRef.current?.timeout) clearTimeout(teamAllocationsDebounceRef.current.timeout);
     };
   }, []);
+  
+  const handleTeamAllocation = useCallback((selectedTeamId: string, hoursRequested: number) => {
+    if (!selectedTeamId) return;
+    
+    // Update the team allocations in the node data
+    const updatedTeamAllocations = [...(processedTeamAllocations)];
+    const existingAllocationIndex = updatedTeamAllocations.findIndex(a => a.teamId === selectedTeamId);
+    
+    if (existingAllocationIndex >= 0) {
+      // Update existing team allocation
+      updatedTeamAllocations[existingAllocationIndex] = {
+        ...updatedTeamAllocations[existingAllocationIndex],
+        requestedHours: hoursRequested,
+      };
+    } else {
+      // Create new team allocation
+      updatedTeamAllocations.push({
+        teamId: selectedTeamId,
+        requestedHours: hoursRequested,
+        allocatedMembers: [],
+      });
+    }
+    
+    // Update node data
+    updateNodeData(id, { ...featureData, teamAllocations: updatedTeamAllocations });
+    
+    // Save to backend
+    saveTeamAllocationsToBackend(updatedTeamAllocations);
+    
+    // Reset selected team
+    setSelectedTeamId(null);
+  }, [processedTeamAllocations, id, updateNodeData, saveTeamAllocationsToBackend]);
+
+  const handleTeamMemberAllocation = useCallback((teamId: string, memberId: string, hoursRequested: number) => {
+    if (!teamId || !memberId) return;
+    
+    // Update the team allocations in the node data
+    const updatedTeamAllocations: TeamAllocation[] = [...(processedTeamAllocations)];
+    const existingAllocationIndex = updatedTeamAllocations.findIndex(a => a.teamId === teamId);
+    
+    if (existingAllocationIndex >= 0) {
+      // Update existing team allocation
+      const existingAllocation = updatedTeamAllocations[existingAllocationIndex];
+      const existingMemberIndex = existingAllocation.allocatedMembers.findIndex(m => m.memberId === memberId);
+      
+      if (existingMemberIndex >= 0) {
+        // Update existing member allocation
+        existingAllocation.allocatedMembers[existingMemberIndex].hours = hoursRequested;
+      } else {
+        // Add new member allocation
+        existingAllocation.allocatedMembers.push({
+          memberId,
+          hours: hoursRequested,
+        });
+      }
+      
+      // Update total requested hours
+      existingAllocation.requestedHours = existingAllocation.allocatedMembers.reduce(
+        (sum, member) => sum + member.hours, 0
+      );
+      
+      updatedTeamAllocations[existingAllocationIndex] = existingAllocation;
+    } else {
+      // Create new team allocation with this member
+      updatedTeamAllocations.push({
+        teamId,
+        requestedHours: hoursRequested,
+        allocatedMembers: [{
+          memberId,
+          hours: hoursRequested,
+        }],
+      });
+    }
+    
+    // Update node data
+    updateNodeData(id, { ...featureData, teamAllocations: updatedTeamAllocations });
+    
+    // Save to backend
+    saveTeamAllocationsToBackend(updatedTeamAllocations);
+    
+    // Also update via the hook for UI consistency
+    requestTeamAllocation(teamId, hoursRequested, [memberId]);
+  }, [processedTeamAllocations, id, updateNodeData, saveTeamAllocationsToBackend, requestTeamAllocation]);
 
   return (
     <BaseNode selected={selected}>
@@ -349,10 +524,10 @@ export function FeatureNode({ id, data, selected }: NodeProps) {
                   {/* Member Allocation Controls */}
                   <div className="space-y-4">
                     {team.availableBandwidth.map(member => {
-                      const allocation = featureData.teamAllocations
-                        ?.find(a => a.teamId === team.teamId)
+                      const allocation = processedTeamAllocations
+                        .find(a => a.teamId === team.teamId)
                         ?.allocatedMembers
-                        .find(m => m.memberId === member.memberId);
+                        .find((m: { memberId: string }) => m.memberId === member.memberId);
                       
                       const percentage = allocation 
                         ? (allocation.hours / 8 / (featureData.duration || 1)) * 100 

@@ -28,7 +28,66 @@ export class ProviderService {
 
   async update(params: UpdateProviderNodeParams): Promise<RFProviderNode> {
     const { id, ...updateData } = params;
-    return this.storage.updateNode(id, updateData as Partial<RFProviderNodeData>) as Promise<RFProviderNode>;
+    
+    console.log('[ProviderService DEBUG] Updating provider node:', id);
+    console.log('[ProviderService DEBUG] Update data:', JSON.stringify(updateData));
+    
+    // Create a copy of updateData that can have string values for complex objects
+    const neo4jUpdateData: any = { ...updateData };
+    
+    // Handle costs - ensure it's a string for Neo4j
+    if (updateData.costs) {
+      console.log('[ProviderService DEBUG] costs type:', typeof updateData.costs);
+      console.log('[ProviderService DEBUG] Is Array?', Array.isArray(updateData.costs));
+      
+      // If it's not a string, stringify it
+      if (typeof updateData.costs !== 'string' && updateData.costs !== null) {
+        console.log('[ProviderService DEBUG] costs is not a string, stringifying it');
+        neo4jUpdateData.costs = JSON.stringify(updateData.costs);
+      }
+    }
+    
+    // Handle ddItems - ensure it's a string for Neo4j
+    if (updateData.ddItems) {
+      console.log('[ProviderService DEBUG] ddItems type:', typeof updateData.ddItems);
+      console.log('[ProviderService DEBUG] Is Array?', Array.isArray(updateData.ddItems));
+      
+      // If it's not a string, stringify it
+      if (typeof updateData.ddItems !== 'string' && updateData.ddItems !== null) {
+        console.log('[ProviderService DEBUG] ddItems is not a string, stringifying it');
+        neo4jUpdateData.ddItems = JSON.stringify(updateData.ddItems);
+      }
+    }
+    
+    // Handle teamAllocations - ensure it's a string for Neo4j
+    if (updateData.teamAllocations) {
+      console.log('[ProviderService DEBUG] teamAllocations type:', typeof updateData.teamAllocations);
+      console.log('[ProviderService DEBUG] Is Array?', Array.isArray(updateData.teamAllocations));
+      
+      // If it's not a string, stringify it
+      if (typeof updateData.teamAllocations !== 'string' && updateData.teamAllocations !== null) {
+        console.log('[ProviderService DEBUG] teamAllocations is not a string, stringifying it');
+        neo4jUpdateData.teamAllocations = JSON.stringify(updateData.teamAllocations);
+      }
+    }
+    
+    const result = await this.storage.updateNode(id, neo4jUpdateData);
+    
+    // Cast the result to RFProviderNode
+    const providerNode = result as unknown as RFProviderNode;
+    
+    console.log('[ProviderService DEBUG] Update result:', {
+      id: providerNode.id,
+      type: providerNode.type,
+      teamAllocations: providerNode.data.teamAllocations ? 
+        (typeof providerNode.data.teamAllocations === 'string' ? 
+          'string of length ' + (providerNode.data.teamAllocations as string).length : 
+         Array.isArray(providerNode.data.teamAllocations) ? 
+          `array of ${providerNode.data.teamAllocations.length} items` : 
+         typeof providerNode.data.teamAllocations) : 'undefined'
+    });
+    
+    return providerNode;
   }
 
   async delete(id: string): Promise<void> {

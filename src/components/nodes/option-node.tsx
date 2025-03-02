@@ -9,7 +9,7 @@ import {
   NodeHeaderMenuAction,
 } from '@/components/nodes/node-header';
 import { DropdownMenuItem } from "@radix-ui/react-dropdown-menu";
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useRef, useEffect } from "react";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
@@ -55,6 +55,23 @@ export function OptionNode({ id, data, selected }: NodeProps) {
     teamAllocations
   };
   
+  // Ensure teamAllocations is always an array for UI rendering
+  const processedTeamAllocations = useMemo(() => {
+    if (Array.isArray(safeOptionData.teamAllocations)) {
+      return safeOptionData.teamAllocations;
+    } else if (typeof safeOptionData.teamAllocations === 'string') {
+      try {
+        const parsed = JSON.parse(safeOptionData.teamAllocations);
+        if (Array.isArray(parsed)) {
+          return parsed;
+        }
+      } catch (e) {
+        console.warn('Failed to parse teamAllocations string:', e);
+      }
+    }
+    return [];
+  }, [safeOptionData.teamAllocations]);
+
   const {
     connectedTeams,
     requestTeamAllocation,
@@ -229,53 +246,139 @@ export function OptionNode({ id, data, selected }: NodeProps) {
     };
   }, [expectedMonthlyValue, costs.totalCost]);
 
-  // Handle allocation changes
-  const handleAllocationChange = useCallback((memberId: string, percentage: number) => {
-    const teamId = connectedTeams.find(team => 
-      team.availableBandwidth.some(m => m.memberId === memberId)
-    )?.teamId;
-
-    if (!teamId) return;
-
-    // Calculate hours based on percentage
-    const hoursRequested = (percentage / 100) * 8 * (safeOptionData.duration || 1); // Convert % to hours
+  // Refs for debounce timers
+  const titleDebounceRef = useRef<NodeJS.Timeout | null>(null);
+  const descriptionDebounceRef = useRef<NodeJS.Timeout | null>(null);
+  const durationDebounceRef = useRef<NodeJS.Timeout | null>(null);
+  const teamAllocationsDebounceRef = useRef<{ timeout: NodeJS.Timeout | null }>({ timeout: null });
+  
+  // Add an effect to ensure teamAllocations is always an array
+  useEffect(() => {
+    // If teamAllocations is undefined or null, initialize as empty array
+    if (safeOptionData.teamAllocations === undefined || safeOptionData.teamAllocations === null) {
+      console.log('🔄 Initializing teamAllocations as empty array');
+      updateNodeData(id, { ...safeOptionData, teamAllocations: [] });
+      return;
+    }
     
-    // Update the team allocations in the node data
-    let updatedTeamAllocations = [...teamAllocations];
-    
-    // Find if this team already has an allocation
-    const existingTeamIndex = updatedTeamAllocations.findIndex(a => a.teamId === teamId);
-    
-    if (existingTeamIndex >= 0) {
-      // Update existing team allocation
-      const existingTeam = updatedTeamAllocations[existingTeamIndex];
-      const existingMemberIndex = existingTeam.allocatedMembers.findIndex(m => m.memberId === memberId);
+    // If teamAllocations is not an array, try to convert it
+    if (!Array.isArray(safeOptionData.teamAllocations)) {
+      console.log('🔄 Converting teamAllocations to array:', safeOptionData.teamAllocations);
       
-      if (existingMemberIndex >= 0) {
-        // Update existing member allocation
-        updatedTeamAllocations[existingTeamIndex].allocatedMembers[existingMemberIndex].hours = hoursRequested;
+      // If it's a string, try to parse it
+      if (typeof safeOptionData.teamAllocations === 'string') {
+        try {
+          const parsed = JSON.parse(safeOptionData.teamAllocations);
+          if (Array.isArray(parsed)) {
+            console.log('✅ Successfully parsed teamAllocations string to array:', parsed);
+            updateNodeData(id, { ...safeOptionData, teamAllocations: parsed });
+          } else {
+            console.warn('⚠️ Parsed teamAllocations is not an array, using empty array instead');
+            updateNodeData(id, { ...safeOptionData, teamAllocations: [] });
+          }
+        } catch (e) {
+          console.warn('❌ Failed to parse teamAllocations string, using empty array instead:', e);
+          updateNodeData(id, { ...safeOptionData, teamAllocations: [] });
+        }
       } else {
-        // Add new member to existing team
-        updatedTeamAllocations[existingTeamIndex].allocatedMembers.push({
-          memberId,
-          hours: hoursRequested
-        });
+        console.warn('⚠️ teamAllocations is not an array or string, using empty array instead');
+        updateNodeData(id, { ...safeOptionData, teamAllocations: [] });
       }
+    }
+  }, [id, safeOptionData, updateNodeData]);
+  
+  // Clean up timers on unmount
+  useEffect(() => {
+    return () => {
+      if (titleDebounceRef.current) clearTimeout(titleDebounceRef.current);
+      if (descriptionDebounceRef.current) clearTimeout(descriptionDebounceRef.current);
+      if (durationDebounceRef.current) clearTimeout(durationDebounceRef.current);
+      if (teamAllocationsDebounceRef.current?.timeout) clearTimeout(teamAllocationsDebounceRef.current.timeout);
+    };
+  }, []);
+  
+  // Save team allocations to backend with proper debouncing
+  const saveTeamAllocationsToBackend = useCallback(async (teamAllocations: TeamAllocation[]) => {
+    // Create a debounce ref if it doesn't exist yet
+    if (!teamAllocationsDebounceRef.current) {
+      teamAllocationsDebounceRef.current = { timeout: null };
+    }
+    
+    // Clear any existing timeout
+    if (teamAllocationsDebounceRef.current.timeout) {
+      clearTimeout(teamAllocationsDebounceRef.current.timeout);
+    }
+    
+    // Ensure teamAllocations is an array
+    if (!Array.isArray(teamAllocations)) {
+      console.warn('Cannot save teamAllocations: not an array', teamAllocations);
+      return;
+    }
+    
+    // Set a new debounce timer
+    teamAllocationsDebounceRef.current.timeout = setTimeout(async () => {
+      console.log('💾 Saving teamAllocations to backend:', teamAllocations);
       
-      // Update requested hours total
-      updatedTeamAllocations[existingTeamIndex].requestedHours = 
-        updatedTeamAllocations[existingTeamIndex].allocatedMembers.reduce(
-          (sum, member) => sum + member.hours, 0
-        );
+      // Update the node data with the array version first
+      updateNodeData(id, { ...safeOptionData, teamAllocations });
+      
+      // Then save to backend
+      await saveToBackend('teamAllocations', teamAllocations);
+      
+      // Clear the timeout reference
+      teamAllocationsDebounceRef.current.timeout = null;
+    }, 1000); // 1 second debounce
+  }, [id, safeOptionData, updateNodeData]);
+
+  // Handle allocation changes
+  const handleTeamMemberAllocation = useCallback((teamId: string, memberId: string, hoursRequested: number) => {
+    // Find the team allocation for this team
+    const teamAllocation = Array.isArray(processedTeamAllocations) 
+      ? processedTeamAllocations.find(ta => ta.teamId === teamId)
+      : undefined;
+    
+    // Create a copy of the team allocations array
+    const updatedTeamAllocations = Array.isArray(processedTeamAllocations) 
+      ? [...processedTeamAllocations] 
+      : [];
+    
+    if (teamAllocation) {
+      // Find the index of the team allocation
+      const teamIndex = updatedTeamAllocations.findIndex(ta => ta.teamId === teamId);
+      
+      // Find the member allocation
+      const memberAllocation = teamAllocation.allocatedMembers.find((am: { memberId: string, hours: number }) => am.memberId === memberId);
+      
+      if (memberAllocation) {
+        // Update the existing member allocation
+        const updatedMembers = teamAllocation.allocatedMembers.map((am: { memberId: string, hours: number }) => {
+          if (am.memberId === memberId) {
+            return { ...am, hours: hoursRequested };
+          }
+          return am;
+        });
+        
+        // Update the team allocation
+        updatedTeamAllocations[teamIndex] = {
+          ...teamAllocation,
+          allocatedMembers: updatedMembers
+        };
+      } else {
+        // Add a new member allocation
+        updatedTeamAllocations[teamIndex] = {
+          ...teamAllocation,
+          allocatedMembers: [
+            ...teamAllocation.allocatedMembers,
+            { memberId, hours: hoursRequested }
+          ]
+        };
+      }
     } else {
-      // Create new team allocation
+      // Create a new team allocation
       updatedTeamAllocations.push({
         teamId,
         requestedHours: hoursRequested,
-        allocatedMembers: [{
-          memberId,
-          hours: hoursRequested
-        }]
+        allocatedMembers: [{ memberId, hours: hoursRequested }]
       });
     }
     
@@ -286,11 +389,11 @@ export function OptionNode({ id, data, selected }: NodeProps) {
     });
     
     // Save to backend
-    saveToBackend('teamAllocations', updatedTeamAllocations);
+    saveTeamAllocationsToBackend(updatedTeamAllocations);
     
     // Also update via the hook for UI consistency
     requestTeamAllocation(teamId, hoursRequested, [memberId]);
-  }, [connectedTeams, safeOptionData, id, updateNodeData, requestTeamAllocation]);
+  }, [connectedTeams, safeOptionData, id, updateNodeData, requestTeamAllocation, saveTeamAllocationsToBackend, processedTeamAllocations]);
 
   return (
     <BaseNode selected={selected}>
@@ -487,10 +590,10 @@ export function OptionNode({ id, data, selected }: NodeProps) {
                   {/* Member Allocation Controls */}
                   <div className="space-y-4">
                     {team.availableBandwidth.map(member => {
-                      const allocation = safeOptionData.teamAllocations
-                        ?.find(a => a.teamId === team.teamId)
+                      const allocation = processedTeamAllocations
+                        .find(a => a.teamId === team.teamId)
                         ?.allocatedMembers
-                        .find(m => m.memberId === member.memberId);
+                        .find((m: { memberId: string }) => m.memberId === member.memberId);
                       
                       const percentage = allocation 
                         ? (allocation.hours / 8 / (safeOptionData.duration || 1)) * 100 
@@ -506,7 +609,7 @@ export function OptionNode({ id, data, selected }: NodeProps) {
                           </div>
                           <Slider
                             value={[percentage]}
-                            onValueChange={([value]) => handleAllocationChange(member.memberId, value)}
+                            onValueChange={([value]) => handleTeamMemberAllocation(team.teamId, member.memberId, value)}
                             max={100}
                             step={1}
                           />

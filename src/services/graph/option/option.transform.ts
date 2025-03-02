@@ -26,6 +26,27 @@ function safeJsonParse<T>(jsonString: string | undefined, defaultValue: T): T {
 
 export function reactFlowToNeo4j(optionNode: RFOptionNode): Neo4jOptionNodeData {
   const data = optionNode.data as RFOptionNodeData; // Cast to ensure type safety
+  
+  // Helper function to safely handle JSON serialization
+  const safeJsonStringify = (value: any): string | undefined => {
+    if (!value) return undefined;
+    
+    if (typeof value === 'string') {
+      try {
+        // Try to parse it to validate it's proper JSON
+        JSON.parse(value);
+        // If it parses successfully, use it as is
+        return value;
+      } catch (e) {
+        // If it's not valid JSON, stringify it
+        return JSON.stringify(value);
+      }
+    } else {
+      // If it's an object/array, stringify it
+      return JSON.stringify(value);
+    }
+  };
+  
   return {
     id: optionNode.id, // Use React Flow's string ID
     name: data.title || 'Untitled Option', // Default fallback
@@ -35,13 +56,13 @@ export function reactFlowToNeo4j(optionNode: RFOptionNode): Neo4jOptionNodeData 
     transactionFeeRate: data.transactionFeeRate,
     monthlyVolume: data.monthlyVolume,
     duration: data.duration,
-    teamMembers: data.teamMembers ? JSON.stringify(data.teamMembers) : undefined,
-    memberAllocations: data.memberAllocations ? JSON.stringify(data.memberAllocations) : undefined,
-    goals: data.goals ? JSON.stringify(data.goals) : undefined,
-    risks: data.risks ? JSON.stringify(data.risks) : undefined,
+    teamMembers: safeJsonStringify(data.teamMembers),
+    memberAllocations: safeJsonStringify(data.memberAllocations),
+    goals: safeJsonStringify(data.goals),
+    risks: safeJsonStringify(data.risks),
     buildDuration: data.buildDuration,
     timeToClose: data.timeToClose,
-    teamAllocations: data.teamAllocations ? JSON.stringify(data.teamAllocations) : undefined,
+    teamAllocations: safeJsonStringify(data.teamAllocations),
     status: data.status,
     createdAt: data.createdAt || new Date().toISOString(), // Default to now if not provided
     updatedAt: data.updatedAt || new Date().toISOString(), // Default to now if not provided
