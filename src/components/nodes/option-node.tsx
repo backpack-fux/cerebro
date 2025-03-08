@@ -9,30 +9,110 @@ import {
   NodeHeaderMenuAction,
 } from '@/components/nodes/node-header';
 import { DropdownMenuItem } from "@radix-ui/react-dropdown-menu";
-import { memo } from "react";
+import { memo, useMemo } from "react";
+import { useEdges, useReactFlow } from "@xyflow/react";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
-import { Plus, Trash } from "lucide-react";
+import { Plus, Trash, RefreshCw } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Input } from "@/components/ui/input";
-import { Slider } from "@/components/ui/slider";
-import { 
-  RFOptionNodeData, 
-  Goal, 
-  Risk, 
-  OptionType
-} from '@/services/graph/option/option.types';
+import { RFOptionNodeData, ImpactLevel, SeverityLevel } from '@/services/graph/option/option.types';
 import { useOptionNode } from '@/hooks/useOptionNode';
+import { useResourceAllocation } from '@/hooks/useResourceAllocation';
+import { CostReceipt } from '@/components/shared/CostReceipt';
+import { TeamAllocation } from '@/components/shared/TeamAllocation';
 
-// Use React.memo to prevent unnecessary re-renders
-const OptionNode = memo(function OptionNode({ id, data, selected }: NodeProps) {
+/**
+ * Format a number with appropriate precision
+ */
+const formatNumber = (value: number | string | undefined): string => {
+  if (value === undefined || value === null || value === '') return '0';
+  const num = typeof value === 'string' ? parseFloat(value) : value;
+  if (isNaN(num)) return '0';
+  return num.toLocaleString('en-US', { 
+    minimumFractionDigits: 2, 
+    maximumFractionDigits: 2 
+  });
+};
+
+/**
+ * Format hours for display
+ */
+const formatHours = (hours: number): string => {
+  if (hours < 1) {
+    return `${Math.round(hours * 60)} min`;
+  }
+  return `${Math.round(hours * 10) / 10} hrs`;
+};
+
+/**
+ * Option Node component for displaying and editing option data
+ * Uses React.memo to prevent unnecessary re-renders
+ */
+export const OptionNode = memo(function OptionNode({ id, data, selected }: NodeProps) {
+  const edges = useEdges();
+  const { getNodes } = useReactFlow();
+  
   // Use our custom hook for option node logic
   const option = useOptionNode(id, data as RFOptionNodeData);
   
+  // Use the shared resource allocation hook
+  const resourceAllocation = useResourceAllocation(data, option, getNodes);
+  
+  /**
+   * Format a member name from various data sources
+   * @param memberId The member ID
+   * @param memberData Optional member data object
+   * @returns Formatted member name
+   */
+  const formatMemberName = (memberId: string, memberData?: any): string => {
+    // Try to get the name from the member data first
+    if (memberData?.name) return memberData.name;
+    
+    // Otherwise, try to find the node in the graph
+    const nodes = getNodes();
+    const memberNode = nodes.find(n => n.id === memberId);
+    
+    // If we found the node, use its title
+    if (memberNode?.data?.title) {
+      return String(memberNode.data.title);
+    }
+    
+    // Last resort: use the first part of the ID
+    return memberId.split('-')[0];
+  };
+  
+  // Calculate project duration in days for allocation calculations
+  const projectDurationDays = Number(data.duration) || 1;
+  
+  // Pre-calculate allocation percentages and costs for all members
+  const memberAllocations = useMemo(() => {
+    return resourceAllocation.calculateMemberAllocations(
+      option.connectedTeams,
+      option.processedTeamAllocations,
+      projectDurationDays,
+      formatMemberName
+    );
+  }, [
+    option.connectedTeams, 
+    option.processedTeamAllocations, 
+    projectDurationDays, 
+    formatMemberName,
+    resourceAllocation.calculateMemberAllocations
+  ]);
+  
+  // Calculate cost summary
+  const costSummary = useMemo(() => {
+    return resourceAllocation.calculateCostSummary(memberAllocations);
+  }, [memberAllocations, resourceAllocation.calculateCostSummary]);
+  
   return (
-    <BaseNode selected={selected}>
+    <BaseNode selected={selected} className="w-[400px]">
+      <Handle type="source" position={Position.Top} id="source" />
+      <Handle type="target" position={Position.Bottom} id="target" />
+      
       <NodeHeader>
         <NodeHeaderTitle>
           <div className="flex items-center gap-2">
@@ -46,54 +126,49 @@ const OptionNode = memo(function OptionNode({ id, data, selected }: NodeProps) {
             <input
               value={option.title}
               onChange={(e) => option.handleTitleChange(e.target.value)}
-              className="bg-transparent outline-none placeholder:text-muted-foreground"
+              className="bg-transparent outline-none w-full"
               placeholder="Option Title"
             />
           </div>
         </NodeHeaderTitle>
         <NodeHeaderActions>
-          <NodeHeaderMenuAction label="Option node menu">
-            <DropdownMenuItem onSelect={option.handleDelete} className="cursor-pointer">
+          <button
+            onClick={option.refreshData}
+            className="p-1 rounded-md hover:bg-muted"
+            title="Refresh data"
+          >
+            <RefreshCw className="h-4 w-4" />
+          </button>
+          <NodeHeaderMenuAction label="Option Actions">
+            <DropdownMenuItem 
+              className="text-destructive focus:text-destructive"
+              onClick={option.handleDelete}
+            >
               Delete
             </DropdownMenuItem>
           </NodeHeaderMenuAction>
         </NodeHeaderActions>
       </NodeHeader>
 
-      <div className="px-3 pb-3 space-y-4">
+      <div className="p-4 space-y-4">
         <div className="space-y-2">
           <Label>Option Type</Label>
           <RadioGroup
-            value={option.optionType}
+            value={option.optionType || 'customer'}
             onValueChange={option.handleOptionTypeChange}
             className="flex gap-4"
           >
             <div className="flex items-center space-x-2">
               <RadioGroupItem value="customer" id="customer" />
-              <Label 
-                htmlFor="customer" 
-                className="text-sm cursor-pointer"
-              >
-                Customer
-              </Label>
+              <Label htmlFor="customer">Customer</Label>
             </div>
             <div className="flex items-center space-x-2">
               <RadioGroupItem value="contract" id="contract" />
-              <Label 
-                htmlFor="contract" 
-                className="text-sm cursor-pointer"
-              >
-                Contract
-              </Label>
+              <Label htmlFor="contract">Contract</Label>
             </div>
             <div className="flex items-center space-x-2">
               <RadioGroupItem value="partner" id="partner" />
-              <Label 
-                htmlFor="partner" 
-                className="text-sm cursor-pointer"
-              >
-                Partner
-              </Label>
+              <Label htmlFor="partner">Partner</Label>
             </div>
           </RadioGroup>
         </div>
@@ -149,10 +224,7 @@ const OptionNode = memo(function OptionNode({ id, data, selected }: NodeProps) {
                   <div className="text-xs text-muted-foreground flex justify-between">
                     <span>Monthly Volume:</span>
                     <span>
-                      ${option.monthlyVolume.toLocaleString('en-US', { 
-                        minimumFractionDigits: 2, 
-                        maximumFractionDigits: 2 
-                      })}
+                      ${formatNumber(option.monthlyVolume)}
                     </span>
                   </div>
                 )}
@@ -160,10 +232,7 @@ const OptionNode = memo(function OptionNode({ id, data, selected }: NodeProps) {
                   <div className="text-sm font-medium flex justify-between items-center pt-1">
                     <span>Expected Monthly Revenue:</span>
                     <Badge variant="default">
-                      ${option.expectedMonthlyValue.toLocaleString('en-US', { 
-                        minimumFractionDigits: 2, 
-                        maximumFractionDigits: 2 
-                      })}
+                      ${formatNumber(option.expectedMonthlyValue)}
                     </Badge>
                   </div>
                 )}
@@ -187,74 +256,123 @@ const OptionNode = memo(function OptionNode({ id, data, selected }: NodeProps) {
 
         {/* Time to Close Section */}
         <div className="space-y-2">
-          <Label>{option.duration.config.label}</Label>
-          <div className="space-y-1">
-            <div className="relative">
-              <Input
-                value={option.duration.value || ''}
-                onChange={(e) => option.duration.handleDurationChange(e.target.value)}
-                onKeyDown={option.duration.handleDurationKeyDown}
-                className="bg-transparent pr-24"
-                placeholder="e.g. 12 or 2w"
-              />
-              <div className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
-                {option.duration.displayValue}
-              </div>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              {option.duration.config.tip} Max {option.duration.formatDuration(option.duration.config.maxDays)}
-            </p>
+          <div className="flex items-center justify-between">
+            <Label>{option.duration.config.label}</Label>
+            <Badge variant="outline" className="font-mono">
+              {option.duration.displayValue}
+            </Badge>
           </div>
+          <Input
+            type="text"
+            value={option.duration.value || ''}
+            onChange={(e) => option.duration.handleDurationChange(e.target.value)}
+            onKeyDown={option.duration.handleDurationKeyDown}
+            className="bg-transparent"
+            placeholder="e.g. 12 or 2w"
+          />
         </div>
 
-        {/* Team Allocations Section */}
+        <Textarea
+          value={option.description}
+          onChange={(e) => option.handleDescriptionChange(e.target.value)}
+          placeholder="Describe this option..."
+          className="min-h-[80px] resize-none"
+        />
+
+        {/* Resource Allocation Section */}
         <div className="space-y-2">
-          <Label>Team Allocations</Label>
+          <Label className="flex items-center gap-2">
+            <span>Resource Allocation</span>
+            <Badge variant="outline" className="font-mono">
+              {formatHours(costSummary.totalHours)}
+            </Badge>
+          </Label>
           
-          {option.connectedTeams.length === 0 ? (
+          {option.connectedTeams.length === 0 && (
             <div className="text-sm text-muted-foreground">
               Connect to teams to allocate resources
             </div>
+          )}
+          
+          {option.connectedTeams.map(team => (
+            <TeamAllocation
+              key={team.teamId}
+              team={team}
+              teamAllocation={option.processedTeamAllocations.find(a => a.teamId === team.teamId)}
+              memberAllocations={memberAllocations}
+              projectDurationDays={projectDurationDays}
+              formatMemberName={formatMemberName}
+              onMemberValueChange={resourceAllocation.handleAllocationChangeLocal}
+              onMemberValueCommit={resourceAllocation.handleAllocationCommit}
+            />
+          ))}
+        </div>
+
+        {/* Cost Receipt Section */}
+        {costSummary.allocations.length > 0 && (
+          <CostReceipt 
+            allocations={costSummary.allocations}
+            totalCost={costSummary.totalCost}
+            totalHours={costSummary.totalHours}
+            totalDays={costSummary.totalDays}
+          />
+        )}
+
+        {/* Goals & Value Creation Section */}
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <Label>Goals & Value Creation</Label>
+            <Button 
+              variant="ghost" 
+              size="icon" 
+              className="h-5 w-5" 
+              onClick={option.addGoal}
+            >
+              <Plus className="h-3 w-3" />
+            </Button>
+          </div>
+          
+          {option.processedGoals.length === 0 ? (
+            <div className="text-sm text-muted-foreground">
+              Add goals to track value creation
+            </div>
           ) : (
-            <div className="space-y-4">
-              {option.connectedTeams.map(team => (
-                <div key={team.teamId} className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="font-medium">{team.name}</span>
-                  </div>
-
-                  {/* Member Allocation Controls */}
-                  <div className="space-y-4">
-                    {team.availableBandwidth.map(member => {
-                      const allocation = option.processedTeamAllocations
-                        .find(a => a.teamId === team.teamId)
-                        ?.allocatedMembers
-                        .find((m: { memberId: string }) => m.memberId === member.memberId);
-                      
-                      const percentage = allocation 
-                        ? (allocation.hours / 8 / ((data as RFOptionNodeData).duration || 1)) * 100 
-                        : 0;
-
-                      return (
-                        <div key={member.memberId} className="space-y-2">
-                          <div className="flex items-center justify-between text-sm">
-                            <span>{member.name}</span>
-                            <span className="text-muted-foreground">
-                              {percentage.toFixed(0)}% ({member.availableHours}h available)
-                            </span>
-                          </div>
-                          <Slider
-                            value={[percentage]}
-                            onValueChange={([value]) => {
-                              const hoursRequested = (value / 100) * 8 * ((data as RFOptionNodeData).duration || 1);
-                              option.handleTeamMemberAllocation(team.teamId, member.memberId, hoursRequested);
-                            }}
-                            max={100}
-                            step={1}
-                          />
-                        </div>
-                      );
-                    })}
+            <div className="space-y-2">
+              {option.processedGoals.map(goal => (
+                <div key={goal.id} className="flex items-start gap-2 p-2 rounded-md bg-muted/30">
+                  <Textarea
+                    value={goal.description || ''}
+                    onChange={(e) => option.updateGoal(goal.id, { description: e.target.value })}
+                    placeholder="Describe this goal..."
+                    className="flex-1 min-h-[60px] resize-none bg-transparent text-sm"
+                  />
+                  <div className="flex flex-col gap-1">
+                    <RadioGroup
+                      value={goal.impact || 'medium'}
+                      onValueChange={(value: ImpactLevel) => option.updateGoal(goal.id, { impact: value })}
+                      className="flex flex-col gap-1"
+                    >
+                      <div className="flex items-center space-x-1">
+                        <RadioGroupItem value="high" id={`${goal.id}-high`} className="h-3 w-3" />
+                        <Label htmlFor={`${goal.id}-high`} className="text-xs">High</Label>
+                      </div>
+                      <div className="flex items-center space-x-1">
+                        <RadioGroupItem value="medium" id={`${goal.id}-medium`} className="h-3 w-3" />
+                        <Label htmlFor={`${goal.id}-medium`} className="text-xs">Med</Label>
+                      </div>
+                      <div className="flex items-center space-x-1">
+                        <RadioGroupItem value="low" id={`${goal.id}-low`} className="h-3 w-3" />
+                        <Label htmlFor={`${goal.id}-low`} className="text-xs">Low</Label>
+                      </div>
+                    </RadioGroup>
+                    <Button 
+                      variant="ghost" 
+                      size="icon" 
+                      className="h-5 w-5 mt-1" 
+                      onClick={() => option.removeGoal(goal.id)}
+                    >
+                      <Trash className="h-3 w-3" />
+                    </Button>
                   </div>
                 </div>
               ))}
@@ -262,132 +380,71 @@ const OptionNode = memo(function OptionNode({ id, data, selected }: NodeProps) {
           )}
         </div>
 
-        {/* Cost Summary */}
-        {option.costs && option.costs.allocations.length > 0 && (
-          <option.CostSummary costs={option.costs} duration={(data as RFOptionNodeData).duration} />
-        )}
-
-        <Textarea
-          value={option.description}
-          onChange={(e) => option.handleDescriptionChange(e.target.value)}
-          placeholder="Describe this option..."
-          className="min-h-[80px] resize-y bg-transparent"
-        />
-
-        {/* Goals Section */}
-        <div className="space-y-2">
-          <div className="flex items-center justify-between">
-            <Label>Goals & Value Creation</Label>
-            <Button 
-              variant="ghost" 
-              size="sm" 
-              onClick={option.addGoal}
-              className="h-6 px-2"
-            >
-              <Plus className="h-4 w-4" />
-            </Button>
-          </div>
-          <div className="space-y-2">
-            {option.processedGoals.map(goal => (
-              <div key={goal.id} className="flex gap-2 items-start">
-                <Textarea
-                  value={goal.description}
-                  onChange={(e) => option.updateGoal(goal.id, { description: e.target.value })}
-                  placeholder="Describe the goal..."
-                  className="flex-1 min-h-[60px] text-sm"
-                />
-                <div className="flex flex-col gap-1">
-                  <Badge 
-                    variant={goal.impact === 'high' ? 'default' : 'secondary'}
-                    className="cursor-pointer"
-                    onClick={() => option.updateGoal(goal.id, { 
-                      impact: goal.impact === 'high' ? 'medium' : 'high' 
-                    })}
-                  >
-                    {goal.impact}
-                  </Badge>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => option.removeGoal(goal.id)}
-                    className="h-6 px-2"
-                  >
-                    <Trash className="h-4 w-4" />
-                  </Button>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Risks Section */}
+        {/* Risks & Mitigations Section */}
         <div className="space-y-2">
           <div className="flex items-center justify-between">
             <Label>Risks & Mitigations</Label>
             <Button 
               variant="ghost" 
-              size="sm" 
+              size="icon" 
+              className="h-5 w-5" 
               onClick={option.addRisk}
-              className="h-6 px-2"
             >
-              <Plus className="h-4 w-4" />
+              <Plus className="h-3 w-3" />
             </Button>
           </div>
-          <div className="space-y-3">
-            {option.processedRisks.map(risk => (
-              <div key={risk.id} className="space-y-2">
-                <div className="flex gap-2 items-start">
+          
+          {option.processedRisks.length === 0 ? (
+            <div className="text-sm text-muted-foreground">
+              Add risks to track potential issues
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {option.processedRisks.map(risk => (
+                <div key={risk.id} className="flex items-start gap-2 p-2 rounded-md bg-muted/30">
                   <Textarea
-                    value={risk.description}
+                    value={risk.description || ''}
                     onChange={(e) => option.updateRisk(risk.id, { description: e.target.value })}
-                    placeholder="Describe the risk..."
-                    className="flex-1 min-h-[60px] text-sm"
+                    placeholder="Describe this risk..."
+                    className="flex-1 min-h-[60px] resize-none bg-transparent text-sm"
                   />
                   <div className="flex flex-col gap-1">
-                    <Badge 
-                      variant={risk.severity === 'high' ? 'destructive' : 'secondary'}
-                      className="cursor-pointer"
-                      onClick={() => option.updateRisk(risk.id, { 
-                        severity: risk.severity === 'high' ? 'medium' : 'high' 
-                      })}
+                    <RadioGroup
+                      value={risk.severity || 'medium'}
+                      onValueChange={(value: SeverityLevel) => option.updateRisk(risk.id, { severity: value })}
+                      className="flex flex-col gap-1"
                     >
-                      {risk.severity}
-                    </Badge>
-                    <Button
-                      variant="ghost"
-                      size="sm"
+                      <div className="flex items-center space-x-1">
+                        <RadioGroupItem value="high" id={`${risk.id}-high`} className="h-3 w-3" />
+                        <Label htmlFor={`${risk.id}-high`} className="text-xs">High</Label>
+                      </div>
+                      <div className="flex items-center space-x-1">
+                        <RadioGroupItem value="medium" id={`${risk.id}-medium`} className="h-3 w-3" />
+                        <Label htmlFor={`${risk.id}-medium`} className="text-xs">Med</Label>
+                      </div>
+                      <div className="flex items-center space-x-1">
+                        <RadioGroupItem value="low" id={`${risk.id}-low`} className="h-3 w-3" />
+                        <Label htmlFor={`${risk.id}-low`} className="text-xs">Low</Label>
+                      </div>
+                    </RadioGroup>
+                    <Button 
+                      variant="ghost" 
+                      size="icon" 
+                      className="h-5 w-5 mt-1" 
                       onClick={() => option.removeRisk(risk.id)}
-                      className="h-6 px-2"
                     >
-                      <Trash className="h-4 w-4" />
+                      <Trash className="h-3 w-3" />
                     </Button>
                   </div>
                 </div>
-                <Textarea
-                  value={risk.mitigation}
-                  onChange={(e) => option.updateRisk(risk.id, { mitigation: e.target.value })}
-                  placeholder="How will this risk be mitigated?"
-                  className="w-full text-sm text-muted-foreground"
-                />
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
-
-      <Handle
-        type="source"
-        position={Position.Top}
-        id="source"
-      />
-      <Handle
-        type="target"
-        position={Position.Bottom}
-        id="target"
-      />
     </BaseNode>
   );
 });
 
 // Export the memoized component
-export { OptionNode };
+export default OptionNode;

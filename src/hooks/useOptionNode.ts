@@ -1,28 +1,59 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useReactFlow } from "@xyflow/react";
 import { 
   RFOptionNodeData, 
   Goal, 
   Risk, 
   OptionType,
-  TeamAllocation
+  TeamAllocation,
+  ImpactLevel,
+  SeverityLevel
 } from '@/services/graph/option/option.types';
 import { GraphApiClient } from '@/services/graph/neo4j/api-client';
 import { NodeType } from '@/services/graph/neo4j/api-urls';
 import { toast } from "sonner";
 import { useTeamAllocation } from "@/hooks/useTeamAllocation";
-import { useNodeStatus } from "@/hooks/useNodeStatus";
-import { useDurationInput } from "@/hooks/useDurationInput";
+import { useNodeStatus } from './useNodeStatus';
+import { useDurationInput } from './useDurationInput';
 import { v4 as uuidv4 } from 'uuid';
+import { 
+  calculateWeeklyCapacity, 
+  percentageToHours,
+  MemberCapacity
+} from '@/lib/utils';
+
+// Utility function to round numbers to 1 decimal place for better display
+const roundToOneDecimal = (num: number): number => {
+  return Math.round(num * 10) / 10;
+};
+
+// Define a more specific type for member allocations if not already defined in option.types.ts
+interface MemberAllocation {
+  memberId: string;
+  name?: string;
+  hours: number;
+}
 
 /**
  * Hook for managing option node state and operations
  * Separates domain logic from React Flow component state
  */
 export function useOptionNode(id: string, data: RFOptionNodeData) {
-  const { updateNodeData, setNodes, setEdges, getEdges } = useReactFlow();
+  const { updateNodeData, setNodes, setEdges, getEdges, getNodes } = useReactFlow();
+  
+  // State for option data
+  const [title, setTitle] = useState(data.title || '');
+  const [description, setDescription] = useState(data.description || '');
+  const [optionType, setOptionType] = useState<OptionType | undefined>(data.optionType);
+  const [transactionFeeRate, setTransactionFeeRate] = useState<number | undefined>(data.transactionFeeRate);
+  const [monthlyVolume, setMonthlyVolume] = useState<number | undefined>(data.monthlyVolume);
+  const [goals, setGoals] = useState<Goal[]>(data.goals || []);
+  const [risks, setRisks] = useState<Risk[]>(data.risks || []);
+  const [teamAllocations, setTeamAllocations] = useState<TeamAllocation[]>(
+    Array.isArray(data.teamAllocations) ? data.teamAllocations : []
+  );
   
   // Ensure complex objects are always arrays
   const processedGoals = useMemo(() => {
@@ -48,17 +79,16 @@ export function useOptionNode(id: string, data: RFOptionNodeData) {
     } else if (typeof data.teamAllocations === 'string') {
       try {
         const parsed = JSON.parse(data.teamAllocations);
-        if (Array.isArray(parsed)) {
-          return parsed;
-        }
+        return Array.isArray(parsed) ? parsed : [];
       } catch (e) {
         console.warn('Failed to parse teamAllocations string:', e);
+        return [];
       }
     }
     return [];
   }, [data.teamAllocations]);
 
-  // Update data with the ensured arrays
+  // Create a safe copy of the data for hooks
   const safeOptionData = useMemo(() => ({
     ...data,
     goals: processedGoals,
@@ -66,37 +96,73 @@ export function useOptionNode(id: string, data: RFOptionNodeData) {
     teamMembers: processedTeamMembers,
     memberAllocations: processedMemberAllocations,
     teamAllocations: processedTeamAllocations
-  }), [
+  }), [data, processedGoals, processedRisks, processedTeamMembers, processedMemberAllocations, processedTeamAllocations]);
+
+  // Save team allocations to backend
+  const saveTeamAllocationsToBackend = useCallback(async (allocations: TeamAllocation[]) => {
+    try {
+      // Log the team allocations before sending to backend
+      console.log('Team allocations being sent to backend:', JSON.stringify(allocations, null, 2));
+      
+      await GraphApiClient.updateNode('option' as NodeType, id, {
+        teamAllocations: allocations
+      });
+      console.log('✅ Successfully saved team allocations to backend');
+    } catch (error) {
+      console.error('❌ Failed to save team allocations to backend:', error);
+    }
+  }, [id]);
+
+  // Use the team allocation hook to manage team allocations
+  const teamAllocationHook = useTeamAllocation(id, data);
+  
+  // Add the saveTeamAllocationsToBackend function to the teamAllocationHook
+  (teamAllocationHook as any).saveTeamAllocationsToBackend = saveTeamAllocationsToBackend;
+  
+  // Extract the processed team allocations from the hook
+  const teamAllocationsFromHook = teamAllocationHook.teamAllocations;
+  
+  // Get connected teams from the team allocation hook
+  const connectedTeams = teamAllocationHook.connectedTeams;
+  
+  // Get costs from the team allocation hook
+  const costs = teamAllocationHook.costs;
+  
+  // Use the node status hook to manage status
+  const { status, getStatusColor, cycleStatus } = useNodeStatus(
+    id, 
     data, 
-    processedGoals, 
-    processedRisks, 
-    processedTeamMembers, 
-    processedMemberAllocations, 
-    processedTeamAllocations
-  ]);
+    updateNodeData, 
+    {
+      canBeActive: true,
+      defaultStatus: 'planning'
+    }
+  );
+  
+  // Use the duration input hook to manage duration
+  const duration = useDurationInput(
+    id, 
+    data, 
+    updateNodeData,
+    {
+      maxDays: 180,
+      label: 'Time to Close',
+      fieldName: 'duration',
+      tip: 'Use "d" for days or "w" for weeks.',
+    }
+  );
 
-  const {
-    connectedTeams,
-    requestTeamAllocation,
-    costs,
-    CostSummary
-  } = useTeamAllocation(id, safeOptionData);
-
-  const { status, getStatusColor, cycleStatus } = useNodeStatus(id, safeOptionData, updateNodeData, {
-    canBeActive: true,
-    defaultStatus: 'planning'
-  });
-
-  // Refs for debounce timers
+  // Refs for debouncing
   const titleDebounceRef = useRef<NodeJS.Timeout | null>(null);
   const descriptionDebounceRef = useRef<NodeJS.Timeout | null>(null);
-  const durationDebounceRef = useRef<NodeJS.Timeout | null>(null);
   const teamAllocationsDebounceRef = useRef<{ timeout: NodeJS.Timeout | null }>({ timeout: null });
-  
-  // Save data to backend
+
+  // Save to backend function
   const saveToBackend = useCallback(async (field: string, value: any) => {
     try {
-      await GraphApiClient.updateNode('option' as NodeType, id, { [field]: value });
+      await GraphApiClient.updateNode('option' as NodeType, id, {
+        [field]: value
+      });
       console.log(`Updated option node ${id} ${field}`);
     } catch (error) {
       console.error(`Failed to update option node ${id}:`, error);
@@ -244,14 +310,6 @@ export function useOptionNode(id: string, data: RFOptionNodeData) {
     }
   }, [id, safeOptionData, updateNodeData, saveToBackend]);
 
-  // Duration input hook
-  const duration = useDurationInput(id, safeOptionData, updateNodeData, {
-    maxDays: 90,
-    label: "Time to Close",
-    fieldName: "duration",
-    tip: 'Estimated time to close the deal and go live'
-  });
-
   // Calculate expected monthly value
   const expectedMonthlyValue = useMemo(() => {
     if (safeOptionData.transactionFeeRate && safeOptionData.monthlyVolume) {
@@ -276,223 +334,169 @@ export function useOptionNode(id: string, data: RFOptionNodeData) {
     };
   }, [expectedMonthlyValue, costs.totalCost]);
 
-  // Add an effect to ensure teamAllocations is always an array
-  useEffect(() => {
-    // If teamAllocations is undefined or null, initialize as empty array
-    if (data.teamAllocations === undefined || data.teamAllocations === null) {
-      console.log('🔄 Initializing teamAllocations as empty array');
-      updateNodeData(id, { ...data, teamAllocations: [] });
-      return;
-    }
-    
-    // If teamAllocations is not an array, try to convert it
-    if (!Array.isArray(data.teamAllocations)) {
-      console.log('🔄 Converting teamAllocations to array:', data.teamAllocations);
-      
-      // If it's a string, try to parse it
-      if (typeof data.teamAllocations === 'string') {
-        try {
-          const parsed = JSON.parse(data.teamAllocations);
-          if (Array.isArray(parsed)) {
-            console.log('✅ Successfully parsed teamAllocations string to array:', parsed);
-            updateNodeData(id, { ...data, teamAllocations: parsed });
-          } else {
-            console.warn('⚠️ Parsed teamAllocations is not an array, using empty array instead');
-            updateNodeData(id, { ...data, teamAllocations: [] });
-          }
-        } catch (e) {
-          console.warn('❌ Failed to parse teamAllocations string, using empty array instead:', e);
-          updateNodeData(id, { ...data, teamAllocations: [] });
-        }
-      } else {
-        console.warn('⚠️ teamAllocations is not an array or string, using empty array instead');
-        updateNodeData(id, { ...data, teamAllocations: [] });
-      }
-    }
-  }, [id, data, updateNodeData]);
-  
   // Clean up timers on unmount
   useEffect(() => {
     return () => {
       if (titleDebounceRef.current) clearTimeout(titleDebounceRef.current);
       if (descriptionDebounceRef.current) clearTimeout(descriptionDebounceRef.current);
-      if (durationDebounceRef.current) clearTimeout(durationDebounceRef.current);
       if (teamAllocationsDebounceRef.current?.timeout) clearTimeout(teamAllocationsDebounceRef.current.timeout);
     };
   }, []);
-  
-  // Save team allocations to backend with proper debouncing
-  const saveTeamAllocationsToBackend = useCallback(async (teamAllocations: TeamAllocation[]) => {
-    // Create a debounce ref if it doesn't exist yet
-    if (!teamAllocationsDebounceRef.current) {
-      teamAllocationsDebounceRef.current = { timeout: null };
-    }
-    
-    // Clear any existing timeout
-    if (teamAllocationsDebounceRef.current.timeout) {
-      clearTimeout(teamAllocationsDebounceRef.current.timeout);
-    }
-    
-    // Ensure teamAllocations is an array
-    if (!Array.isArray(teamAllocations)) {
-      console.warn('Cannot save teamAllocations: not an array', teamAllocations);
-      return;
-    }
-    
-    // Set a new debounce timer
-    teamAllocationsDebounceRef.current.timeout = setTimeout(async () => {
-      console.log('💾 Saving teamAllocations to backend:', teamAllocations);
-      
-      // Update the node data with the array version first
-      updateNodeData(id, { ...safeOptionData, teamAllocations });
-      
-      // Then save to backend
-      await saveToBackend('teamAllocations', teamAllocations);
-      
-      // Clear the timeout reference
-      teamAllocationsDebounceRef.current.timeout = null;
-    }, 1000); // 1 second debounce
-  }, [id, safeOptionData, updateNodeData, saveToBackend]);
 
-  // Handle team member allocation
-  const handleTeamMemberAllocation = useCallback((teamId: string, memberId: string, hoursRequested: number) => {
-    // Find the team allocation for this team
-    const teamAllocation = Array.isArray(processedTeamAllocations) 
-      ? processedTeamAllocations.find(ta => ta.teamId === teamId)
-      : undefined;
+  // Function to refresh data from the server
+  const refreshData = useCallback(async () => {
+    console.log(`🔄 Manually refreshing option data for ${id}`);
     
-    // Create a copy of the team allocations array
-    const updatedTeamAllocations = Array.isArray(processedTeamAllocations) 
-      ? [...processedTeamAllocations] 
-      : [];
-    
-    if (teamAllocation) {
-      // Find the index of the team allocation
-      const teamIndex = updatedTeamAllocations.findIndex(ta => ta.teamId === teamId);
-      
-      // Find the member allocation
-      const memberAllocation = teamAllocation.allocatedMembers.find((am: { memberId: string, hours: number }) => am.memberId === memberId);
-      
-      if (memberAllocation) {
-        // Update the existing member allocation
-        const updatedMembers = teamAllocation.allocatedMembers.map((am: { memberId: string, hours: number }) => {
-          if (am.memberId === memberId) {
-            return { ...am, hours: hoursRequested };
-          }
-          return am;
-        });
-        
-        // Update the team allocation
-        updatedTeamAllocations[teamIndex] = {
-          ...teamAllocation,
-          allocatedMembers: updatedMembers
-        };
-      } else {
-        // Add a new member allocation
-        updatedTeamAllocations[teamIndex] = {
-          ...teamAllocation,
-          allocatedMembers: [
-            ...teamAllocation.allocatedMembers,
-            { memberId, hours: hoursRequested }
-          ]
-        };
+    try {
+      // Check if this is a known blacklisted node
+      if (GraphApiClient.isNodeBlacklisted(id)) {
+        console.warn(`🚫 Skipping refresh for blacklisted node ${id}`);
+        return;
       }
-    } else {
-      // Create a new team allocation
-      updatedTeamAllocations.push({
-        teamId,
-        requestedHours: hoursRequested,
-        allocatedMembers: [{ memberId, hours: hoursRequested }]
+      
+      // Use the GraphApiClient to fetch node data
+      const serverData = await GraphApiClient.getNode('option' as NodeType, id);
+      
+      console.log(`🚀 Server returned refreshed data for ${id}:`, serverData);
+      
+      // Process team allocations
+      let processedTeamAllocations: TeamAllocation[] = [];
+      
+      if (Array.isArray(serverData.data.teamAllocations)) {
+        processedTeamAllocations = serverData.data.teamAllocations;
+      } else if (typeof serverData.data.teamAllocations === 'string') {
+        try {
+          processedTeamAllocations = JSON.parse(serverData.data.teamAllocations);
+        } catch (e) {
+          console.error('❌ Failed to parse teamAllocations:', e);
+          processedTeamAllocations = [];
+        }
+      }
+      
+      // Update local state with all server data
+      setTitle(serverData.data.title || '');
+      setDescription(serverData.data.description || '');
+      setOptionType(serverData.data.optionType as OptionType || undefined);
+      setTransactionFeeRate(serverData.data.transactionFeeRate || undefined);
+      setMonthlyVolume(serverData.data.monthlyVolume || undefined);
+      setTeamAllocations(processedTeamAllocations);
+      
+      // Update goals and risks
+      if (Array.isArray(serverData.data.goals)) {
+        setGoals(serverData.data.goals);
+      }
+      
+      if (Array.isArray(serverData.data.risks)) {
+        setRisks(serverData.data.risks);
+      }
+      
+      // Update node data in ReactFlow
+      updateNodeData(id, {
+        ...data,
+        title: serverData.data.title || data.title,
+        description: serverData.data.description || data.description,
+        optionType: serverData.data.optionType || data.optionType,
+        transactionFeeRate: serverData.data.transactionFeeRate || data.transactionFeeRate,
+        monthlyVolume: serverData.data.monthlyVolume || data.monthlyVolume,
+        teamAllocations: processedTeamAllocations,
+        goals: serverData.data.goals || data.goals,
+        risks: serverData.data.risks || data.risks,
+        duration: serverData.data.duration || data.duration
       });
+      
+      console.log('✅ Successfully refreshed option data');
+      
+    } catch (error) {
+      console.error(`❌ Error refreshing node data for ${id}:`, error);
+      toast.error(`Failed to refresh option ${id}: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
-    
-    // Update node data
-    updateNodeData(id, {
-      ...safeOptionData,
-      teamAllocations: updatedTeamAllocations
-    });
-    
-    // Save to backend
-    saveTeamAllocationsToBackend(updatedTeamAllocations);
-    
-    // Also update via the hook for UI consistency
-    requestTeamAllocation(teamId, hoursRequested, [memberId]);
-  }, [
-    processedTeamAllocations, 
-    safeOptionData, 
-    id, 
-    updateNodeData, 
-    saveTeamAllocationsToBackend, 
-    requestTeamAllocation
-  ]);
+  }, [id, data, updateNodeData]);
 
-  // Memoize the entire return object to prevent unnecessary re-renders
+  // Return the hook API
   return useMemo(() => ({
-    // Data properties
-    title: safeOptionData.title || '',
-    description: safeOptionData.description || '',
-    optionType: safeOptionData.optionType,
-    transactionFeeRate: safeOptionData.transactionFeeRate,
-    monthlyVolume: safeOptionData.monthlyVolume,
+    // State
+    title,
+    description,
+    optionType,
+    transactionFeeRate,
+    monthlyVolume,
     status,
     processedGoals,
     processedRisks,
-    processedTeamAllocations,
+    processedTeamAllocations: teamAllocationsFromHook,
     connectedTeams,
     costs,
     expectedMonthlyValue,
     payoffDetails,
     
-    // Actions
+    // Handlers
     handleTitleChange,
     handleDescriptionChange,
-    handleDelete,
     handleOptionTypeChange,
     handleTransactionFeeChange,
     handleMonthlyVolumeChange,
-    cycleStatus,
-    getStatusColor,
+    handleDelete,
+    refreshData,
+    
+    // Team allocation handlers - these are now provided by the shared resource allocation hook
+    // handleAllocationChangeLocal,
+    // handleAllocationCommit,
+    // handleTeamAllocation,
+    // handleTeamMemberAllocation,
+    requestTeamAllocation: teamAllocationHook.requestTeamAllocation,
+    saveTeamAllocationsToBackend,
+    
+    // Goal handlers
     addGoal,
     updateGoal,
     removeGoal,
+    
+    // Risk handlers
     addRisk,
     updateRisk,
     removeRisk,
-    handleTeamMemberAllocation,
     
-    // Utilities
+    // Status
+    getStatusColor,
+    cycleStatus,
+    
+    // Duration
     duration,
-    CostSummary
   }), [
-    safeOptionData.title,
-    safeOptionData.description,
-    safeOptionData.optionType,
-    safeOptionData.transactionFeeRate,
-    safeOptionData.monthlyVolume,
+    title,
+    description,
+    optionType,
+    transactionFeeRate,
+    monthlyVolume,
     status,
     processedGoals,
     processedRisks,
-    processedTeamAllocations,
+    teamAllocationsFromHook,
     connectedTeams,
     costs,
     expectedMonthlyValue,
     payoffDetails,
     handleTitleChange,
     handleDescriptionChange,
-    handleDelete,
     handleOptionTypeChange,
     handleTransactionFeeChange,
     handleMonthlyVolumeChange,
-    cycleStatus,
-    getStatusColor,
+    handleDelete,
+    refreshData,
+    // handleAllocationChangeLocal,
+    // handleAllocationCommit,
+    // handleTeamAllocation,
+    // handleTeamMemberAllocation,
+    teamAllocationHook.requestTeamAllocation,
+    saveTeamAllocationsToBackend,
     addGoal,
     updateGoal,
     removeGoal,
     addRisk,
     updateRisk,
     removeRisk,
-    handleTeamMemberAllocation,
+    getStatusColor,
+    cycleStatus,
     duration,
-    CostSummary
   ]);
 } 

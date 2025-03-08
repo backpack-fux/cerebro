@@ -1,13 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useNodeConnections, useReactFlow, Node } from '@xyflow/react';
-import { parseTeamAllocations } from '@/lib/utils';
-import { GraphApiClient } from '@/services/graph/neo4j/api-client';
-import { NodeType } from '@/services/graph/neo4j/api-urls';
 
-// Utility function to round numbers to 1 decimal place for better display
-const roundToOneDecimal = (num: number): number => {
-  return Math.round(num * 10) / 10;
-};
 
 // Core data types
 interface TeamNodeData extends Record<string, unknown> {
@@ -77,6 +70,10 @@ interface AvailableMember {
   name: string;
   availableHours: number;
   dailyRate: number;
+  // Add additional properties to pass through to feature nodes
+  hoursPerDay: number;
+  daysPerWeek: number;
+  weeklyCapacity: number;
 }
 
       // Define types for team allocations
@@ -416,15 +413,32 @@ export function useTeamAllocation(nodeId: string, data: FeatureNodeData) {
             
             // Map the roster to available members
             availableBandwidth = roster.map((member: any) => {
-              // Find the actual team member node to get the correct name
+              // Find the actual team member node to get the correct name and capacity
               const memberNode = nodes.find(n => n.id === member.memberId);
               const memberName = memberNode?.data?.title || member.name || member.memberId.split('-')[0];
+              
+              // Get the actual capacity values from the team member node
+              const hoursPerDay = Number(memberNode?.data?.hoursPerDay) || 8;
+              const daysPerWeek = Number(memberNode?.data?.daysPerWeek) || 5;
+              const weeklyCapacity = Number(memberNode?.data?.weeklyCapacity) || (hoursPerDay * daysPerWeek);
+              
+              // Calculate available hours based on allocation percentage and weekly capacity
+              const allocatedPercentage = Number(member.allocation) || 0;
+              const availablePercentage = 100 - allocatedPercentage;
+              const availableHours = (availablePercentage / 100) * weeklyCapacity;
+              
+              // Get the daily rate from the team member node or use a default
+              const dailyRate = Number(memberNode?.data?.dailyRate) || 350;
               
               return {
                 memberId: member.memberId,
                 name: memberName,
-                availableHours: (100 - (member.allocation || 0)) * 0.4, // Rough estimate of available hours
-                dailyRate: 350 // Default daily rate
+                availableHours,
+                dailyRate,
+                // Add additional properties to pass through to feature nodes
+                hoursPerDay,
+                daysPerWeek,
+                weeklyCapacity
               };
             });
           } catch (e) {
@@ -498,68 +512,112 @@ export function useTeamAllocation(nodeId: string, data: FeatureNodeData) {
         ? JSON.parse(teamNode.data.roster) 
         : teamNode.data.roster || [];
     } catch (e) {
-      console.error('Failed to parse team roster:', e);
+      console.error('❌ Failed to parse team roster:', e);
     }
     
-    // Extract member IDs if full member objects were passed
-    const memberIds = Array.isArray(memberData) 
-      ? (typeof memberData[0] === 'string' 
-          ? memberData as string[] 
-          : (memberData as Array<{ memberId: string }>).map(m => m.memberId))
-      : [];
+    // Process member data
+    let allocatedMembers: Array<{ memberId: string; name?: string; hours: number }> = [];
     
-    // Filter the roster to only include the selected members
-    const selectedMembers = memberIds.length > 0
-      ? roster.filter((member: any) => memberIds.includes(member.memberId))
-      : [];
+    // If we're updating specific members, preserve existing allocations for other members
+    if (existingAllocationIndex >= 0) {
+      // Start with existing allocated members
+      allocatedMembers = [...currentAllocations[existingAllocationIndex].allocatedMembers];
+      
+      // Process the new member data
+      if (Array.isArray(memberData)) {
+        memberData.forEach(member => {
+          if (typeof member === 'string') {
+            // Find the member in the roster
+            const rosterMember = roster.find(r => r.memberId === member);
+            if (!rosterMember) return;
+            
+            // Calculate hours based on allocation percentage
+            const memberAllocation = rosterMember.allocation || 0;
+            const hours = (memberAllocation / 100) * requestedHours;
+            
+            // Find if this member is already in allocatedMembers
+            const existingMemberIndex = allocatedMembers.findIndex(m => m.memberId === member);
+            if (existingMemberIndex >= 0) {
+              // Update existing member
+              allocatedMembers[existingMemberIndex].hours = hours;
+            } else {
+              // Add new member
+              allocatedMembers.push({
+                memberId: member,
+                hours
+              });
+            }
+          } else {
+            // Member is an object with memberId, name, and hours
+            const { memberId, name, hours = 0 } = member;
+            
+            // Find if this member is already in allocatedMembers
+            const existingMemberIndex = allocatedMembers.findIndex(m => m.memberId === memberId);
+            if (existingMemberIndex >= 0) {
+              // Update existing member
+              allocatedMembers[existingMemberIndex] = {
+                ...allocatedMembers[existingMemberIndex],
+                name: name || allocatedMembers[existingMemberIndex].name,
+                hours: hours
+              };
+            } else {
+              // Add new member
+              allocatedMembers.push({
+                memberId,
+                name,
+                hours
+              });
+            }
+          }
+        });
+      }
+    } else {
+      // No existing allocation, create new allocated members
+      if (Array.isArray(memberData)) {
+        memberData.forEach(member => {
+          if (typeof member === 'string') {
+            // Find the member in the roster
+            const rosterMember = roster.find(r => r.memberId === member);
+            if (!rosterMember) return;
+            
+            // Calculate hours based on allocation percentage
+            const memberAllocation = rosterMember.allocation || 0;
+            const hours = (memberAllocation / 100) * requestedHours;
+            
+            allocatedMembers.push({
+              memberId: member,
+              hours
+            });
+          } else {
+            // Member is an object with memberId, name, and hours
+            const { memberId, name, hours = 0 } = member;
+            allocatedMembers.push({
+              memberId,
+              name,
+              hours
+            });
+          }
+        });
+      }
+    }
     
-    // Calculate hours per member (evenly distributed if not specified)
-    const hoursPerMember = selectedMembers.length > 0 
-      ? roundToOneDecimal(requestedHours / selectedMembers.length)
-      : 0;
+    // Calculate total requested hours from allocated members
+    const totalRequestedHours = allocatedMembers.reduce((sum, member) => sum + member.hours, 0);
     
-    // Create member allocations with names if available
-    const memberAllocations = selectedMembers.map((member: any) => {
-      // If full member objects were passed, find the matching one to get the name
-      const passedMember = typeof memberData[0] === 'string' 
-        ? null 
-        : (memberData as Array<{ memberId: string; name?: string; hours?: number }>).find(m => m.memberId === member.memberId);
-      
-      // Use the hours from the passed member data if available, otherwise use the evenly distributed hours
-      const memberHours = passedMember && typeof passedMember.hours === 'number'
-        ? roundToOneDecimal(passedMember.hours)
-        : hoursPerMember;
-      
-      // Find the actual team member node to get the correct name
-      const memberNode = getNodes().find(n => n.id === member.memberId);
-      const memberName = passedMember?.name || memberNode?.data?.title || member.name || member.memberId.split('-')[0];
-      
-      const memberAllocation = {
-        memberId: member.memberId,
-        name: memberName,
-        hours: memberHours,
-        hoursPerDay: 8, // Default hours per day
-      };
-      
-      // Log the member allocation to debug
-      console.log(`Member allocation created for ${memberAllocation.memberId}:`, memberAllocation);
-      
-      return memberAllocation;
-    });
-    
+    // Create or update the team allocation
     if (existingAllocationIndex >= 0) {
       // Update existing allocation
       newAllocations[existingAllocationIndex] = {
         ...newAllocations[existingAllocationIndex],
-        requestedHours: roundToOneDecimal(requestedHours),
-        allocatedMembers: memberAllocations
+        requestedHours: totalRequestedHours,
+        allocatedMembers
       };
     } else {
-      // Add new allocation
+      // Create new allocation
       newAllocations.push({
         teamId,
-        requestedHours: roundToOneDecimal(requestedHours),
-        allocatedMembers: memberAllocations
+        requestedHours: totalRequestedHours,
+        allocatedMembers
       });
     }
     
@@ -569,25 +627,9 @@ export function useTeamAllocation(nodeId: string, data: FeatureNodeData) {
       teamAllocations: newAllocations
     });
     
-    // Save to backend
-    const saveToBackend = async () => {
-      try {
-        // Log the team allocations before sending to backend
-        console.log('Team allocations being sent to backend:', JSON.stringify(newAllocations, null, 2));
-        
-        await GraphApiClient.updateNode('feature' as NodeType, nodeId, {
-          teamAllocations: newAllocations
-        });
-        console.log('✅ Successfully saved team allocations to backend');
-      } catch (error) {
-        console.error('❌ Failed to save team allocations to backend:', error);
-      }
-    };
-    
-    saveToBackend();
-    
+    // Return the updated allocations
     return newAllocations;
-  }, [nodeId, data, getNodes, parseTeamAllocations, updateNodeData]);
+  }, [data, getNodes, nodeId, updateNodeData]);
 
   // Add this function after requestTeamAllocation
   const removeMemberAllocation = useCallback((

@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+"use client";
+
+import { useCallback, useEffect, useRef, useState, useMemo } from "react";
 import { useReactFlow } from "@xyflow/react";
 import { toast } from "sonner";
 import { GraphApiClient } from '@/services/graph/neo4j/api-client';
@@ -11,7 +13,12 @@ import {
 import { useTeamAllocation } from "@/hooks/useTeamAllocation";
 import { useNodeStatus } from "@/hooks/useNodeStatus";
 import { useDurationInput } from "@/hooks/useDurationInput";
-import { NodeStatus } from "@/services/graph/shared/shared.types";
+import { useResourceAllocation } from "@/hooks/useResourceAllocation";
+import { 
+  calculateWeeklyCapacity, 
+  percentageToHours,
+  MemberCapacity
+} from '@/lib/utils';
 
 // Utility function to round numbers to 1 decimal place for better display
 const roundToOneDecimal = (num: number): number => {
@@ -60,6 +67,17 @@ export function useFeatureNode(id: string, data: RFFeatureNodeData) {
       })
     );
   }, [setNodes]);
+  
+  // Save to backend function
+  const saveToBackend = useCallback(async (updates: Partial<RFFeatureNodeData>) => {
+    try {
+      await GraphApiClient.updateNode('feature' as NodeType, id, updates);
+      console.log(`Updated feature node ${id}:`, updates);
+    } catch (error) {
+      console.error(`Failed to update feature node ${id}:`, error);
+      toast.error(`Update Failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }, [id]);
   
   // Reset the initialFetchCompletedRef when the ID changes
   useEffect(() => {
@@ -137,7 +155,7 @@ export function useFeatureNode(id: string, data: RFFeatureNodeData) {
     } finally {
       setIsLoading(false);
     }
-  }, [id, data, updateNodeData]);
+  }, [id, data, updateNodeData, ensureValidBuildType]);
   
   // Use effect to initialize data from server
   useEffect(() => {
@@ -282,131 +300,62 @@ export function useFeatureNode(id: string, data: RFFeatureNodeData) {
     }
   }, [data.title, data.description, data.buildType, data.teamAllocations, isLoading, initialFetchCompletedRef]);
   
+  // Save team allocations to backend
+  const saveTeamAllocationsToBackend = useCallback(async (allocations: TeamAllocation[]) => {
+    try {
+      // Log the team allocations before sending to backend
+      console.log('Team allocations being sent to backend:', JSON.stringify(allocations, null, 2));
+      
+      await GraphApiClient.updateNode('feature' as NodeType, id, {
+        teamAllocations: allocations
+      });
+      console.log('✅ Successfully saved team allocations to backend');
+    } catch (error) {
+      console.error('❌ Failed to save team allocations to backend:', error);
+    }
+  }, [id]);
+
   // Use the team allocation hook to manage team allocations
   const teamAllocationHook = useTeamAllocation(id, data);
   
+  // Add the saveTeamAllocationsToBackend function to the teamAllocationHook
+  (teamAllocationHook as any).saveTeamAllocationsToBackend = saveTeamAllocationsToBackend;
+  
   // Extract the processed team allocations from the hook
-  const processedTeamAllocations = teamAllocationHook.teamAllocations;
+  const teamAllocationsFromHook = teamAllocationHook.teamAllocations;
   
-  // Log the processed team allocations
-  console.log('🔍 Processed team allocations in useFeatureNode:', processedTeamAllocations);
+  // Get connected teams from the team allocation hook
+  const connectedTeams = teamAllocationHook.connectedTeams;
   
-  // Listen for edge changes and refresh data when a new edge is created
-  const edgeConnectionsRef = useRef<string[]>([]);
+  // Get costs from the team allocation hook
+  const costs = teamAllocationHook.costs;
   
-  useEffect(() => {
-    const edges = getEdges();
-    
-    // Find edges connected to this feature node
-    const connectedEdges = edges.filter(edge => 
-      edge.source === id || edge.target === id
-    );
-    
-    // Create a string representation of the connected edges for comparison
-    const edgeConnectionsString = connectedEdges
-      .map(edge => `${edge.source}-${edge.target}`)
-      .sort()
-      .join(',');
-    
-    // Only refresh if the connections have changed
-    if (edgeConnectionsString !== edgeConnectionsRef.current.join(',') && initialFetchCompletedRef.current) {
-      console.log(`🔄 Detected edge changes for feature ${id}, refreshing data`);
-      
-      // Update the ref with the new connections
-      edgeConnectionsRef.current = edgeConnectionsString.split(',').filter(Boolean);
-      
-      // Use a short delay to ensure the server has processed the edge creation
-      const timer = setTimeout(() => {
-        refreshData();
-      }, 500);
-      
-      return () => clearTimeout(timer);
+  // Use the resource allocation hook to manage resource allocations
+  const resourceAllocation = useResourceAllocation(data, teamAllocationHook, getNodes);
+  
+  // Use the node status hook to manage status
+  const { status, getStatusColor, cycleStatus } = useNodeStatus(
+    id, 
+    data, 
+    updateNodeData, 
+    {
+      canBeActive: true,
+      defaultStatus: 'planning'
     }
-  }, [id, getEdges, refreshData, initialFetchCompletedRef]);
+  );
   
-  // Use the node status hook for status-related operations
-  const { status, getStatusColor, cycleStatus } = useNodeStatus(id, data, updateNodeData, {
-    canBeActive: true, // Features can be "active" after completion
-    defaultStatus: 'planning'
-  });
-  
-  // Use the duration input hook for duration-related operations
-  const duration = useDurationInput(id, data, updateNodeData, {
-    maxDays: 72,
-    label: "Time to Build",
-    fieldName: "duration",
-    tip: 'Use "w" for weeks (e.g. "2w" = 2 weeks) or ↑↓ keys. Hold Shift for week increments.'
-  });
-  
-  // Function to save data to backend with debouncing
-  const saveToBackend = useCallback(async (updatedData: Partial<RFFeatureNodeData>) => {
-    if (titleDebounceRef.current) {
-      clearTimeout(titleDebounceRef.current);
+  // Use the duration input hook to manage duration
+  const duration = useDurationInput(
+    id, 
+    data, 
+    updateNodeData,
+    {
+      maxDays: 180,
+      label: 'Time to Complete',
+      fieldName: 'duration',
+      tip: 'Use "d" for days or "w" for weeks.',
     }
-    
-    titleDebounceRef.current = setTimeout(async () => {
-      try {
-        await GraphApiClient.updateNode('feature' as NodeType, id, updatedData);
-        console.log(`Updated feature ${id}`);
-      } catch (error) {
-        console.error(`Failed to update feature ${id}:`, error);
-        toast.error("Your changes couldn't be saved to the database.");
-      }
-      titleDebounceRef.current = null;
-    }, 1000);
-  }, [id]);
-
-  // Save team allocations to backend with debouncing
-  const saveTeamAllocationsToBackend = useCallback(async (teamAllocations: TeamAllocation[]) => {
-    if (!teamAllocationsDebounceRef.current) {
-      teamAllocationsDebounceRef.current = { timeout: null };
-    }
-    
-    if (teamAllocationsDebounceRef.current.timeout) {
-      clearTimeout(teamAllocationsDebounceRef.current.timeout);
-    }
-    
-    if (!Array.isArray(teamAllocations)) {
-      console.warn('Cannot save teamAllocations: not an array', teamAllocations);
-      return;
-    }
-    
-    teamAllocationsDebounceRef.current.timeout = setTimeout(async () => {
-      console.log('💾 Saving teamAllocations to backend:', JSON.stringify(teamAllocations));
-      
-      // Save to backend using fetch directly to ensure proper JSON handling
-      try {
-        const response = await fetch(`/api/graph/feature/${id}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ teamAllocations })
-        });
-        
-        if (!response.ok) {
-          throw new Error(`Failed to save team allocations: ${response.status}`);
-        }
-        
-        const result = await response.json();
-        console.log('✅ Team allocations saved successfully:', result);
-        
-        // Parse the response to check what was actually saved
-        if (result.data && result.data.teamAllocations) {
-          console.log('📊 Server returned teamAllocations:', 
-            Array.isArray(result.data.teamAllocations) 
-              ? result.data.teamAllocations 
-              : typeof result.data.teamAllocations === 'string'
-                ? 'String: ' + result.data.teamAllocations.substring(0, 50) + '...'
-                : result.data.teamAllocations
-          );
-        }
-      } catch (error) {
-        console.error('❌ Failed to save team allocations:', error);
-        toast.error("Team allocations couldn't be saved to the database.");
-      }
-      
-      teamAllocationsDebounceRef.current.timeout = null;
-    }, 1000);
-  }, [id]);
+  );
 
   // Handle title change
   const handleTitleChange = useCallback((newTitle: string) => {
@@ -483,326 +432,6 @@ export function useFeatureNode(id: string, data: RFFeatureNodeData) {
       });
   }, [id, setNodes, setEdges]);
 
-  // Handle team allocation
-  const handleTeamAllocation = useCallback((teamId: string, hoursRequested: number) => {
-    if (!teamId) return;
-    
-    // Create a function to compute the next state without calling setState inside setState
-    const getUpdatedAllocations = (currentAllocations: TeamAllocation[]): TeamAllocation[] => {
-      const updatedTeamAllocations = [...currentAllocations];
-      const existingAllocationIndex = updatedTeamAllocations.findIndex(a => a.teamId === teamId);
-      
-      if (existingAllocationIndex >= 0) {
-        updatedTeamAllocations[existingAllocationIndex] = {
-          ...updatedTeamAllocations[existingAllocationIndex],
-          requestedHours: roundToOneDecimal(hoursRequested),
-        };
-      } else {
-        updatedTeamAllocations.push({
-          teamId,
-          requestedHours: roundToOneDecimal(hoursRequested),
-          allocatedMembers: [],
-        });
-      }
-      
-      return updatedTeamAllocations;
-    };
-    
-    // First compute the new state
-    const nextAllocations = getUpdatedAllocations(teamAllocations);
-    
-    // Update local state first for immediate UI response
-    setTeamAllocations(nextAllocations);
-    
-    // Then update ReactFlow state separate from the setState callback
-    updateNodeData(id, { ...data, teamAllocations: nextAllocations });
-    
-    // Save to backend
-    saveTeamAllocationsToBackend(nextAllocations);
-  }, [id, data, teamAllocations, updateNodeData, saveTeamAllocationsToBackend]);
-
-  // Handle team member allocation
-  const handleTeamMemberAllocation = useCallback((teamId: string, memberId: string, hoursRequested: number) => {
-    if (!teamId || !memberId) return;
-    
-    console.log(`🔄 Updating team member allocation: teamId=${teamId}, memberId=${memberId}, hours=${hoursRequested}`);
-    
-    // Find the team and member to get the name
-    const team = teamAllocationHook.connectedTeams.find(t => t.teamId === teamId);
-    const member = team?.availableBandwidth.find(m => m.memberId === memberId);
-    
-    // Get the actual team member node to get the correct name
-    const nodes = getNodes();
-    const memberNode = nodes.find(n => n.id === memberId);
-    const memberName = memberNode?.data?.title 
-      ? String(memberNode.data.title) 
-      : (member?.name || memberId.split('-')[0]);
-    
-    // Create a function to compute the next state without calling setState inside setState
-    const getUpdatedAllocations = (currentAllocations: TeamAllocation[]): TeamAllocation[] => {
-      const updatedTeamAllocations: TeamAllocation[] = [...currentAllocations];
-      const existingAllocationIndex = updatedTeamAllocations.findIndex(a => a.teamId === teamId);
-      
-      if (existingAllocationIndex >= 0) {
-        const existingAllocation = updatedTeamAllocations[existingAllocationIndex];
-        const existingMemberIndex = existingAllocation.allocatedMembers.findIndex(m => m.memberId === memberId);
-        
-        if (existingMemberIndex >= 0) {
-          existingAllocation.allocatedMembers[existingMemberIndex].hours = roundToOneDecimal(hoursRequested);
-          // Update name if it wasn't set before or if we have a better name now
-          existingAllocation.allocatedMembers[existingMemberIndex].name = memberName;
-        } else {
-          existingAllocation.allocatedMembers.push({
-            memberId,
-            name: memberName,
-            hours: roundToOneDecimal(hoursRequested),
-          });
-        }
-        
-        existingAllocation.requestedHours = roundToOneDecimal(
-          existingAllocation.allocatedMembers.reduce(
-            (sum, member) => sum + member.hours, 0
-          )
-        );
-      } else {
-        updatedTeamAllocations.push({
-          teamId,
-          requestedHours: roundToOneDecimal(hoursRequested),
-          allocatedMembers: [{
-            memberId,
-            name: memberName,
-            hours: roundToOneDecimal(hoursRequested),
-          }],
-        });
-      }
-      
-      return updatedTeamAllocations;
-    };
-    
-    // First compute the new state
-    const nextAllocations = getUpdatedAllocations(teamAllocations);
-    
-    // Update local state first for immediate UI response
-    setTeamAllocations(nextAllocations);
-    
-    console.log('📊 Updated team allocations:', JSON.stringify(nextAllocations));
-    
-    // Then update ReactFlow state separate from the setState callback
-    updateNodeData(id, { ...data, teamAllocations: nextAllocations });
-    
-    // Save to backend
-    saveTeamAllocationsToBackend(nextAllocations);
-    
-    // Request team allocation separately
-    teamAllocationHook.requestTeamAllocation(teamId, hoursRequested, [memberId]);
-  }, [id, data, teamAllocations, updateNodeData, saveTeamAllocationsToBackend, teamAllocationHook, teamAllocationHook.connectedTeams]);
-
-  // Handle allocation percentage change - local state only (no backend save)
-  const handleAllocationChangeLocal = useCallback((memberId: string, percentage: number) => {
-    // Find the team for this member
-    const team = teamAllocationHook.connectedTeams.find(team => 
-      team.availableBandwidth.some(m => m.memberId === memberId)
-    );
-    
-    if (!team) {
-      console.warn(`⚠️ Could not find team for member ${memberId}`);
-      return;
-    }
-    
-    const teamId = team.teamId;
-    
-    // Calculate hours based on percentage
-    const duration = Number(data.duration) || 1;
-    const hoursPerDay = 8; // Default working hours per day
-    
-    // Ensure percentage is a valid number
-    const validPercentage = isNaN(percentage) ? 0 : percentage;
-    
-    // Calculate hours: (percentage / 100) * duration * hours per day
-    const hoursRequested = roundToOneDecimal((validPercentage / 100) * duration * hoursPerDay);
-    
-    // Get the actual team member node to get the correct name
-    const nodes = getNodes();
-    const memberNode = nodes.find(n => n.id === memberId);
-    const member = team.availableBandwidth.find(m => m.memberId === memberId);
-    const memberName = memberNode?.data?.title 
-      ? String(memberNode.data.title) 
-      : (member?.name || memberId.split('-')[0]);
-    
-    // Create a function to compute the next state without calling setState inside setState
-    const getUpdatedAllocations = (currentAllocations: TeamAllocation[]): TeamAllocation[] => {
-      const updatedTeamAllocations: TeamAllocation[] = [...currentAllocations];
-      const existingAllocationIndex = updatedTeamAllocations.findIndex(a => a.teamId === teamId);
-      
-      if (existingAllocationIndex >= 0) {
-        const existingAllocation = updatedTeamAllocations[existingAllocationIndex];
-        const existingMemberIndex = existingAllocation.allocatedMembers.findIndex(m => m.memberId === memberId);
-        
-        if (existingMemberIndex >= 0) {
-          existingAllocation.allocatedMembers[existingMemberIndex].hours = roundToOneDecimal(hoursRequested);
-          // Update name if we have a better name now
-          existingAllocation.allocatedMembers[existingMemberIndex].name = memberName;
-        } else {
-          existingAllocation.allocatedMembers.push({
-            memberId,
-            name: memberName,
-            hours: roundToOneDecimal(hoursRequested),
-          });
-        }
-        
-        existingAllocation.requestedHours = roundToOneDecimal(
-          existingAllocation.allocatedMembers.reduce(
-            (sum, member) => sum + member.hours, 0
-          )
-        );
-      } else {
-        // Find the team and member to get the name
-        const member = team?.availableBandwidth.find(m => m.memberId === memberId);
-        const memberName = member?.name || memberId.split('-')[0];
-        
-        updatedTeamAllocations.push({
-          teamId,
-          requestedHours: roundToOneDecimal(hoursRequested),
-          allocatedMembers: [{
-            memberId,
-            name: memberName,
-            hours: roundToOneDecimal(hoursRequested),
-          }],
-        });
-      }
-      
-      return updatedTeamAllocations;
-    };
-    
-    // Compute the new state
-    const nextAllocations = getUpdatedAllocations(teamAllocations);
-    
-    // Update local state only for immediate UI feedback
-    setTeamAllocations(nextAllocations);
-    
-    // Update ReactFlow state for immediate UI feedback
-    updateNodeData(id, { ...data, teamAllocations: nextAllocations });
-    
-  }, [id, data, teamAllocations, updateNodeData, teamAllocationHook.connectedTeams, getNodes]);
-
-  // Handle allocation commit - save to backend when the user finishes dragging
-  const handleAllocationCommit = useCallback((memberId: string, percentage: number) => {
-    // Find the team for this member
-    const team = teamAllocationHook.connectedTeams.find(team => 
-      team.availableBandwidth.some(m => m.memberId === memberId)
-    );
-    
-    if (!team) {
-      console.warn(`⚠️ Could not find team for member ${memberId}`);
-      return;
-    }
-    
-    const teamId = team.teamId;
-    
-    // Calculate hours based on percentage
-    const duration = Number(data.duration) || 1;
-    const hoursPerDay = 8; // Default working hours per day
-    
-    // Ensure percentage is a valid number
-    const validPercentage = isNaN(percentage) ? 0 : percentage;
-    
-    // Calculate hours: (percentage / 100) * duration * hours per day
-    const hoursRequested = roundToOneDecimal((validPercentage / 100) * duration * hoursPerDay);
-    
-    console.log(`🔄 Committing allocation for member ${memberId} in team ${teamId}:`, {
-      percentage: validPercentage,
-      duration,
-      hoursPerDay,
-      hoursRequested
-    });
-    
-    // Save to backend
-    saveTeamAllocationsToBackend(teamAllocations);
-    
-    // Request team allocation separately with the correct member name
-    // Get the actual team member node to get the correct name
-    const nodes = getNodes();
-    const memberNode = nodes.find(n => n.id === memberId);
-    const member = team.availableBandwidth.find(m => m.memberId === memberId);
-    const memberName = memberNode?.data?.title 
-      ? String(memberNode.data.title) 
-      : (member?.name || memberId.split('-')[0]);
-    
-    teamAllocationHook.requestTeamAllocation(teamId, hoursRequested, [{
-      memberId,
-      name: memberName,
-      hours: hoursRequested
-    }]);
-  }, [teamAllocationHook.connectedTeams, data.duration, teamAllocations, saveTeamAllocationsToBackend, teamAllocationHook, getNodes]);
-
-  // Original handleAllocationChange function - kept for backward compatibility
-  const handleAllocationChange = useCallback((memberId: string, percentage: number) => {
-    // Find the team for this member
-    const team = teamAllocationHook.connectedTeams.find(team => 
-      team.availableBandwidth.some(m => m.memberId === memberId)
-    );
-    
-    if (!team) {
-      console.warn(`⚠️ Could not find team for member ${memberId}`);
-      return;
-    }
-    
-    const teamId = team.teamId;
-    
-    // Calculate hours based on percentage
-    const duration = Number(data.duration) || 1;
-    const hoursPerDay = 8; // Default working hours per day
-    
-    // Ensure percentage is a valid number
-    const validPercentage = isNaN(percentage) ? 0 : percentage;
-    
-    // Calculate hours: (percentage / 100) * duration * hours per day
-    const hoursRequested = roundToOneDecimal((validPercentage / 100) * duration * hoursPerDay);
-    
-    console.log(`🔄 Updating allocation for member ${memberId} in team ${teamId}:`, {
-      percentage: validPercentage,
-      duration,
-      hoursPerDay,
-      hoursRequested
-    });
-    
-    // Get the actual team member node to get the correct name
-    const nodes = getNodes();
-    const memberNode = nodes.find(n => n.id === memberId);
-    const member = team.availableBandwidth.find(m => m.memberId === memberId);
-    const memberName = memberNode?.data?.title 
-      ? String(memberNode.data.title) 
-      : (member?.name || memberId.split('-')[0]);
-    
-    // Use existing function to update allocation with the correct name
-    handleTeamMemberAllocation(teamId, memberId, hoursRequested);
-  }, [teamAllocationHook.connectedTeams, data.duration, handleTeamMemberAllocation, getNodes]);
-
-  // Ensure teamAllocations is always an array
-  useEffect(() => {
-    if (data.teamAllocations === undefined || data.teamAllocations === null) {
-      updateNodeData(id, { ...data, teamAllocations: [] });
-      return;
-    }
-    
-    if (!Array.isArray(data.teamAllocations)) {
-      if (typeof data.teamAllocations === 'string') {
-        try {
-          const parsed = JSON.parse(data.teamAllocations);
-          if (Array.isArray(parsed)) {
-            updateNodeData(id, { ...data, teamAllocations: parsed });
-          } else {
-            updateNodeData(id, { ...data, teamAllocations: [] });
-          }
-        } catch (e) {
-          updateNodeData(id, { ...data, teamAllocations: [] });
-        }
-      } else {
-        updateNodeData(id, { ...data, teamAllocations: [] });
-      }
-    }
-  }, [id, data, updateNodeData]);
-
   // Save duration to backend when it changes
   useEffect(() => {
     if (data.duration !== undefined) {
@@ -819,33 +448,73 @@ export function useFeatureNode(id: string, data: RFFeatureNodeData) {
     };
   }, []);
 
-  // Return all the values and functions needed by the feature node component
-  return {
+  // Return the hook API
+  return useMemo(() => ({
+    // State
     title,
-    setTitle,
     description,
-    setDescription,
     buildType,
-    setBuildType,
-    teamAllocations,
-    processedTeamAllocations, // Use the processed team allocations from useTeamAllocation
-    setTeamAllocations,
+    status,
     isLoading,
-    refreshData,
+    processedGoals: [],
+    processedRisks: [],
+    processedTeamAllocations: teamAllocationsFromHook,
+    connectedTeams,
+    costs,
+    
+    // Handlers
     handleTitleChange,
     handleDescriptionChange,
     handleBuildTypeChange,
-    handleTeamAllocation,
-    handleTeamMemberAllocation,
-    handleAllocationChange,
-    handleAllocationChangeLocal,
-    handleAllocationCommit,
+    handleDelete,
+    refreshData,
+    
+    // Resource allocation handlers
+    handleAllocationChangeLocal: resourceAllocation.handleAllocationChangeLocal,
+    handleAllocationCommit: resourceAllocation.handleAllocationCommit,
+    calculateMemberAllocations: resourceAllocation.calculateMemberAllocations,
+    calculateCostSummary: resourceAllocation.calculateCostSummary,
     requestTeamAllocation: teamAllocationHook.requestTeamAllocation,
     saveTeamAllocationsToBackend,
-    connectedTeams: teamAllocationHook.connectedTeams, // Use the connected teams from useTeamAllocation
+    
+    // Goal handlers
+    addGoal: () => {},
+    updateGoal: () => {},
+    removeGoal: () => {},
+    
+    // Risk handlers
+    addRisk: () => {},
+    updateRisk: () => {},
+    removeRisk: () => {},
+    
+    // Status
+    getStatusColor,
+    cycleStatus,
+    
+    // Duration
+    duration,
+  }), [
+    title,
+    description,
+    buildType,
     status,
+    isLoading,
+    teamAllocationsFromHook,
+    connectedTeams,
+    costs,
+    handleTitleChange,
+    handleDescriptionChange,
+    handleBuildTypeChange,
+    handleDelete,
+    refreshData,
+    resourceAllocation.handleAllocationChangeLocal,
+    resourceAllocation.handleAllocationCommit,
+    resourceAllocation.calculateMemberAllocations,
+    resourceAllocation.calculateCostSummary,
+    teamAllocationHook.requestTeamAllocation,
+    saveTeamAllocationsToBackend,
     getStatusColor,
     cycleStatus,
     duration
-  };
+  ]);
 } 
