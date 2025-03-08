@@ -17,7 +17,7 @@ export interface MemberAllocation {
 export interface TeamAllocation {
   teamId: string;
   requestedHours: number;
-  allocatedMembers: { memberId: string; hours: number }[];
+  allocatedMembers: { memberId: string; name?: string; hours: number; hoursPerDay?: number }[];
 }
 
 // Available bandwidth type for feature nodes

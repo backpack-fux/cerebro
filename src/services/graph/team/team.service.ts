@@ -1,5 +1,11 @@
 import { IGraphStorage } from '@/services/graph/neo4j/graph.interface';
-import { RFTeamNode, RFTeamNodeData, CreateTeamNodeParams, UpdateTeamNodeParams, RFTeamEdge, Neo4jTeamNodeData } from '@/services/graph/team/team.types';
+import { 
+  RFTeamNode, 
+  RFTeamNodeData, 
+  CreateTeamNodeParams, 
+  UpdateTeamNodeParams, 
+  RFTeamEdge, 
+  Neo4jTeamNodeData } from '@/services/graph/team/team.types';
 import { reactFlowToNeo4jEdge, neo4jToReactFlowEdge, reactFlowToNeo4j, neo4jToReactFlow } from '@/services/graph/team/team.transform';
 
 export class TeamService {
@@ -16,34 +22,34 @@ export class TeamService {
         name: 'New Season'
       };
 
+      const createdAt = new Date().toISOString();
+      const updatedAt = createdAt;
+      const title = params.title || 'Untitled Team';
+
       // Create a complete node with default values
       const node: RFTeamNode = {
         id: crypto.randomUUID(),
         type: 'team',
         position: params.position,
         data: {
-          title: params.title,
+          title: title,
           description: params.description || '',
-          name: params.title, // Default name to title
+          name: title, // Default name to title
           season: params.season || defaultSeason, // Use default season if not provided
           roster: params.roster || [], // Initialize with empty roster if not provided
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
+          createdAt: createdAt,
+          updatedAt: updatedAt,
         },
       };
       
-      // Transform the node to Neo4j format with stringified complex objects
+      // Use the transform function to convert to Neo4j format for storage
       const neo4jData = reactFlowToNeo4j(node);
-      console.log('[TeamService] Transformed node data for Neo4j:', neo4jData);
       
-      // Create the node in Neo4j - use type assertion to handle the type mismatch
+      // Create the node in Neo4j
       const result = await this.storage.createNode('team', neo4jData as unknown as RFTeamNodeData);
       
-      // Transform back to React Flow format - use type assertion to handle the type mismatch
-      const rfNode = neo4jToReactFlow(result as unknown as Neo4jTeamNodeData);
-      console.log('[TeamService] Created team node:', rfNode);
-      
-      return rfNode;
+      console.log('[TeamService] Created team node:', result);
+      return result as RFTeamNode;
     } catch (error) {
       console.error('[TeamService] Error creating team node:', error);
       throw error;
@@ -57,36 +63,29 @@ export class TeamService {
       const { id, ...updateData } = params;
       
       // Get the current node
-      const currentNode = await this.storage.getNode(id) as RFTeamNode;
+      const currentNode = await this.storage.getNode(id);
       if (!currentNode) {
         throw new Error(`Team node with ID ${id} not found`);
       }
       
       // Create a merged node with the updates
       const updatedNode: RFTeamNode = {
-        ...currentNode,
+        ...currentNode as RFTeamNode,
         data: {
-          ...currentNode.data,
+          ...(currentNode as RFTeamNode).data,
           ...updateData,
           updatedAt: new Date().toISOString(),
         },
       };
       
-      // Transform to Neo4j format
+      // Transform to Neo4j format for storage
       const neo4jData = reactFlowToNeo4j(updatedNode);
-      console.log('[TeamService] Transformed update data for Neo4j:', neo4jData);
       
-      // Remove the id from the properties as it's used for matching
-      const { id: _, ...neo4jUpdateData } = neo4jData;
+      // Update the node in Neo4j
+      const result = await this.storage.updateNode(id, neo4jData as unknown as Partial<RFTeamNodeData>);
       
-      // Update the node in Neo4j - use type assertion to handle the type mismatch
-      const result = await this.storage.updateNode(id, neo4jUpdateData as unknown as Partial<RFTeamNodeData>);
-      
-      // Transform back to React Flow format - use type assertion to handle the type mismatch
-      const rfNode = neo4jToReactFlow(result as unknown as Neo4jTeamNodeData);
-      console.log('[TeamService] Updated team node:', rfNode);
-      
-      return rfNode;
+      console.log('[TeamService] Updated team node:', result);
+      return result as RFTeamNode;
     } catch (error) {
       console.error('[TeamService] Error updating team node:', error);
       throw error;
@@ -94,7 +93,35 @@ export class TeamService {
   }
 
   async delete(id: string): Promise<void> {
-    return this.storage.deleteNode(id);
+    console.log('[TeamService] Deleting team node:', id);
+    try {
+      await this.storage.deleteNode(id);
+      console.log('[TeamService] Deleted team node successfully');
+    } catch (error) {
+      console.error('[TeamService] Error deleting team node:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get a team node by ID
+   * @param id The team ID
+   * @returns The team node or null if not found
+   */
+  async getNode(id: string): Promise<RFTeamNode | null> {
+    console.log('[TeamService] Getting team node:', id);
+    try {
+      const node = await this.storage.getNode(id);
+      if (!node) {
+        console.log(`[TeamService] No team node found with ID: ${id}`);
+        return null;
+      }
+      console.log('[TeamService] Retrieved team node:', node);
+      return node as RFTeamNode;
+    } catch (error) {
+      console.error('[TeamService] Error getting team node:', error);
+      throw error;
+    }
   }
 
   // Edge operations
@@ -105,42 +132,87 @@ export class TeamService {
   }
 
   async getEdges(nodeId: string, type?: string): Promise<RFTeamEdge[]> {
-    const edges = await this.storage.getEdges(nodeId, type);
-    return edges.map(edge => neo4jToReactFlowEdge(edge));
+    console.log('[TeamService] Getting edges for team node:', nodeId);
+    
+    try {
+      const edges = await this.storage.getEdges(nodeId, type);
+      
+      const rfEdges = edges.map(edge => neo4jToReactFlowEdge(edge));
+      console.log(`[TeamService] Retrieved ${rfEdges.length} edges for team node: ${nodeId}`);
+      return rfEdges;
+    } catch (error) {
+      console.error('[TeamService] Error getting edges for team node:', error);
+      throw error;
+    }
   }
 
   async getEdge(edgeId: string): Promise<RFTeamEdge | null> {
-    const edge = await this.storage.getEdge(edgeId);
-    return edge ? neo4jToReactFlowEdge(edge) : null;
+    console.log('[TeamService] Getting team edge:', edgeId);
+    try {
+      const edge = await this.storage.getEdge(edgeId);
+      if (!edge) {
+        console.log(`[TeamService] No team edge found with ID: ${edgeId}`);
+        return null;
+      }
+      console.log('[TeamService] Retrieved team edge:', edge);
+      return edge as unknown as RFTeamEdge;
+    } catch (error) {
+      console.error('[TeamService] Error getting team edge:', error);
+      throw error;
+    }
   }
 
   async updateEdge(edgeId: string, properties: Partial<RFTeamEdge['data']>): Promise<RFTeamEdge> {
-    const result = await this.storage.updateEdge(edgeId, properties);
-    return neo4jToReactFlowEdge(result);
+    console.log('[TeamService] Updating team edge:', { edgeId, properties });
+    try {
+      const result = await this.storage.updateEdge(edgeId, properties);
+      console.log('[TeamService] Updated team edge:', result);
+      return result as unknown as RFTeamEdge;
+    } catch (error) {
+      console.error('[TeamService] Error updating team edge:', error);
+      throw error;
+    }
   }
 
   async deleteEdge(edgeId: string): Promise<void> {
-    return this.storage.deleteEdge(edgeId);
+    console.log('[TeamService] Deleting team edge:', edgeId);
+    try {
+      await this.storage.deleteEdge(edgeId);
+      console.log('[TeamService] Deleted team edge successfully');
+    } catch (error) {
+      console.error('[TeamService] Error deleting team edge:', error);
+      throw error;
+    }
   }
 
   // Team-specific operations
-  async addTeamMember(teamId: string, memberId: string, allocation: number = 100, role: string = 'member'): Promise<RFTeamEdge> {
-    // Create an edge between team and team member
-    const edge: RFTeamEdge = {
-      id: `edge-${crypto.randomUUID()}`,
-      source: teamId,
-      target: memberId,
-      type: 'TEAM_MEMBER',
-      data: {
-        label: 'Team Member',
-        allocation: allocation,
-      },
-    };
-    
-    // Also update the team's roster
-    const team = await this.storage.getNode(teamId) as RFTeamNode;
-    if (team) {
-      const roster = [...(team.data.roster || [])];
+  async addTeamMember(
+    teamId: string, 
+    memberId: string, 
+    allocation: number = 100, 
+    role: string = 'member'
+  ): Promise<RFTeamEdge> {
+    console.log(`[TeamService] Adding team member ${memberId} to team ${teamId}`);
+    try {
+      // Create an edge between team and team member
+      const edge: RFTeamEdge = {
+        id: `edge-${crypto.randomUUID()}`,
+        source: teamId,
+        target: memberId,
+        type: 'TEAM_MEMBER',
+        data: {
+          label: 'Team Member',
+          allocation: allocation,
+        },
+      };
+      
+      // Also update the team's roster
+      const teamNode = await this.storage.getNode(teamId);
+      if (!teamNode) {
+        throw new Error(`Team with ID ${teamId} not found`);
+      }
+      
+      const roster = [...((teamNode as RFTeamNode).data.roster || [])];
       // Check if member already exists in roster
       const existingMemberIndex = roster.findIndex(m => m.memberId === memberId);
       
@@ -161,52 +233,69 @@ export class TeamService {
         });
       }
       
-      // Update the team node
+      // Update the team node - pass the roster directly
+      // The transformation layer will handle serialization
       await this.update({
         id: teamId,
         roster,
       });
+      
+      return this.createEdge(edge);
+    } catch (error) {
+      console.error(`[TeamService] Error adding team member ${memberId} to team ${teamId}:`, error);
+      throw error;
     }
-    
-    return this.createEdge(edge);
   }
 
   async removeTeamMember(teamId: string, memberId: string): Promise<void> {
-    // Find the edge between team and member
-    const edges = await this.getEdges(teamId, 'TEAM_MEMBER');
-    const edge = edges.find(e => e.target === memberId);
-    
-    if (edge) {
-      await this.deleteEdge(edge.id);
-    }
-    
-    // Also update the team's roster
-    const team = await this.storage.getNode(teamId) as RFTeamNode;
-    if (team) {
-      const roster = (team.data.roster || []).filter(m => m.memberId !== memberId);
+    console.log(`[TeamService] Removing team member ${memberId} from team ${teamId}`);
+    try {
+      // Find the edge between team and member
+      const edges = await this.getEdges(teamId, 'TEAM_MEMBER');
+      const edge = edges.find(e => e.target === memberId);
+      
+      if (edge) {
+        await this.deleteEdge(edge.id);
+      }
+      
+      // Also update the team's roster
+      const teamNode = await this.storage.getNode(teamId);
+      if (!teamNode) {
+        throw new Error(`Team with ID ${teamId} not found`);
+      }
+      
+      const roster = ((teamNode as RFTeamNode).data.roster || []).filter(m => m.memberId !== memberId);
       
       // Update the team node
       await this.update({
         id: teamId,
         roster,
       });
+    } catch (error) {
+      console.error(`[TeamService] Error removing team member ${memberId} from team ${teamId}:`, error);
+      throw error;
     }
   }
 
   async updateTeamMemberAllocation(teamId: string, memberId: string, allocation: number): Promise<void> {
-    // Find the edge between team and member
-    const edges = await this.getEdges(teamId, 'TEAM_MEMBER');
-    const edge = edges.find(e => e.target === memberId);
-    
-    if (edge) {
-      // Update the edge allocation
-      await this.updateEdge(edge.id, { allocation });
-    }
-    
-    // Also update the team's roster
-    const team = await this.storage.getNode(teamId) as RFTeamNode;
-    if (team) {
-      const roster = [...(team.data.roster || [])];
+    console.log(`[TeamService] Updating allocation for team member ${memberId} in team ${teamId} to ${allocation}%`);
+    try {
+      // Find the edge between team and member
+      const edges = await this.getEdges(teamId, 'TEAM_MEMBER');
+      const edge = edges.find(e => e.target === memberId);
+      
+      if (edge) {
+        // Update the edge allocation
+        await this.updateEdge(edge.id, { allocation });
+      }
+      
+      // Also update the team's roster
+      const teamNode = await this.storage.getNode(teamId);
+      if (!teamNode) {
+        throw new Error(`Team with ID ${teamId} not found`);
+      }
+      
+      const roster = [...((teamNode as RFTeamNode).data.roster || [])];
       const memberIndex = roster.findIndex(m => m.memberId === memberId);
       
       if (memberIndex >= 0) {
@@ -221,6 +310,9 @@ export class TeamService {
           roster,
         });
       }
+    } catch (error) {
+      console.error(`[TeamService] Error updating allocation for team member ${memberId} in team ${teamId}:`, error);
+      throw error;
     }
   }
 } 

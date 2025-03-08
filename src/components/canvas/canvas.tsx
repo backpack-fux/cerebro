@@ -39,6 +39,168 @@ export default function Canvas() {
     // Get ReactFlow instance for viewport and node operations
     const { getViewport, addNodes } = useReactFlow();
     
+    // Function to create a new node from the console
+    const createNode = useCallback(async (type: string, label: string) => {
+        try {
+            // Mark this node type as being created
+            setIsCreatingNode(prev => ({ ...prev, [type]: true }));
+            
+            // Get current viewport to position the node in the visible area
+            const viewport = getViewport();
+            const position = {
+                x: -viewport.x + window.innerWidth / 2 - 75,
+                y: -viewport.y + window.innerHeight / 2 - 75
+            };
+            
+            console.log(`Creating new ${type} node with label "${label}" at position:`, position);
+            
+            // Create the node in the backend
+            const nodeType = type as NodeType;
+            
+            // Get current timestamp for created/updated fields
+            const now = new Date().toISOString();
+            
+            // Handle different node types with their specific required fields
+            let nodeData: any = {
+                position
+            };
+            
+            // Different node types require different fields
+            switch (type) {
+                case 'teamMember':
+                    nodeData = {
+                        position,
+                        title: label,
+                        roles: ['developer'], // Default role
+                        hoursPerDay: 8, // Default values
+                        daysPerWeek: 5,
+                        weeklyCapacity: 40,
+                        name: label, // Name is required by ReactFlowNodeBase
+                        createdAt: now,
+                        updatedAt: now
+                    };
+                    break;
+                
+                case 'team':
+                    nodeData = {
+                        position,
+                        title: label,
+                        roster: [], // Empty roster to start
+                        name: label, // Name is required by ReactFlowNodeBase
+                        createdAt: now,
+                        updatedAt: now
+                    };
+                    break;
+                
+                case 'feature':
+                    nodeData = {
+                        position,
+                        title: label,
+                        buildType: 'internal', // Default values
+                        timeUnit: 'days',
+                        duration: 5,
+                        status: 'planning',
+                        name: label, // Name is required by ReactFlowNodeBase
+                        createdAt: now,
+                        updatedAt: now
+                    };
+                    break;
+                
+                case 'milestone':
+                    nodeData = {
+                        position,
+                        title: label,
+                        name: label, // Name is required by ReactFlowNodeBase
+                        dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0], // Default due date: 30 days from now
+                        createdAt: now,
+                        updatedAt: now
+                    };
+                    break;
+                
+                case 'provider':
+                    nodeData = {
+                        position,
+                        title: label,
+                        name: label, // Name is required by ReactFlowNodeBase
+                        createdAt: now,
+                        updatedAt: now
+                    };
+                    break;
+                
+                case 'option':
+                    nodeData = {
+                        position,
+                        title: label,
+                        name: label, // Name is required by ReactFlowNodeBase
+                        createdAt: now,
+                        updatedAt: now
+                    };
+                    break;
+                
+                // For all other node types
+                default:
+                    nodeData = {
+                        position,
+                        title: label, // Use title to be safe
+                        label, // Also include label
+                        name: label, // Name is required by ReactFlowNodeBase
+                        createdAt: now,
+                        updatedAt: now
+                    };
+                    break;
+            }
+            
+            const result = await GraphApiClient.createNode(nodeType, nodeData);
+            
+            console.log(`Node created successfully:`, result);
+            
+            // Check if the node was created but is now blacklisted (rare case)
+            if (result && result.id && GraphApiClient.isNodeBlacklisted(result.id)) {
+                console.warn(`⚠️ Created node ${result.id} is blacklisted, removing from UI`);
+                toast.warning(`Node was created but marked problematic`, {
+                    description: `The node was created but has been marked as problematic and will be removed.`,
+                    duration: 5000
+                });
+                return result;
+            }
+            
+            // Add the node to the UI
+            const newNode = {
+                id: result.id,
+                type,
+                position,
+                data: {
+                    label,
+                    ...result.data
+                }
+            };
+            
+            addNodes([newNode]);
+            
+            // Show success toast
+            toast(`Node created`, {
+                description: `New ${type} node has been created.`,
+                duration: 3000
+            });
+            
+            return result;
+        } catch (error) {
+            console.error(`Failed to create ${type} node:`, error);
+            setError(`Failed to create node: ${error instanceof Error ? error.message : 'Unknown error'}`);
+            
+            // Show error toast
+            toast.error(`Failed to create node`, {
+                description: `${error instanceof Error ? error.message : 'Unknown error'}`,
+                duration: 5000
+            });
+            
+            throw error;
+        } finally {
+            // Mark this node type as no longer being created
+            setIsCreatingNode(prev => ({ ...prev, [type]: false }));
+        }
+    }, [getViewport, addNodes, setError]);
+    
     // Fetch graph data on component mount
     useEffect(() => {
         const fetchGraphData = async () => {
@@ -54,12 +216,38 @@ export default function Canvas() {
                 console.log('Loaded graph data:', data);
                 
                 if (data.nodes && Array.isArray(data.nodes)) {
-                    setNodes(data.nodes);
+                    // Filter out any blacklisted nodes
+                    const filteredNodes = data.nodes.filter((node: any) => {
+                        const isBlacklisted = GraphApiClient.isNodeBlacklisted(node.id);
+                        if (isBlacklisted) {
+                            console.warn(`🚫 Filtering out blacklisted node ${node.id} from initial load`);
+                        }
+                        return !isBlacklisted;
+                    });
+                    
+                    console.log(`Filtered out ${data.nodes.length - filteredNodes.length} blacklisted nodes`);
+                    setNodes(filteredNodes);
                 }
                 
                 if (data.edges && Array.isArray(data.edges)) {
+                    // Filter out edges connected to blacklisted nodes
+                    const filteredEdges = data.edges.filter((edge: any) => {
+                        const sourceId = edge.from || edge.source;
+                        const targetId = edge.to || edge.target;
+                        
+                        const isConnectedToBlacklisted = 
+                            GraphApiClient.isNodeBlacklisted(sourceId) || 
+                            GraphApiClient.isNodeBlacklisted(targetId);
+                            
+                        if (isConnectedToBlacklisted) {
+                            console.warn(`🚫 Filtering out edge connected to blacklisted node: ${edge.id}`);
+                        }
+                        
+                        return !isConnectedToBlacklisted;
+                    });
+                
                     // Transform edges if needed to match ReactFlow's expected format
-                    const formattedEdges = data.edges.map((edge: any) => ({
+                    const formattedEdges = filteredEdges.map((edge: any) => ({
                         id: edge.id,
                         source: edge.from || edge.source,
                         target: edge.to || edge.target,
@@ -88,15 +276,24 @@ export default function Canvas() {
     
     // Handle node deletion
     const handleNodeDelete = useCallback(async (nodeId: string) => {
-        const nodeToDelete = nodes.find((node: any) => node.id === nodeId);
+        const nodeToDelete = nodes.find(node => node.id === nodeId);
         
         if (!nodeToDelete) {
-            console.warn(`Node with ID ${nodeId} not found for deletion`);
+            console.log(`Node ${nodeId} not found in state, skipping deletion`);
             return;
         }
         
         // Mark node as being deleted
         setDeletingNodes(prev => new Set(prev).add(nodeId));
+        
+        // First identify edges connected to this node so we can handle them appropriately
+        const connectedEdges = edges.filter(
+            edge => edge.source === nodeId || edge.target === nodeId
+        );
+        
+        if (connectedEdges.length > 0) {
+            console.log(`Found ${connectedEdges.length} edges connected to node ${nodeId} that will be affected`);
+        }
         
         try {
             console.log(`Deleting ${nodeToDelete.type} node: ${nodeId}`);
@@ -109,8 +306,20 @@ export default function Canvas() {
                     nodeType = 'teamMember';
                 }
                 
+                // Delete the node from the backend - this should cascade to edges
                 await GraphApiClient.deleteNode(nodeType as NodeType, nodeId);
                 console.log(`Successfully deleted ${nodeToDelete.type} node: ${nodeId}`);
+                
+                // After node deletion, remove all connected edges from UI state
+                // This prevents react-flow from trying to manage edges that don't have both ends
+                if (connectedEdges.length > 0) {
+                    setEdges(currentEdges => 
+                        currentEdges.filter(edge => 
+                            edge.source !== nodeId && edge.target !== nodeId
+                        )
+                    );
+                    console.log(`Removed ${connectedEdges.length} connected edges from UI state`);
+                }
                 
                 // Show success toast
                 toast(`Node deleted`, {
@@ -121,6 +330,17 @@ export default function Canvas() {
                 // We can still remove it from the UI
                 if (error instanceof Error && error.message.includes('404')) {
                     console.warn(`Node ${nodeId} not found in database, removing from UI only`);
+                    
+                    // Still remove connected edges from UI
+                    if (connectedEdges.length > 0) {
+                        setEdges(currentEdges => 
+                            currentEdges.filter(edge => 
+                                edge.source !== nodeId && edge.target !== nodeId
+                            )
+                        );
+                        console.log(`Removed ${connectedEdges.length} connected edges from UI state (node was already deleted)`);
+                    }
+                    
                     toast(`Node removed from canvas`, {
                         description: `The node was already deleted from the database.`
                     });
@@ -157,13 +377,16 @@ export default function Canvas() {
                 return newSet;
             });
         }
-    }, [nodes, setNodes]);
+    }, [nodes, setNodes, edges, setEdges, setError]);
     
     // Handle edge deletion
     const handleEdgeDelete = useCallback(async (edgeId: string) => {
         const edgeToDelete = edges.find((edge: any) => edge.id === edgeId);
         
-        if (!edgeToDelete) return;
+        if (!edgeToDelete) {
+            console.log(`Edge ${edgeId} not found in state, skipping deletion`);
+            return;
+        }
         
         // Mark edge as being deleted
         setDeletingEdges(prev => new Set(prev).add(edgeId));
@@ -174,30 +397,47 @@ export default function Canvas() {
             // Determine the source node type to know which handler to use
             const sourceNode = nodes.find(node => node.id === edgeToDelete.source);
             if (!sourceNode) {
-                console.warn(`Source node not found for edge ${edgeId}, removing from UI only`);
+                console.warn(`Source node ${edgeToDelete.source} not found for edge ${edgeId}, the node may have been deleted already. Removing edge from UI only.`);
+                // In this case, we don't need to do anything with the backend since the node deletion
+                // should have already cascaded to delete its edges
                 return;
             }
-            
-            await GraphApiClient.deleteEdge(sourceNode.type as NodeType, edgeId);
-            console.log(`Successfully deleted ${sourceNode.type} edge: ${edgeId}`);
-            
-            // Show success toast
-            toast(`Connection removed`, {
-                description: `The connection has been deleted.`
-            });
+
+            // Try to delete the edge in the backend
+            const success = await GraphApiClient.deleteEdge(sourceNode.type as NodeType, edgeId);
+            if (success) {
+                console.log(`Successfully deleted ${sourceNode.type} edge: ${edgeId}`);
+                
+                // Show success toast only for user-initiated deletions (not cascading)
+                if (!deletingNodes.has(edgeToDelete.source) && !deletingNodes.has(edgeToDelete.target)) {
+                    toast(`Connection removed`, {
+                        description: `The connection has been deleted.`
+                    });
+                }
+            }
         } catch (error) {
             console.error(`Error deleting edge ${edgeId}:`, error);
             
-            // If deletion fails, add the edge back
-            setEdges((currentEdges: any[]) => [...currentEdges, edgeToDelete]);
+            // Only add the edge back if both nodes still exist - otherwise it'll cause React Flow errors
+            const sourceExists = nodes.some(node => node.id === edgeToDelete.source);
+            const targetExists = nodes.some(node => node.id === edgeToDelete.target);
             
-            // Show error message
-            setError(`Failed to delete edge: ${error instanceof Error ? error.message : 'Unknown error'}`);
-            
-            // Show error toast
-            toast.error(`Failed to delete connection`, {
-                description: `${error instanceof Error ? error.message : 'Unknown error'}`
-            });
+            if (sourceExists && targetExists) {
+                // If deletion fails and both nodes still exist, add the edge back to UI
+                setEdges((currentEdges: any[]) => [...currentEdges, edgeToDelete]);
+                
+                // Show error message for non-404 errors
+                if (!String(error).includes('404')) {
+                    setError(`Failed to delete edge: ${error instanceof Error ? error.message : 'Unknown error'}`);
+                    
+                    // Show error toast
+                    toast.error(`Failed to delete connection`, {
+                        description: `${error instanceof Error ? error.message : 'Unknown error'}`
+                    });
+                }
+            } else {
+                console.log(`Not restoring edge ${edgeId} because one or both nodes have been deleted`);
+            }
         } finally {
             // Remove from deleting set
             setDeletingEdges(prev => {
@@ -206,7 +446,130 @@ export default function Canvas() {
                 return newSet;
             });
         }
-    }, [edges, setEdges, nodes]);
+    }, [edges, setEdges, nodes, deletingNodes, setError]);
+    
+    // Handle new connections between nodes
+    const onConnect = useCallback(async (connection: Connection) => {
+        // Check if either node is blacklisted
+        if (GraphApiClient.isNodeBlacklisted(connection.source!) || 
+            GraphApiClient.isNodeBlacklisted(connection.target!)) {
+            console.warn(`⚠️ Attempted to connect to a blacklisted node, connection rejected`);
+            
+            toast.warning(`Connection rejected`, {
+                description: `One of the nodes in this connection has been marked as problematic.`,
+                duration: 5000
+            });
+            return;
+        }
+        
+        // First update the UI optimistically
+        setEdges((eds) => addEdge(connection, eds));
+        
+        try {
+            // Get source and target node details
+            const sourceNode = nodes.find(node => node.id === connection.source);
+            const targetNode = nodes.find(node => node.id === connection.target);
+            
+            if (!sourceNode || !targetNode) {
+                throw new Error('Source or target node not found');
+            }
+            
+            console.log(`Creating edge from ${sourceNode.type} (${connection.source}) to ${targetNode.type} (${connection.target})`);
+            
+            // Determine which node type to use for the API call (usually the source node)
+            let nodeType = sourceNode.type as string;
+            if (nodeType === 'team_member' || nodeType === 'teammember') {
+                nodeType = 'teamMember';
+            }
+            
+            // Determine edge type based on the connected nodes
+            let edgeType = 'default';
+            
+            // Set specific edge type based on source and target node types
+            if (sourceNode.type === 'teamMember' && targetNode.type === 'team') {
+                edgeType = 'team';
+            } else if (sourceNode.type === 'team' && targetNode.type === 'teamMember') {
+                edgeType = 'team';
+            } else if (sourceNode.type === 'teamMember' && targetNode.type === 'teamMember') {
+                edgeType = 'collaboration';
+            } else if (sourceNode.type === 'teamMember' && targetNode.type === 'feature') {
+                edgeType = 'feature';
+            } else if (sourceNode.type === 'feature' && targetNode.type === 'teamMember') {
+                edgeType = 'feature';
+            }
+            
+            // Get current timestamp
+            const now = new Date().toISOString();
+            
+            // Create the edge in the backend
+            const edgeData: any = {
+                source: connection.source, // Required field
+                target: connection.target, // Required field
+                type: edgeType, // Required field
+                sourceHandle: connection.sourceHandle,
+                targetHandle: connection.targetHandle,
+                data: {
+                    createdAt: now,
+                    updatedAt: now
+                }
+            };
+            
+            // Add special properties for team-member to team connections
+            if (edgeType === 'team') {
+                // For team connections, add allocation and role
+                edgeData.data.allocation = 100; // Default to 100% allocation
+                edgeData.data.role = 'Developer'; // Default role
+            }
+            
+            const result = await GraphApiClient.createEdge(nodeType as NodeType, edgeData);
+            console.log('Edge created successfully:', result);
+            
+            // Update the edge in the UI with the returned ID and any other properties
+            setEdges(eds => 
+                eds.map(e => {
+                    // Find the temporary edge we just added and update it with the real ID
+                    if (e.source === connection.source && 
+                        e.target === connection.target && 
+                        e.sourceHandle === connection.sourceHandle && 
+                        e.targetHandle === connection.targetHandle) {
+                        return {
+                            ...e,
+                            id: result.id,
+                            data: {
+                                ...e.data,
+                                ...result.data
+                            }
+                        };
+                    }
+                    return e;
+                })
+            );
+            
+            toast(`Connection created`, {
+                description: `Successfully connected the nodes.`,
+                duration: 3000
+            });
+        } catch (error) {
+            console.error('Failed to create edge:', error);
+            
+            // Remove the edge from the UI since the backend creation failed
+            setEdges(eds => 
+                eds.filter(e => 
+                    !(e.source === connection.source && 
+                      e.target === connection.target && 
+                      e.sourceHandle === connection.sourceHandle && 
+                      e.targetHandle === connection.targetHandle)
+                )
+            );
+            
+            setError(`Failed to create connection: ${error instanceof Error ? error.message : 'Unknown error'}`);
+            
+            toast.error(`Connection failed`, {
+                description: `${error instanceof Error ? error.message : 'Unknown error'}`,
+                duration: 5000
+            });
+        }
+    }, [nodes, setEdges, setError]);
     
     // Handle node position updates with better UX
     const handleNodePositionChange = useCallback(async (change: NodePositionChange) => {
@@ -272,6 +635,19 @@ export default function Canvas() {
         if (node.position) {
             console.log(`Attempting to update node position for ${node.id}:`, node.position);
             
+            // Check if the node is blacklisted before attempting to update
+            if (GraphApiClient.isNodeBlacklisted(node.id)) {
+                console.warn(`⚠️ Skipping position update for blacklisted node ${node.id}`);
+                // Try to remove the node from the UI since it's blacklisted
+                setNodes(nodes => nodes.filter(n => n.id !== node.id));
+                
+                toast.warning(`Node cannot be updated`, {
+                    description: `This node (${node.id.substring(0, 8)}...) has been marked as problematic and will be removed.`,
+                    duration: 5000
+                });
+                return;
+            }
+            
             // The issue might be with how we're passing the position data
             // Let's ensure we're passing it in the format expected by the API
             const updateData = {
@@ -298,276 +674,55 @@ export default function Canvas() {
                 });
             } catch (error) {
                 console.error(`Failed to update position for node ${node.id}:`, error);
-                
-                // Show error toast
-                toast.error(`Failed to save position`, {
-                    description: `${error instanceof Error ? error.message : 'Unknown error'}`
-                });
             }
         }
-    }, []);
+    }, [nodes, setNodes, setError]);
     
-    // Custom handler for node changes to intercept position changes and deletions
-    const handleNodesChange = useCallback(
-        (changes: NodeChange[]) => {
-            // Process node changes
-            changes.forEach((change) => {
-                if (change.type === 'remove' && !deletingNodes.has(change.id)) {
-                    // Handle node deletion asynchronously
-                    handleNodeDelete(change.id);
-                } else if (change.type === 'position' && change.position && !updatingNodePositions.has(change.id)) {
-                    // Handle position change
-                    handleNodePositionChange(change);
-                }
-            });
-            
-            // Apply all changes to the UI immediately
-            onNodesChange(changes);
-        },
-        [handleNodeDelete, deletingNodes, handleNodePositionChange, updatingNodePositions, onNodesChange]
-    );
-    
-    // Custom handler for edge changes to intercept deletions
-    const handleEdgesChange = useCallback(
-        (changes: any) => {
-            // Process edge removals
-            changes.forEach((change: any) => {
-                if (change.type === 'remove' && !deletingEdges.has(change.id)) {
-                    // Handle edge deletion asynchronously
-                    handleEdgeDelete(change.id);
-                }
-            });
-            
-            // Apply all changes to the UI immediately
-            onEdgesChange(changes);
-        },
-        [handleEdgeDelete, deletingEdges, onEdgesChange]
-    );
-    
-    // Handle new connections
-    const onConnect = useCallback(async (connection: Connection) => {
-        // Check if an edge already exists between these nodes
-        const existingEdge = edges.find(
-            edge => edge.source === connection.source && edge.target === connection.target
-        );
-        
-        if (existingEdge) {
-            console.log('Edge already exists between these nodes:', existingEdge);
-            toast.error(`Connection already exists`, {
-                description: `These nodes are already connected.`
-            });
-            return; // Don't create a duplicate edge
-        }
-        
-        // Add the edge to the UI immediately for better UX
-        const newEdge = addEdge(connection, edges);
-        setEdges(newEdge);
-        
-        try {
-            // Create a unique ID for the edge
-            const edgeId = `edge-${crypto.randomUUID()}`;
-            
-            // Determine edge type and label based on the handles
-            let edgeType = 'default';
-            let edgeLabel = 'Connection';
-            
-            // If sourceHandle is provided, use it to determine edge type
-            if (connection.sourceHandle) {
-                edgeType = connection.sourceHandle;
-                edgeLabel = connection.sourceHandle === 'knowledge' ? 'Knowledge Base' : 'Roadmap';
-            }
-            // If targetHandle is provided and sourceHandle is not, use targetHandle
-            else if (connection.targetHandle) {
-                edgeType = connection.targetHandle;
-                edgeLabel = connection.targetHandle === 'knowledge' ? 'Knowledge Base' : 'Roadmap';
-            }
-            
-            // Create the edge data
-            const edgeData = {
-                id: edgeId,
-                source: connection.source,
-                target: connection.target,
-                type: edgeType,
-                data: {
-                    label: edgeLabel,
-                }
-            };
-            
-            console.log('Creating edge in database:', edgeData);
-            
-            // Determine the source node type to know which handler to use
-            const sourceNode = nodes.find(node => node.id === connection.source);
-            if (!sourceNode) {
-                console.warn(`Source node not found for connection, skipping edge creation`);
-                toast.error(`Failed to create connection`, {
-                    description: `Source node not found.`
-                });
-                return;
-            }
-            
-            // Map node types to match API_URLS keys
-            let nodeType = sourceNode.type;
-            if (nodeType === 'team_member' || nodeType === 'teammember') {
-                nodeType = 'teamMember';
-            }
-            
-            const createdEdge = await GraphApiClient.createEdge(nodeType as NodeType, edgeData);
-            console.log(`${sourceNode.type} edge created in database:`, createdEdge);
-            
-            // Update the edge in the UI with the data from the database
-            setEdges(currentEdges => 
-                currentEdges.map(edge => 
-                    edge.source === connection.source && 
-                    edge.target === connection.target && 
-                    !edge.id.startsWith('edge-') 
-                        ? { ...edge, id: createdEdge.id, data: createdEdge.data }
-                        : edge
-                )
-            );
-            
-            // Show success toast
-            toast(`Connection created`, {
-                description: `A new ${edgeLabel.toLowerCase()} connection has been established.`
-            });
-        } catch (error) {
-            console.error('Error creating edge:', error);
-            setError(`Failed to create edge: ${error instanceof Error ? error.message : 'Unknown error'}`);
-            
-            // Show error toast
-            toast.error(`Failed to create connection`, {
-                description: `${error instanceof Error ? error.message : 'Unknown error'}`
-            });
-        }
-    }, [edges, setEdges, nodes]);
-
-    // Node creation function to be passed to Console
-    const createNode = useCallback(async (type: string, label: string) => {
-        // Prevent multiple clicks while creating
-        if (isCreatingNode[type]) return;
-        
-        try {
-            // Set loading state for this button
-            setIsCreatingNode(prev => ({ ...prev, [type]: true }));
-            
-            const { x, y, zoom } = getViewport();
-            
-            // Calculate center of current viewport
-            const position = {
-                x: -x / zoom + window.innerWidth / 2 / zoom,
-                y: -y / zoom + window.innerHeight / 2 / zoom
-            };
-
-            // Adjust position to center the node
-            const nodePosition = { 
-                x: position.x - 100, 
-                y: position.y - 50 
-            };
-
-            // Map node types to match API_URLS keys
-            let nodeType = type;
-            if (nodeType === 'team_member' || nodeType === 'teammember') {
-                nodeType = 'teamMember';
-            }
-
-            // Create the node directly in the database first
-            const createdNode = await GraphApiClient.createNode(nodeType as NodeType, {
-                title: `New ${label}`,
-                description: `A new ${label.toLowerCase()} node`,
-                position: nodePosition,
-            });
-            
-            console.log(`${type} node created in database:`, createdNode);
-            
-            // Add the node to the UI only after successful creation
-            const permanentNode = {
-                ...createdNode,
-                position: nodePosition, // Use the original position to avoid jumps
-            };
-            
-            addNodes(permanentNode);
-            
-            // Show success message
-            toast(`Successfully created a new ${label} node.`, {
-                description: `The ${label.toLowerCase()} node has been added to the canvas.`,
-            });
-        } catch (error) {
-            console.error(`Error creating ${type} node:`, error);
-            
-            // Show error message
-            toast.error(`Failed to create ${label} node`, {
-                description: `${error instanceof Error ? error.message : 'Unknown error'}`,
-            });
-        } finally {
-            // Clear loading state
-            setIsCreatingNode(prev => ({ ...prev, [type]: false }));
-        }
-    }, [getViewport, addNodes, isCreatingNode]);
-
+    // Return the ReactFlow component with all necessary props
     return (
-      <div className={`h-full w-full`}>
-        {isLoading && (
-          <div className="absolute inset-0 flex items-center justify-center z-10 bg-background/50">
-            <div className="text-foreground">Loading graph data...</div>
-          </div>
-        )}
-        
-        {error && (
-          <div className="absolute top-4 right-4 p-4 bg-destructive text-destructive-foreground rounded-md z-10">
-            {error}
-            <button 
-              className="ml-2 text-xs underline" 
-              onClick={() => setError(null)}
+        <div className="w-full h-full">
+            <ReactFlow
+                nodes={nodes}
+                edges={edges}
+                onNodesChange={onNodesChange}
+                onEdgesChange={onEdgesChange}
+                onConnect={onConnect}
+                onNodeDragStop={onNodeDragStop}
+                nodeTypes={nodeTypes}
+                fitView
+                panOnScroll
+                selectionMode={SelectionMode.Partial}
+                panOnDrag={panOnDragButtons}
+                deleteKeyCode={['Backspace', 'Delete']}
+                onNodesDelete={(nodes) => nodes.forEach(node => handleNodeDelete(node.id))}
+                onEdgesDelete={(edges) => edges.forEach(edge => handleEdgeDelete(edge.id))}
             >
-              Dismiss
-            </button>
-          </div>
-        )}
-        
-        <ReactFlow
-          nodes={nodes}
-          edges={edges}
-          nodeTypes={nodeTypes}
-          onNodesChange={handleNodesChange}
-          onEdgesChange={handleEdgesChange}
-          onConnect={onConnect}
-          onNodeDragStop={onNodeDragStop}
-          fitView
-          className="bg-background text-foreground"
-          // Figma-style controls
-          panOnScroll
-          selectionOnDrag
-          panOnDrag={panOnDragButtons}
-          selectionMode={SelectionMode.Partial}
-          zoomActivationKeyCode="Meta"
-          // Optional: Disable default behaviors
-          zoomOnScroll={true}
-          zoomOnDoubleClick={false}
-          zoomOnPinch={true}
-          // Optional: Configure default edge options
-          defaultEdgeOptions={{
-            type: 'default', // or 'bezier', 'step', etc.
-            animated: true,
-            style: { stroke: 'currentColor', strokeWidth: 2 },
-          }}
-          // Optional: Configure connection line style
-          connectionLineStyle={{ stroke: 'currentColor', strokeWidth: 2 }}
-          // Optional: Configure connection validation
-          connectOnClick={true}
-          minZoom={0.1}
-          maxZoom={4}
-        >
-          <Console 
-            createNode={createNode} 
-            isCreatingNode={isCreatingNode} 
-          />
-          <Background
-            variant={BackgroundVariant.Dots}
-            gap={32}
-            size={1}
-            className="!text-foreground/5"
-          />
-        </ReactFlow>
-        <Toaster />
-      </div>
+                <Background variant={BackgroundVariant.Dots} gap={12} size={1} />
+            </ReactFlow>
+            
+            {/* Error display */}
+            {error && (
+                <div className="absolute bottom-4 left-4 bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded">
+                    <strong className="font-bold">Error: </strong>
+                    <span className="block sm:inline">{error}</span>
+                </div>
+            )}
+            
+            {/* Loading indicator */}
+            {isLoading && (
+                <div className="absolute inset-0 flex items-center justify-center bg-white bg-opacity-75">
+                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-gray-900"></div>
+                </div>
+            )}
+            
+            {/* Toast notifications */}
+            <Toaster position="top-right" />
+            
+            {/* Debug console */}
+            <Console 
+                createNode={createNode} 
+                isCreatingNode={isCreatingNode} 
+            />
+        </div>
     );
 }

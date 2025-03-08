@@ -1,6 +1,6 @@
 "use client";
 
-import { Handle, Position, type NodeProps, useReactFlow } from "@xyflow/react";
+import { Handle, Position, type NodeProps } from "@xyflow/react";
 import { BaseNode } from '@/components/nodes/base-node';
 import { 
   NodeHeader,
@@ -9,7 +9,7 @@ import {
   NodeHeaderMenuAction,
 } from '@/components/nodes/node-header';
 import { DropdownMenuItem } from "@radix-ui/react-dropdown-menu";
-import { useCallback, useMemo, useRef, useEffect } from "react";
+import { memo } from "react";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
@@ -17,384 +17,20 @@ import { Plus, Trash } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Input } from "@/components/ui/input";
-import { useTeamAllocation } from "@/hooks/useTeamAllocation";
 import { Slider } from "@/components/ui/slider";
-import { useDurationInput } from "@/hooks/useDurationInput";
-import { useNodeStatus } from "@/hooks/useNodeStatus";
 import { 
   RFOptionNodeData, 
   Goal, 
   Risk, 
-  OptionType,
-  TeamAllocation
+  OptionType
 } from '@/services/graph/option/option.types';
-import { GraphApiClient } from '@/services/graph/neo4j/api-client';
-import { NodeType } from '@/services/graph/neo4j/api-urls';
-import { toast } from "sonner";
+import { useOptionNode } from '@/hooks/useOptionNode';
 
-export function OptionNode({ id, data, selected }: NodeProps) {
-  const { updateNodeData, setNodes, setEdges, getEdges } = useReactFlow();
+// Use React.memo to prevent unnecessary re-renders
+const OptionNode = memo(function OptionNode({ id, data, selected }: NodeProps) {
+  // Use our custom hook for option node logic
+  const option = useOptionNode(id, data as RFOptionNodeData);
   
-  // Cast data to the correct type
-  const optionData = data as RFOptionNodeData;
-  
-  // Ensure complex objects are always arrays
-  const goals = Array.isArray(optionData.goals) ? optionData.goals : [];
-  const risks = Array.isArray(optionData.risks) ? optionData.risks : [];
-  const teamMembers = Array.isArray(optionData.teamMembers) ? optionData.teamMembers : [];
-  const memberAllocations = Array.isArray(optionData.memberAllocations) ? optionData.memberAllocations : [];
-  const teamAllocations = Array.isArray(optionData.teamAllocations) ? optionData.teamAllocations : [];
-  
-  // Update optionData with the ensured arrays
-  const safeOptionData = {
-    ...optionData,
-    goals,
-    risks,
-    teamMembers,
-    memberAllocations,
-    teamAllocations
-  };
-  
-  // Ensure teamAllocations is always an array for UI rendering
-  const processedTeamAllocations = useMemo(() => {
-    if (Array.isArray(safeOptionData.teamAllocations)) {
-      return safeOptionData.teamAllocations;
-    } else if (typeof safeOptionData.teamAllocations === 'string') {
-      try {
-        const parsed = JSON.parse(safeOptionData.teamAllocations);
-        if (Array.isArray(parsed)) {
-          return parsed;
-        }
-      } catch (e) {
-        console.warn('Failed to parse teamAllocations string:', e);
-      }
-    }
-    return [];
-  }, [safeOptionData.teamAllocations]);
-
-  const {
-    connectedTeams,
-    requestTeamAllocation,
-    costs,
-    CostSummary
-  } = useTeamAllocation(id, safeOptionData);
-
-  const { status, getStatusColor, cycleStatus } = useNodeStatus(id, safeOptionData, updateNodeData, {
-    canBeActive: true,
-    defaultStatus: 'planning'
-  });
-
-  // Save data to backend
-  const saveToBackend = async (field: string, value: any) => {
-    try {
-      await GraphApiClient.updateNode('option' as NodeType, id, { [field]: value });
-      console.log(`Updated option node ${id} ${field}`);
-    } catch (error) {
-      console.error(`Failed to update option node ${id}:`, error);
-      toast.error(`Update Failed: Failed to save ${field} to the server.`);
-    }
-  };
-
-  const handleTitleChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const newTitle = e.target.value;
-    updateNodeData(id, { ...safeOptionData, title: newTitle });
-    saveToBackend('title', newTitle);
-  }, [id, safeOptionData, updateNodeData]);
-
-  const handleDescriptionChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    const newDescription = e.target.value;
-    updateNodeData(id, { ...safeOptionData, description: newDescription });
-    saveToBackend('description', newDescription);
-  }, [id, safeOptionData, updateNodeData]);
-
-  const addGoal = useCallback(() => {
-    const newGoal: Goal = {
-      id: `goal-${Date.now()}`,
-      description: '',
-      impact: 'medium'
-    };
-    const updatedGoals = [...goals, newGoal];
-    updateNodeData(id, { 
-      ...safeOptionData, 
-      goals: updatedGoals
-    });
-    saveToBackend('goals', updatedGoals);
-  }, [id, safeOptionData, goals, updateNodeData]);
-
-  const updateGoal = useCallback((goalId: string, updates: Partial<Goal>) => {
-    const updatedGoals = goals.map(goal => 
-      goal.id === goalId ? { ...goal, ...updates } : goal
-    );
-    updateNodeData(id, {
-      ...safeOptionData,
-      goals: updatedGoals
-    });
-    saveToBackend('goals', updatedGoals);
-  }, [id, safeOptionData, goals, updateNodeData]);
-
-  const removeGoal = useCallback((goalId: string) => {
-    const updatedGoals = goals.filter(goal => goal.id !== goalId);
-    updateNodeData(id, {
-      ...safeOptionData,
-      goals: updatedGoals
-    });
-    saveToBackend('goals', updatedGoals);
-  }, [id, safeOptionData, goals, updateNodeData]);
-
-  const addRisk = useCallback(() => {
-    const newRisk: Risk = {
-      id: `risk-${Date.now()}`,
-      description: '',
-      severity: 'medium'
-    };
-    const updatedRisks = [...risks, newRisk];
-    updateNodeData(id, { 
-      ...safeOptionData, 
-      risks: updatedRisks
-    });
-    saveToBackend('risks', updatedRisks);
-  }, [id, safeOptionData, risks, updateNodeData]);
-
-  const updateRisk = useCallback((riskId: string, updates: Partial<Risk>) => {
-    const updatedRisks = risks.map(risk => 
-      risk.id === riskId ? { ...risk, ...updates } : risk
-    );
-    updateNodeData(id, {
-      ...safeOptionData,
-      risks: updatedRisks
-    });
-    saveToBackend('risks', updatedRisks);
-  }, [id, safeOptionData, risks, updateNodeData]);
-
-  const removeRisk = useCallback((riskId: string) => {
-    const updatedRisks = risks.filter(risk => risk.id !== riskId);
-    updateNodeData(id, {
-      ...safeOptionData,
-      risks: updatedRisks
-    });
-    saveToBackend('risks', updatedRisks);
-  }, [id, safeOptionData, risks, updateNodeData]);
-
-  const handleDelete = useCallback(() => {
-    // Delete the node from the backend
-    GraphApiClient.deleteNode('option' as NodeType, id)
-      .then(() => {
-        setNodes((nodes) => nodes.filter((node) => node.id !== id));
-        
-        // Also delete connected edges
-        const connectedEdges = getEdges().filter((edge) => edge.source === id || edge.target === id);
-        connectedEdges.forEach((edge) => {
-          GraphApiClient.deleteEdge('option' as NodeType, edge.id)
-            .catch((error) => console.error('Failed to delete edge:', error));
-        });
-      })
-      .catch((error) => {
-        console.error('Failed to delete option node:', error);
-        toast.error("Delete Failed: Failed to delete the option node from the server.");
-      });
-  }, [id, setNodes, getEdges]);
-
-  const handleOptionTypeChange = useCallback((value: OptionType) => {
-    updateNodeData(id, { ...safeOptionData, optionType: value });
-    saveToBackend('optionType', value);
-  }, [id, safeOptionData, updateNodeData]);
-
-  const handleTransactionFeeChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = parseFloat(e.target.value);
-    if (!isNaN(value) && value >= 0 && value <= 100) {
-      updateNodeData(id, { ...safeOptionData, transactionFeeRate: value });
-      saveToBackend('transactionFeeRate', value);
-    }
-  }, [id, safeOptionData, updateNodeData]);
-
-  const handleMonthlyVolumeChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = parseFloat(e.target.value);
-    if (!isNaN(value) && value >= 0) {
-      updateNodeData(id, { ...safeOptionData, monthlyVolume: value });
-      saveToBackend('monthlyVolume', value);
-    }
-  }, [id, safeOptionData, updateNodeData]);
-
-  const duration = useDurationInput(id, safeOptionData, updateNodeData, {
-    maxDays: 90,
-    label: "Time to Close",
-    fieldName: "duration",
-    tip: 'Estimated time to close the deal and go live'
-  });
-
-  // Calculate expected monthly value
-  const expectedMonthlyValue = useMemo(() => {
-    if (safeOptionData.transactionFeeRate && safeOptionData.monthlyVolume) {
-      return (safeOptionData.transactionFeeRate / 100) * safeOptionData.monthlyVolume;
-    }
-    return 0;
-  }, [safeOptionData.transactionFeeRate, safeOptionData.monthlyVolume]);
-
-  // Add this calculation after the expectedMonthlyValue memo
-  const payoffDetails = useMemo(() => {
-    if (!expectedMonthlyValue || !costs.totalCost || expectedMonthlyValue === 0) {
-      return null;
-    }
-
-    const totalCost = costs.totalCost;
-    const monthsToPayoff = totalCost / expectedMonthlyValue;
-    
-    return {
-      monthsToPayoff,
-      yearsToPayoff: monthsToPayoff / 12,
-      isPayoffPossible: expectedMonthlyValue > 0
-    };
-  }, [expectedMonthlyValue, costs.totalCost]);
-
-  // Refs for debounce timers
-  const titleDebounceRef = useRef<NodeJS.Timeout | null>(null);
-  const descriptionDebounceRef = useRef<NodeJS.Timeout | null>(null);
-  const durationDebounceRef = useRef<NodeJS.Timeout | null>(null);
-  const teamAllocationsDebounceRef = useRef<{ timeout: NodeJS.Timeout | null }>({ timeout: null });
-  
-  // Add an effect to ensure teamAllocations is always an array
-  useEffect(() => {
-    // If teamAllocations is undefined or null, initialize as empty array
-    if (safeOptionData.teamAllocations === undefined || safeOptionData.teamAllocations === null) {
-      console.log('🔄 Initializing teamAllocations as empty array');
-      updateNodeData(id, { ...safeOptionData, teamAllocations: [] });
-      return;
-    }
-    
-    // If teamAllocations is not an array, try to convert it
-    if (!Array.isArray(safeOptionData.teamAllocations)) {
-      console.log('🔄 Converting teamAllocations to array:', safeOptionData.teamAllocations);
-      
-      // If it's a string, try to parse it
-      if (typeof safeOptionData.teamAllocations === 'string') {
-        try {
-          const parsed = JSON.parse(safeOptionData.teamAllocations);
-          if (Array.isArray(parsed)) {
-            console.log('✅ Successfully parsed teamAllocations string to array:', parsed);
-            updateNodeData(id, { ...safeOptionData, teamAllocations: parsed });
-          } else {
-            console.warn('⚠️ Parsed teamAllocations is not an array, using empty array instead');
-            updateNodeData(id, { ...safeOptionData, teamAllocations: [] });
-          }
-        } catch (e) {
-          console.warn('❌ Failed to parse teamAllocations string, using empty array instead:', e);
-          updateNodeData(id, { ...safeOptionData, teamAllocations: [] });
-        }
-      } else {
-        console.warn('⚠️ teamAllocations is not an array or string, using empty array instead');
-        updateNodeData(id, { ...safeOptionData, teamAllocations: [] });
-      }
-    }
-  }, [id, safeOptionData, updateNodeData]);
-  
-  // Clean up timers on unmount
-  useEffect(() => {
-    return () => {
-      if (titleDebounceRef.current) clearTimeout(titleDebounceRef.current);
-      if (descriptionDebounceRef.current) clearTimeout(descriptionDebounceRef.current);
-      if (durationDebounceRef.current) clearTimeout(durationDebounceRef.current);
-      if (teamAllocationsDebounceRef.current?.timeout) clearTimeout(teamAllocationsDebounceRef.current.timeout);
-    };
-  }, []);
-  
-  // Save team allocations to backend with proper debouncing
-  const saveTeamAllocationsToBackend = useCallback(async (teamAllocations: TeamAllocation[]) => {
-    // Create a debounce ref if it doesn't exist yet
-    if (!teamAllocationsDebounceRef.current) {
-      teamAllocationsDebounceRef.current = { timeout: null };
-    }
-    
-    // Clear any existing timeout
-    if (teamAllocationsDebounceRef.current.timeout) {
-      clearTimeout(teamAllocationsDebounceRef.current.timeout);
-    }
-    
-    // Ensure teamAllocations is an array
-    if (!Array.isArray(teamAllocations)) {
-      console.warn('Cannot save teamAllocations: not an array', teamAllocations);
-      return;
-    }
-    
-    // Set a new debounce timer
-    teamAllocationsDebounceRef.current.timeout = setTimeout(async () => {
-      console.log('💾 Saving teamAllocations to backend:', teamAllocations);
-      
-      // Update the node data with the array version first
-      updateNodeData(id, { ...safeOptionData, teamAllocations });
-      
-      // Then save to backend
-      await saveToBackend('teamAllocations', teamAllocations);
-      
-      // Clear the timeout reference
-      teamAllocationsDebounceRef.current.timeout = null;
-    }, 1000); // 1 second debounce
-  }, [id, safeOptionData, updateNodeData]);
-
-  // Handle allocation changes
-  const handleTeamMemberAllocation = useCallback((teamId: string, memberId: string, hoursRequested: number) => {
-    // Find the team allocation for this team
-    const teamAllocation = Array.isArray(processedTeamAllocations) 
-      ? processedTeamAllocations.find(ta => ta.teamId === teamId)
-      : undefined;
-    
-    // Create a copy of the team allocations array
-    const updatedTeamAllocations = Array.isArray(processedTeamAllocations) 
-      ? [...processedTeamAllocations] 
-      : [];
-    
-    if (teamAllocation) {
-      // Find the index of the team allocation
-      const teamIndex = updatedTeamAllocations.findIndex(ta => ta.teamId === teamId);
-      
-      // Find the member allocation
-      const memberAllocation = teamAllocation.allocatedMembers.find((am: { memberId: string, hours: number }) => am.memberId === memberId);
-      
-      if (memberAllocation) {
-        // Update the existing member allocation
-        const updatedMembers = teamAllocation.allocatedMembers.map((am: { memberId: string, hours: number }) => {
-          if (am.memberId === memberId) {
-            return { ...am, hours: hoursRequested };
-          }
-          return am;
-        });
-        
-        // Update the team allocation
-        updatedTeamAllocations[teamIndex] = {
-          ...teamAllocation,
-          allocatedMembers: updatedMembers
-        };
-      } else {
-        // Add a new member allocation
-        updatedTeamAllocations[teamIndex] = {
-          ...teamAllocation,
-          allocatedMembers: [
-            ...teamAllocation.allocatedMembers,
-            { memberId, hours: hoursRequested }
-          ]
-        };
-      }
-    } else {
-      // Create a new team allocation
-      updatedTeamAllocations.push({
-        teamId,
-        requestedHours: hoursRequested,
-        allocatedMembers: [{ memberId, hours: hoursRequested }]
-      });
-    }
-    
-    // Update node data
-    updateNodeData(id, {
-      ...safeOptionData,
-      teamAllocations: updatedTeamAllocations
-    });
-    
-    // Save to backend
-    saveTeamAllocationsToBackend(updatedTeamAllocations);
-    
-    // Also update via the hook for UI consistency
-    requestTeamAllocation(teamId, hoursRequested, [memberId]);
-  }, [connectedTeams, safeOptionData, id, updateNodeData, requestTeamAllocation, saveTeamAllocationsToBackend, processedTeamAllocations]);
-
   return (
     <BaseNode selected={selected}>
       <NodeHeader>
@@ -402,14 +38,14 @@ export function OptionNode({ id, data, selected }: NodeProps) {
           <div className="flex items-center gap-2">
             <Badge 
               variant="secondary" 
-              className={`cursor-pointer ${getStatusColor(status)}`}
-              onClick={cycleStatus}
+              className={`cursor-pointer ${option.getStatusColor(option.status)}`}
+              onClick={option.cycleStatus}
             >
-              {status}
+              {option.status}
             </Badge>
             <input
-              value={safeOptionData.title}
-              onChange={handleTitleChange}
+              value={option.title}
+              onChange={(e) => option.handleTitleChange(e.target.value)}
               className="bg-transparent outline-none placeholder:text-muted-foreground"
               placeholder="Option Title"
             />
@@ -417,7 +53,7 @@ export function OptionNode({ id, data, selected }: NodeProps) {
         </NodeHeaderTitle>
         <NodeHeaderActions>
           <NodeHeaderMenuAction label="Option node menu">
-            <DropdownMenuItem onSelect={handleDelete} className="cursor-pointer">
+            <DropdownMenuItem onSelect={option.handleDelete} className="cursor-pointer">
               Delete
             </DropdownMenuItem>
           </NodeHeaderMenuAction>
@@ -428,8 +64,8 @@ export function OptionNode({ id, data, selected }: NodeProps) {
         <div className="space-y-2">
           <Label>Option Type</Label>
           <RadioGroup
-            value={safeOptionData.optionType}
-            onValueChange={handleOptionTypeChange}
+            value={option.optionType}
+            onValueChange={option.handleOptionTypeChange}
             className="flex gap-4"
           >
             <div className="flex items-center space-x-2">
@@ -462,15 +98,15 @@ export function OptionNode({ id, data, selected }: NodeProps) {
           </RadioGroup>
         </div>
 
-        {safeOptionData.optionType === 'customer' && (
+        {option.optionType === 'customer' && (
           <div className="space-y-4 p-3 bg-muted/30 rounded-lg">
             <div className="space-y-2">
               <Label>Transaction Fee Rate</Label>
               <div className="relative">
                 <Input
                   type="number"
-                  value={safeOptionData.transactionFeeRate || ''}
-                  onChange={handleTransactionFeeChange}
+                  value={option.transactionFeeRate || ''}
+                  onChange={(e) => option.handleTransactionFeeChange(parseFloat(e.target.value))}
                   className="pr-8 bg-transparent"
                   placeholder="0.00"
                   min={0}
@@ -491,8 +127,8 @@ export function OptionNode({ id, data, selected }: NodeProps) {
                 </span>
                 <Input
                   type="number"
-                  value={safeOptionData.monthlyVolume || ''}
-                  onChange={handleMonthlyVolumeChange}
+                  value={option.monthlyVolume || ''}
+                  onChange={(e) => option.handleMonthlyVolumeChange(parseFloat(e.target.value))}
                   className="pl-7 bg-transparent"
                   placeholder="0.00"
                   min={0}
@@ -501,45 +137,45 @@ export function OptionNode({ id, data, selected }: NodeProps) {
               </div>
             </div>
 
-            {(safeOptionData.transactionFeeRate || safeOptionData.monthlyVolume) && (
+            {(option.transactionFeeRate || option.monthlyVolume) && (
               <div className="space-y-1 pt-2 border-t">
-                {safeOptionData.transactionFeeRate && safeOptionData.transactionFeeRate > 0 && (
+                {option.transactionFeeRate && option.transactionFeeRate > 0 && (
                   <div className="text-xs text-muted-foreground flex justify-between">
                     <span>Fee Rate:</span>
-                    <span>${safeOptionData.transactionFeeRate.toFixed(2)} per $100</span>
+                    <span>${option.transactionFeeRate.toFixed(2)} per $100</span>
                   </div>
                 )}
-                {safeOptionData.monthlyVolume && safeOptionData.monthlyVolume > 0 && (
+                {option.monthlyVolume && option.monthlyVolume > 0 && (
                   <div className="text-xs text-muted-foreground flex justify-between">
                     <span>Monthly Volume:</span>
                     <span>
-                      ${safeOptionData.monthlyVolume.toLocaleString('en-US', { 
+                      ${option.monthlyVolume.toLocaleString('en-US', { 
                         minimumFractionDigits: 2, 
                         maximumFractionDigits: 2 
                       })}
                     </span>
                   </div>
                 )}
-                {expectedMonthlyValue > 0 && (
+                {option.expectedMonthlyValue > 0 && (
                   <div className="text-sm font-medium flex justify-between items-center pt-1">
                     <span>Expected Monthly Revenue:</span>
                     <Badge variant="default">
-                      ${expectedMonthlyValue.toLocaleString('en-US', { 
+                      ${option.expectedMonthlyValue.toLocaleString('en-US', { 
                         minimumFractionDigits: 2, 
                         maximumFractionDigits: 2 
                       })}
                     </Badge>
                   </div>
                 )}
-                {payoffDetails && payoffDetails.isPayoffPossible && (
+                {option.payoffDetails && option.payoffDetails.isPayoffPossible && (
                   <div className="text-xs text-muted-foreground flex justify-between">
                     <span>Time to Payoff:</span>
                     <span>
-                      {payoffDetails.monthsToPayoff < 1 
-                        ? `${Math.round(payoffDetails.monthsToPayoff * 30)} days`
-                        : payoffDetails.monthsToPayoff < 12
-                          ? `${payoffDetails.monthsToPayoff.toFixed(1)} months`
-                          : `${payoffDetails.yearsToPayoff.toFixed(1)} years`
+                      {option.payoffDetails.monthsToPayoff < 1 
+                        ? `${Math.round(option.payoffDetails.monthsToPayoff * 30)} days`
+                        : option.payoffDetails.monthsToPayoff < 12
+                          ? `${option.payoffDetails.monthsToPayoff.toFixed(1)} months`
+                          : `${option.payoffDetails.yearsToPayoff.toFixed(1)} years`
                       }
                     </span>
                   </div>
@@ -551,22 +187,22 @@ export function OptionNode({ id, data, selected }: NodeProps) {
 
         {/* Time to Close Section */}
         <div className="space-y-2">
-          <Label>{duration.config.label}</Label>
+          <Label>{option.duration.config.label}</Label>
           <div className="space-y-1">
             <div className="relative">
               <Input
-                value={duration.value || ''}
-                onChange={(e) => duration.handleDurationChange(e.target.value)}
-                onKeyDown={duration.handleDurationKeyDown}
+                value={option.duration.value || ''}
+                onChange={(e) => option.duration.handleDurationChange(e.target.value)}
+                onKeyDown={option.duration.handleDurationKeyDown}
                 className="bg-transparent pr-24"
                 placeholder="e.g. 12 or 2w"
               />
               <div className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
-                {duration.displayValue}
+                {option.duration.displayValue}
               </div>
             </div>
             <p className="text-xs text-muted-foreground">
-              {duration.config.tip} Max {duration.formatDuration(duration.config.maxDays)}
+              {option.duration.config.tip} Max {option.duration.formatDuration(option.duration.config.maxDays)}
             </p>
           </div>
         </div>
@@ -575,28 +211,28 @@ export function OptionNode({ id, data, selected }: NodeProps) {
         <div className="space-y-2">
           <Label>Team Allocations</Label>
           
-          {connectedTeams.length === 0 ? (
+          {option.connectedTeams.length === 0 ? (
             <div className="text-sm text-muted-foreground">
               Connect to teams to allocate resources
             </div>
           ) : (
             <div className="space-y-4">
-              {connectedTeams.map(team => (
+              {option.connectedTeams.map(team => (
                 <div key={team.teamId} className="space-y-2">
                   <div className="flex items-center justify-between">
-                    <span className="font-medium">{team.title}</span>
+                    <span className="font-medium">{team.name}</span>
                   </div>
 
                   {/* Member Allocation Controls */}
                   <div className="space-y-4">
                     {team.availableBandwidth.map(member => {
-                      const allocation = processedTeamAllocations
+                      const allocation = option.processedTeamAllocations
                         .find(a => a.teamId === team.teamId)
                         ?.allocatedMembers
                         .find((m: { memberId: string }) => m.memberId === member.memberId);
                       
                       const percentage = allocation 
-                        ? (allocation.hours / 8 / (safeOptionData.duration || 1)) * 100 
+                        ? (allocation.hours / 8 / ((data as RFOptionNodeData).duration || 1)) * 100 
                         : 0;
 
                       return (
@@ -609,7 +245,10 @@ export function OptionNode({ id, data, selected }: NodeProps) {
                           </div>
                           <Slider
                             value={[percentage]}
-                            onValueChange={([value]) => handleTeamMemberAllocation(team.teamId, member.memberId, value)}
+                            onValueChange={([value]) => {
+                              const hoursRequested = (value / 100) * 8 * ((data as RFOptionNodeData).duration || 1);
+                              option.handleTeamMemberAllocation(team.teamId, member.memberId, hoursRequested);
+                            }}
                             max={100}
                             step={1}
                           />
@@ -624,13 +263,13 @@ export function OptionNode({ id, data, selected }: NodeProps) {
         </div>
 
         {/* Cost Summary */}
-        {costs && costs.allocations.length > 0 && (
-          <CostSummary costs={costs} duration={safeOptionData.duration} />
+        {option.costs && option.costs.allocations.length > 0 && (
+          <option.CostSummary costs={option.costs} duration={(data as RFOptionNodeData).duration} />
         )}
 
         <Textarea
-          value={safeOptionData.description || ''}
-          onChange={handleDescriptionChange}
+          value={option.description}
+          onChange={(e) => option.handleDescriptionChange(e.target.value)}
           placeholder="Describe this option..."
           className="min-h-[80px] resize-y bg-transparent"
         />
@@ -642,18 +281,18 @@ export function OptionNode({ id, data, selected }: NodeProps) {
             <Button 
               variant="ghost" 
               size="sm" 
-              onClick={addGoal}
+              onClick={option.addGoal}
               className="h-6 px-2"
             >
               <Plus className="h-4 w-4" />
             </Button>
           </div>
           <div className="space-y-2">
-            {goals.map(goal => (
+            {option.processedGoals.map(goal => (
               <div key={goal.id} className="flex gap-2 items-start">
                 <Textarea
                   value={goal.description}
-                  onChange={(e) => updateGoal(goal.id, { description: e.target.value })}
+                  onChange={(e) => option.updateGoal(goal.id, { description: e.target.value })}
                   placeholder="Describe the goal..."
                   className="flex-1 min-h-[60px] text-sm"
                 />
@@ -661,7 +300,7 @@ export function OptionNode({ id, data, selected }: NodeProps) {
                   <Badge 
                     variant={goal.impact === 'high' ? 'default' : 'secondary'}
                     className="cursor-pointer"
-                    onClick={() => updateGoal(goal.id, { 
+                    onClick={() => option.updateGoal(goal.id, { 
                       impact: goal.impact === 'high' ? 'medium' : 'high' 
                     })}
                   >
@@ -670,7 +309,7 @@ export function OptionNode({ id, data, selected }: NodeProps) {
                   <Button
                     variant="ghost"
                     size="sm"
-                    onClick={() => removeGoal(goal.id)}
+                    onClick={() => option.removeGoal(goal.id)}
                     className="h-6 px-2"
                   >
                     <Trash className="h-4 w-4" />
@@ -688,19 +327,19 @@ export function OptionNode({ id, data, selected }: NodeProps) {
             <Button 
               variant="ghost" 
               size="sm" 
-              onClick={addRisk}
+              onClick={option.addRisk}
               className="h-6 px-2"
             >
               <Plus className="h-4 w-4" />
             </Button>
           </div>
           <div className="space-y-3">
-            {risks.map(risk => (
+            {option.processedRisks.map(risk => (
               <div key={risk.id} className="space-y-2">
                 <div className="flex gap-2 items-start">
                   <Textarea
                     value={risk.description}
-                    onChange={(e) => updateRisk(risk.id, { description: e.target.value })}
+                    onChange={(e) => option.updateRisk(risk.id, { description: e.target.value })}
                     placeholder="Describe the risk..."
                     className="flex-1 min-h-[60px] text-sm"
                   />
@@ -708,7 +347,7 @@ export function OptionNode({ id, data, selected }: NodeProps) {
                     <Badge 
                       variant={risk.severity === 'high' ? 'destructive' : 'secondary'}
                       className="cursor-pointer"
-                      onClick={() => updateRisk(risk.id, { 
+                      onClick={() => option.updateRisk(risk.id, { 
                         severity: risk.severity === 'high' ? 'medium' : 'high' 
                       })}
                     >
@@ -717,7 +356,7 @@ export function OptionNode({ id, data, selected }: NodeProps) {
                     <Button
                       variant="ghost"
                       size="sm"
-                      onClick={() => removeRisk(risk.id)}
+                      onClick={() => option.removeRisk(risk.id)}
                       className="h-6 px-2"
                     >
                       <Trash className="h-4 w-4" />
@@ -726,7 +365,7 @@ export function OptionNode({ id, data, selected }: NodeProps) {
                 </div>
                 <Textarea
                   value={risk.mitigation}
-                  onChange={(e) => updateRisk(risk.id, { mitigation: e.target.value })}
+                  onChange={(e) => option.updateRisk(risk.id, { mitigation: e.target.value })}
                   placeholder="How will this risk be mitigated?"
                   className="w-full text-sm text-muted-foreground"
                 />
@@ -748,4 +387,7 @@ export function OptionNode({ id, data, selected }: NodeProps) {
       />
     </BaseNode>
   );
-}
+});
+
+// Export the memoized component
+export { OptionNode };

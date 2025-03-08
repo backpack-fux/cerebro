@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { teamMemberService } from '@/services/graph/neo4j/neo4j.provider';
-import { RFTeamMemberNode, CreateTeamMemberNodeParams } from '@/services/graph/team-member/team-member.types';
+import { CreateTeamMemberNodeParams } from '@/services/graph/team-member/team-member.types';
 
 // POST /api/graph/team-member - Create a new team member node
 export async function POST(req: NextRequest) {

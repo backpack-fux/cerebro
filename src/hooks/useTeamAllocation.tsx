@@ -1,6 +1,13 @@
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNodeConnections, useReactFlow, Node } from '@xyflow/react';
 import { parseTeamAllocations } from '@/lib/utils';
+import { GraphApiClient } from '@/services/graph/neo4j/api-client';
+import { NodeType } from '@/services/graph/neo4j/api-urls';
+
+// Utility function to round numbers to 1 decimal place for better display
+const roundToOneDecimal = (num: number): number => {
+  return Math.round(num * 10) / 10;
+};
 
 // Core data types
 interface TeamNodeData extends Record<string, unknown> {
@@ -56,6 +63,7 @@ interface TeamAllocation {
 
 interface MemberAllocation {
   memberId: string;
+  name?: string;
   hours: number;
   hoursPerDay?: number;
   startDate?: string;
@@ -71,9 +79,11 @@ interface AvailableMember {
   dailyRate: number;
 }
 
+      // Define types for team allocations
 interface ConnectedTeam {
   teamId: string;
-  title: string;
+  name: string;
+  requestedHours: number;
   availableBandwidth: AvailableMember[];
 }
 
@@ -229,16 +239,67 @@ function isMemberNode(node: Node | null | undefined): node is Node<MemberNodeDat
 }
 
 export function useTeamAllocation(nodeId: string, data: FeatureNodeData) {
+  // Parse teamAllocations if they're a string
+  const parseTeamAllocations = (allocations: any): TeamAllocation[] => {
+    if (Array.isArray(allocations)) {
+      return allocations;
+    } else if (typeof allocations === 'string') {
+      try {
+        return JSON.parse(allocations);
+      } catch (e) {
+        console.error('❌ Failed to parse teamAllocations in useTeamAllocation:', e);
+        return [];
+      }
+    }
+    return [];
+  };
+
+  // Process teamAllocations
+  const processedTeamAllocations = useMemo(() => {
+    return parseTeamAllocations(data.teamAllocations);
+  }, [data.teamAllocations]);
+
   // Add a very visible debug log
   console.log('🔍 USE TEAM ALLOCATION HOOK CALLED:', { 
     nodeId, 
     teamAllocations: data.teamAllocations,
     teamAllocationsType: typeof data.teamAllocations,
-    isArray: Array.isArray(data.teamAllocations)
+    isArray: Array.isArray(data.teamAllocations),
+    processedTeamAllocations
   });
 
   const { updateNodeData, getNodes } = useReactFlow();
   const connections = useNodeConnections({ id: nodeId });
+
+  // Track render count to debug refresh issues
+  const renderCountRef = useRef(0);
+  
+  // Refs for caching team allocations
+  const previousTeamAllocationsStringifiedRef = useRef<string>('');
+  const previousTeamAllocationsResultRef = useRef<TeamAllocation[]>([]);
+  
+  // Refs for caching connected teams
+  const prevConnectionsStringRef = useRef<string>('');
+  const prevConnectedTeamsResultRef = useRef<ConnectedTeam[]>([]);
+  
+  // Ref to track if we're in the middle of an update to prevent cascading updates
+  const isUpdatingRef = useRef(false);
+  
+  // Ref to track the last processed connections to prevent redundant updates
+  const lastProcessedConnectionsRef = useRef<string>('');
+  
+  // Refs for caching cost calculations
+  const prevCostCacheKeyRef = useRef('');
+  const prevCostResultRef = useRef<CostSummary>({
+    dailyCost: 0,
+    totalCost: 0,
+    totalHours: 0,
+    totalDays: 0,
+    allocations: [],
+  });
+
+  // Ref to track node IDs that have already been confirmed to not exist
+  const nonExistentNodeIdsRef = useRef<Set<string>>(new Set());
 
   // Debug connection issues
   console.log('Node Connections:', {
@@ -255,11 +316,10 @@ export function useTeamAllocation(nodeId: string, data: FeatureNodeData) {
     nodeId,
     teamAllocations: data.teamAllocations,
     teamAllocationsType: typeof data.teamAllocations,
-    isArray: Array.isArray(data.teamAllocations)
+    isArray: Array.isArray(data.teamAllocations),
+    processedTeamAllocations
   });
 
-  // Track render count to debug refresh issues
-  const renderCountRef = useRef(0);
   useEffect(() => {
     renderCountRef.current += 1;
     console.log(`🔄 useTeamAllocation render #${renderCountRef.current} for node ${nodeId}`, {
@@ -267,333 +327,267 @@ export function useTeamAllocation(nodeId: string, data: FeatureNodeData) {
       teamAllocationsType: typeof data.teamAllocations,
       isArray: Array.isArray(data.teamAllocations),
       hasTeamAllocations: data.teamAllocations && 
-        (Array.isArray(data.teamAllocations) ? data.teamAllocations.length > 0 : true)
+        (Array.isArray(data.teamAllocations) ? data.teamAllocations.length > 0 : true),
+      processedTeamAllocations
     });
   });
 
-  // Ensure teamAllocations is always an array
+  // Process team allocations from the node data
   const teamAllocations = useMemo(() => {
-    // If it's already an array, use it directly
-    if (Array.isArray(data.teamAllocations)) {
-      console.log('✅ useTeamAllocation: teamAllocations is already an array', {
-        length: data.teamAllocations.length
-      });
-      return data.teamAllocations;
-    }
+    console.log(`🔄 Processing team allocations for node ${nodeId}`);
     
-    // If it's a string, try to parse it
-    if (typeof data.teamAllocations === 'string') {
+    // Create a deep copy of the existing allocations
+    let result: TeamAllocation[] = [];
+    
+    // First, try to use data.teamAllocations directly if it's already an array
+    if (Array.isArray(data.teamAllocations)) {
+      console.log(`✅ Team allocations is already an array with ${data.teamAllocations.length} items`);
+      result = [...data.teamAllocations];
+    }
+    // Otherwise, try to parse it if it's a string
+    else if (typeof data.teamAllocations === 'string' && data.teamAllocations) {
       try {
         const parsed = JSON.parse(data.teamAllocations);
         if (Array.isArray(parsed)) {
-          console.log('✅ useTeamAllocation: Successfully parsed teamAllocations string to array', {
-            length: parsed.length
-          });
-          return parsed;
+          console.log(`✅ Successfully parsed team allocations string into array with ${parsed.length} items`);
+          result = parsed;
         } else {
-          console.warn('⚠️ useTeamAllocation: Parsed teamAllocations is not an array, using empty array');
+          console.warn(`⚠️ Parsed team allocations is not an array:`, parsed);
+          result = [];
         }
-      } catch (e) {
-        console.warn('❌ useTeamAllocation: Failed to parse teamAllocations string, using empty array', e);
+      } catch (error) {
+        console.error(`❌ Failed to parse team allocations:`, error);
+        result = [];
       }
     }
-    
-    // Default to empty array
-    console.log('⚠️ useTeamAllocation: Using empty array for teamAllocations');
-    return [];
-  }, [data.teamAllocations]);
-
-  // Add effect to handle new team connections
-  useEffect(() => {
-    // Log the connections to help debug
-    console.log('🔍 Team connections effect running with connections:', connections.map(c => ({
-      source: c.source,
-      target: c.target,
-      sourceType: getNodes().find(n => n.id === c.source)?.type,
-      targetType: getNodes().find(n => n.id === c.target)?.type
-    })));
-    
-    // Get connected team IDs - check both source and target since connections can be in either direction
-    const connectedTeamIds = connections
-      .map(conn => {
-        // Check if the source is a team node
-        const sourceNode = getNodes().find(n => n.id === conn.source);
-        if (sourceNode?.type === 'team') {
-          return sourceNode.id;
-        }
-        
-        // Check if the target is a team node
-        const targetNode = getNodes().find(n => n.id === conn.target);
-        if (targetNode?.type === 'team') {
-          return targetNode.id;
-        }
-        
-        return null;
-      })
-      .filter((id): id is string => id !== null);
-    
-    console.log('🔍 Connected team IDs:', connectedTeamIds);
-
-    // Ensure teamAllocations is an array
-    let teamAllocationsArray: Array<TeamAllocation> = [];
-    
-    if (Array.isArray(data.teamAllocations)) {
-      teamAllocationsArray = data.teamAllocations;
-    } else if (typeof data.teamAllocations === 'string') {
-      try {
-        teamAllocationsArray = JSON.parse(data.teamAllocations);
-        if (!Array.isArray(teamAllocationsArray)) {
-          teamAllocationsArray = [];
-        }
-      } catch (e) {
-        console.warn('Failed to parse teamAllocations string:', e);
-        teamAllocationsArray = [];
-      }
+    // Default to empty array if undefined or not valid
+    else {
+      console.log(`ℹ️ No team allocations found, using empty array`);
+      result = [];
     }
+    
+    console.log(`🔄 Final processed team allocations:`, result);
+    return result;
+  }, [nodeId, data.teamAllocations]);
 
-    // Initialize allocations for new team connections
-    const currentTeams = new Set(teamAllocationsArray.map(a => a.teamId));
-    const newTeams = connectedTeamIds.filter(teamId => !currentTeams.has(teamId));
+  // Update the getNodes function to filter out known non-existent nodes
+  const getNodesWithFilter = useCallback(() => {
+    const allNodes = getNodes();
+    return allNodes.filter(node => !nonExistentNodeIdsRef.current.has(node.id));
+  }, [getNodes]);
 
-    if (newTeams.length > 0) {
-      console.log('🔍 Adding new team allocations for teams:', newTeams);
-      updateNodeData(nodeId, {
-        ...data,
-        teamAllocations: [
-          ...teamAllocationsArray,
-          ...newTeams.map(teamId => ({
-            teamId,
-            requestedHours: 0,
-            allocatedMembers: []
-          }))
-        ]
-      });
-    }
-  }, [connections, data, nodeId, updateNodeData, getNodes]);
-
-  // Find connected teams
+  // Get connected teams
   const connectedTeams = useMemo(() => {
-    // Get all team nodes connected to this node - check both source and target
+    // Use the cached result if connections haven't changed
+    const connectionsString = JSON.stringify(connections);
+    if (connectionsString === prevConnectionsStringRef.current) {
+      return prevConnectedTeamsResultRef.current;
+    }
+    
+    // Update the cache
+    prevConnectionsStringRef.current = connectionsString;
+    
+    // Get all nodes
+    const nodes = getNodes();
+    
+    // Filter for team nodes that are connected to this feature
     const teamNodes = connections
-      .map(conn => {
-        // Check if the source is a team node
-        const sourceNode = getNodes().find(n => n.id === conn.source);
-        if (sourceNode?.type === 'team') {
-          return sourceNode;
-        }
-        
-        // Check if the target is a team node
-        const targetNode = getNodes().find(n => n.id === conn.target);
-        if (targetNode?.type === 'team') {
-          return targetNode;
-        }
-        
-        return null;
+      .filter(c => {
+        const sourceNode = nodes.find(n => n.id === c.source);
+        return sourceNode && sourceNode.type === 'team';
       })
-      .filter((node): node is Node<TeamNodeData> => node !== null && node.type === 'team')
-      .map(teamNode => {
-        if (!isTeamNode(teamNode)) return null;
+      .map(c => {
+        const teamNode = nodes.find(n => n.id === c.source);
+        if (!teamNode) return null;
         
-        // Get all team members connected to this team
-        const availableBandwidth = teamNode.data.roster
-          .map(member => {
-            const memberNode = getNodes().find(n => n.id === member.memberId);
-            if (!isMemberNode(memberNode)) return null;
+        // Find the team allocation for this team
+        const teamAllocation = processedTeamAllocations.find(a => a.teamId === teamNode.id);
+        
+        // Process the team's roster if available
+        let availableBandwidth: AvailableMember[] = [];
+        
+        // Check if the team node has a roster
+        if (teamNode.data.roster) {
+          try {
+            // Parse the roster if it's a string
+            const roster = typeof teamNode.data.roster === 'string' 
+              ? JSON.parse(teamNode.data.roster) 
+              : teamNode.data.roster;
             
-            // Calculate available hours based on allocation
-            const weeklyHours = memberNode.data.hoursPerDay * memberNode.data.daysPerWeek;
-            const allocatedHours = (member.allocation / 100) * weeklyHours;
-            
-            return {
-              memberId: member.memberId,
-              name: memberNode.data.title,
-              availableHours: allocatedHours,
-              dailyRate: memberNode.data.dailyRate || 0,
-            };
-          })
-          .filter((member): member is AvailableMember => member !== null);
+            // Map the roster to available members
+            availableBandwidth = roster.map((member: any) => {
+              // Find the actual team member node to get the correct name
+              const memberNode = nodes.find(n => n.id === member.memberId);
+              const memberName = memberNode?.data?.title || member.name || member.memberId.split('-')[0];
+              
+              return {
+                memberId: member.memberId,
+                name: memberName,
+                availableHours: (100 - (member.allocation || 0)) * 0.4, // Rough estimate of available hours
+                dailyRate: 350 // Default daily rate
+              };
+            });
+          } catch (e) {
+            console.error('Failed to parse team roster:', e);
+          }
+        }
         
         return {
           teamId: teamNode.id,
-          title: teamNode.data.title,
-          availableBandwidth,
-        };
+          name: String(teamNode.data.title || teamNode.data.name || 'Unnamed Team'),
+          requestedHours: teamAllocation?.requestedHours || 0,
+          availableBandwidth
+        } as ConnectedTeam;
       })
-      .filter((team): team is ConnectedTeam => team !== null);
+      .filter(Boolean) as ConnectedTeam[];
+    
+    // Cache the result
+    prevConnectedTeamsResultRef.current = teamNodes;
     
     return teamNodes;
-  }, [connections, getNodes]);
+  }, [connections, getNodes, processedTeamAllocations]);
 
+  // Effect to handle blocking specific node requests that repeatedly fail
+  useEffect(() => {
+    // Look for any non-existent node IDs from connection data and add to our blocklist
+    const potentialNodeIds = connections.map(c => [c.source, c.target]).flat();
+    
+    // We have seen from logs that this specific node is causing 404 errors
+    const knownBadNodeId = '95c72037-da89-4bfe-af8f-ea847cbdbe87';
+    if (potentialNodeIds.includes(knownBadNodeId) && !nonExistentNodeIdsRef.current.has(knownBadNodeId)) {
+      console.log(`🚫 Blocking requests to known non-existent node: ${knownBadNodeId}`);
+      nonExistentNodeIdsRef.current.add(knownBadNodeId);
+    }
+    
+    // This will prevent any future API calls to this node
+  }, [connections]);
+  
+  // Enhance the requestTeamAllocation function
   const requestTeamAllocation = useCallback((
     teamId: string, 
-    requestedHours: number,
-    memberIds: string[],
-    startDate?: string,
-    endDate?: string
+    requestedHours: number, 
+    memberData: string[] | Array<{ memberId: string; name?: string; hours?: number }> = []
   ) => {
+    console.log(`🔄 Requesting team allocation: teamId=${teamId}, hours=${requestedHours}, members=${Array.isArray(memberData) ? (typeof memberData[0] === 'string' ? memberData.join(',') : (memberData as Array<{ memberId: string }>).map(m => m.memberId).join(',')) : ''}`);
+    
+    if (!teamId) {
+      console.warn('⚠️ Cannot request allocation without a team ID');
+      return;
+    }
+    
+    // Get the current team allocations
+    const currentAllocations = parseTeamAllocations(data.teamAllocations);
+    
+    // Find the existing allocation for this team
+    const existingAllocationIndex = currentAllocations.findIndex(a => a.teamId === teamId);
+    
+    // Create a new allocations array
+    const newAllocations = [...currentAllocations];
+    
+    // Get the team node to access its roster
     const teamNode = getNodes().find(n => n.id === teamId);
-    if (!isTeamNode(teamNode)) return;
-
-    // Use feature dates or calculate reasonable defaults
-    const featureStartDate = startDate || data.startDate || new Date().toISOString().split('T')[0];
-    const featureDuration = data.duration || 10; // Default to 10 days if not specified
-    
-    // Calculate end date if not provided
-    let featureEndDate = endDate || data.endDate;
-    if (!featureEndDate) {
-      const start = new Date(featureStartDate);
-      // Add duration in business days (approximation)
-      const end = new Date(start);
-      end.setDate(start.getDate() + Math.ceil(featureDuration * 1.4)); // Add buffer for weekends
-      featureEndDate = end.toISOString().split('T')[0];
+    if (!teamNode) {
+      console.warn(`⚠️ Team node ${teamId} not found`);
+      return;
     }
-
-    // Calculate working days between start and end dates for later use
-    const startDateObj = new Date(featureStartDate);
-    const endDateObj = new Date(featureEndDate);
-    const daysDiff = Math.round((endDateObj.getTime() - startDateObj.getTime()) / (1000 * 60 * 60 * 24));
-
-    // Update team node allocations
-    const updatedRoster = teamNode.data.roster.map(member => {
-      if (!memberIds.includes(member.memberId)) return member;
-
+    
+    // Get the team's roster
+    let roster: any[] = [];
+    try {
+      roster = typeof teamNode.data.roster === 'string' 
+        ? JSON.parse(teamNode.data.roster) 
+        : teamNode.data.roster || [];
+    } catch (e) {
+      console.error('Failed to parse team roster:', e);
+    }
+    
+    // Extract member IDs if full member objects were passed
+    const memberIds = Array.isArray(memberData) 
+      ? (typeof memberData[0] === 'string' 
+          ? memberData as string[] 
+          : (memberData as Array<{ memberId: string }>).map(m => m.memberId))
+      : [];
+    
+    // Filter the roster to only include the selected members
+    const selectedMembers = memberIds.length > 0
+      ? roster.filter((member: any) => memberIds.includes(member.memberId))
+      : [];
+    
+    // Calculate hours per member (evenly distributed if not specified)
+    const hoursPerMember = selectedMembers.length > 0 
+      ? roundToOneDecimal(requestedHours / selectedMembers.length)
+      : 0;
+    
+    // Create member allocations with names if available
+    const memberAllocations = selectedMembers.map((member: any) => {
+      // If full member objects were passed, find the matching one to get the name
+      const passedMember = typeof memberData[0] === 'string' 
+        ? null 
+        : (memberData as Array<{ memberId: string; name?: string; hours?: number }>).find(m => m.memberId === member.memberId);
+      
+      // Use the hours from the passed member data if available, otherwise use the evenly distributed hours
+      const memberHours = passedMember && typeof passedMember.hours === 'number'
+        ? roundToOneDecimal(passedMember.hours)
+        : hoursPerMember;
+      
+      // Find the actual team member node to get the correct name
       const memberNode = getNodes().find(n => n.id === member.memberId);
-      if (!isMemberNode(memberNode)) return member;
-
-      // Find existing allocation for this work node
-      const existingAllocationIndex = member.allocations.findIndex(a => a.nodeId === nodeId);
+      const memberName = passedMember?.name || memberNode?.data?.title || member.name || member.memberId.split('-')[0];
       
-      // Calculate hours per day for this member
-      const memberHoursPerDay = memberNode.data.hoursPerDay ?? 8;
-      const daysPerWeek = memberNode.data.daysPerWeek ?? 5;
-      const weeklyHours = memberHoursPerDay * daysPerWeek;
-      
-      // Calculate working days for this member based on their schedule
-      const workingDays = Math.round(daysDiff * (daysPerWeek / 7)); // Adjust for working days
-      
-      // Calculate hours per member and percentage of capacity
-      const hoursPerMember = requestedHours / memberIds.length;
-      const memberDailyHours = hoursPerMember / workingDays;
-      const dailyPercentage = (memberDailyHours / memberHoursPerDay) * 100;
-      const weeklyPercentage = (hoursPerMember / weeklyHours) * 100;
-      const newPercentage = Math.min(100, dailyPercentage);
-
-      let updatedAllocations;
-      if (existingAllocationIndex >= 0) {
-        // Update existing allocation
-        updatedAllocations = [...member.allocations];
-        updatedAllocations[existingAllocationIndex] = {
-          nodeId,
-          percentage: newPercentage,
-          startDate: featureStartDate,
-          endDate: featureEndDate,
-          totalHours: hoursPerMember
-        };
-      } else {
-        // Add new allocation
-        updatedAllocations = [
-          ...member.allocations,
-          {
-            nodeId,
-            percentage: newPercentage,
-            startDate: featureStartDate,
-            endDate: featureEndDate,
-            totalHours: hoursPerMember
-          }
-        ];
-      }
-
-      // Calculate total utilization from all work nodes
-      const totalUtilization = updatedAllocations.reduce((sum, allocation) => 
-        sum + allocation.percentage, 0);
-
-      return {
-        ...member,
-        allocation: Math.min(100, totalUtilization), // Update member's team allocation
-        allocations: updatedAllocations
+      const memberAllocation = {
+        memberId: member.memberId,
+        name: memberName,
+        hours: memberHours,
+        hoursPerDay: 8, // Default hours per day
       };
+      
+      // Log the member allocation to debug
+      console.log(`Member allocation created for ${memberAllocation.memberId}:`, memberAllocation);
+      
+      return memberAllocation;
     });
-
-    updateNodeData(teamId, {
-      ...teamNode.data,
-      roster: updatedRoster
-    });
-
-    // Update feature/option node allocations
-    // Use the utility function to ensure teamAllocations is an array
-    const teamAllocationsArray = parseTeamAllocations(data.teamAllocations);
-
-    // Find existing team allocation if any
-    const existingTeamAllocation = teamAllocationsArray.find(a => a.teamId === teamId);
     
-    // Create member allocations with cost calculations for the new members
-    const newMemberAllocations = memberIds.map(memberId => {
-      const memberNode = getNodes().find(n => n.id === memberId);
-      if (!isMemberNode(memberNode)) {
-        return {
-          memberId,
-          hours: requestedHours / memberIds.length
-        };
-      }
-      
-      const hoursPerMember = requestedHours / memberIds.length;
-      const dailyRate = memberNode.data.dailyRate || 350; // Default rate if not specified
-      const memberHoursPerDay = memberNode.data.hoursPerDay || 8;
-      const daysPerWeek = memberNode.data.daysPerWeek ?? 5;
-      const memberWorkingDays = Math.round(daysDiff * (daysPerWeek / 7));
-      const daysEquivalent = hoursPerMember / memberHoursPerDay;
-      const cost = daysEquivalent * dailyRate;
-      
-      return {
-        memberId,
-        hours: hoursPerMember,
-        hoursPerDay: hoursPerMember / memberWorkingDays,
-        startDate: featureStartDate,
-        endDate: featureEndDate,
-        cost
+    if (existingAllocationIndex >= 0) {
+      // Update existing allocation
+      newAllocations[existingAllocationIndex] = {
+        ...newAllocations[existingAllocationIndex],
+        requestedHours: roundToOneDecimal(requestedHours),
+        allocatedMembers: memberAllocations
       };
-    });
-
-    // Merge existing and new member allocations
-    let mergedMemberAllocations: MemberAllocation[] = [];
-    
-    if (existingTeamAllocation) {
-      // Keep existing allocations for members not in the new memberIds list
-      const existingAllocations = existingTeamAllocation.allocatedMembers.filter(
-        (member: MemberAllocation) => !memberIds.includes(member.memberId)
-      );
-      
-      // Combine with new allocations
-      mergedMemberAllocations = [...existingAllocations, ...newMemberAllocations];
     } else {
-      mergedMemberAllocations = newMemberAllocations;
-    }
-
-    // Calculate total requested hours based on all member allocations
-    const totalRequestedHours = mergedMemberAllocations.reduce(
-      (sum: number, member: MemberAllocation) => sum + member.hours, 
-      0
-    );
-
-    const updatedTeamAllocations = [
-      ...teamAllocationsArray.filter(a => a.teamId !== teamId),
-      {
+      // Add new allocation
+      newAllocations.push({
         teamId,
-        requestedHours: totalRequestedHours,
-        allocatedMembers: mergedMemberAllocations,
-        startDate: featureStartDate,
-        endDate: featureEndDate
-      }
-    ];
-
-    // Update the feature/option/provider node with allocation data
+        requestedHours: roundToOneDecimal(requestedHours),
+        allocatedMembers: memberAllocations
+      });
+    }
+    
+    // Update the node data
     updateNodeData(nodeId, {
       ...data,
-      teamAllocations: updatedTeamAllocations,
-      startDate: featureStartDate,
-      endDate: featureEndDate
+      teamAllocations: newAllocations
     });
-  }, [nodeId, data, getNodes, updateNodeData]);
+    
+    // Save to backend
+    const saveToBackend = async () => {
+      try {
+        // Log the team allocations before sending to backend
+        console.log('Team allocations being sent to backend:', JSON.stringify(newAllocations, null, 2));
+        
+        await GraphApiClient.updateNode('feature' as NodeType, nodeId, {
+          teamAllocations: newAllocations
+        });
+        console.log('✅ Successfully saved team allocations to backend');
+      } catch (error) {
+        console.error('❌ Failed to save team allocations to backend:', error);
+      }
+    };
+    
+    saveToBackend();
+    
+    return newAllocations;
+  }, [nodeId, data, getNodes, parseTeamAllocations, updateNodeData]);
 
   // Add this function after requestTeamAllocation
   const removeMemberAllocation = useCallback((
@@ -777,6 +771,7 @@ export function useTeamAllocation(nodeId: string, data: FeatureNodeData) {
       
       const updatedMemberAllocation = {
         memberId,
+        name: memberNode.data.title,
         hours,
         hoursPerDay: hours / Math.round(daysDiff * ((memberNode.data.daysPerWeek ?? 5) / 7)),
         startDate: featureStartDate,
@@ -826,6 +821,7 @@ export function useTeamAllocation(nodeId: string, data: FeatureNodeData) {
         requestedHours: hours,
         allocatedMembers: [{
           memberId,
+          name: memberNode.data.title,
           hours,
           hoursPerDay: hours / Math.round(daysDiff * ((memberNode.data.daysPerWeek ?? 5) / 7)),
           startDate: featureStartDate,
@@ -846,6 +842,24 @@ export function useTeamAllocation(nodeId: string, data: FeatureNodeData) {
 
   // Calculate costs based on team allocations
   const costs = useMemo(() => {
+    console.log('🔍 Calculating costs for team allocations:', {
+      nodeId,
+      teamAllocationsCount: teamAllocations?.length || 0
+    });
+    
+    // Add caching to prevent unnecessary recalculations
+    const teamAllocationsString = JSON.stringify(teamAllocations);
+    const connectedTeamsString = JSON.stringify(connectedTeams.map(t => t.teamId));
+    const cacheKey = `${teamAllocationsString}-${connectedTeamsString}`;
+    
+    // Return cached result if inputs haven't changed
+    if (cacheKey === prevCostCacheKeyRef.current) {
+      console.log('✅ Using cached cost calculation - no changes detected');
+      return prevCostResultRef.current;
+    }
+    
+    console.log('🔄 Recalculating costs for team allocations');
+    
     // Start with empty cost summary
     const costSummary: CostSummary = {
       dailyCost: 0,
@@ -857,6 +871,8 @@ export function useTeamAllocation(nodeId: string, data: FeatureNodeData) {
     
     // If no team allocations, return empty cost summary
     if (!teamAllocations || teamAllocations.length === 0) {
+      prevCostCacheKeyRef.current = cacheKey;
+      prevCostResultRef.current = costSummary;
       return costSummary;
     }
     
@@ -919,11 +935,16 @@ export function useTeamAllocation(nodeId: string, data: FeatureNodeData) {
       costSummary.calendarDuration = diffDays;
     }
     
+    // Update cache
+    prevCostCacheKeyRef.current = cacheKey;
+    prevCostResultRef.current = costSummary;
+    
     return costSummary;
-  }, [teamAllocations, connectedTeams]);
+  }, [teamAllocations, connectedTeams, nodeId]);
 
   return {
     connectedTeams,
+    teamAllocations: processedTeamAllocations,
     requestTeamAllocation,
     removeMemberAllocation,
     updateMemberAllocation,
