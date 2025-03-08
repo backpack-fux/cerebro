@@ -7,14 +7,16 @@ import { GraphApiClient } from '@/services/graph/neo4j/api-client';
 import { NodeType } from '@/services/graph/neo4j/api-urls';
 import { 
   RFFeatureNodeData, 
-  TeamAllocation,
   BuildType
 } from '@/services/graph/feature/feature.types';
 import { useTeamAllocation } from "@/hooks/useTeamAllocation";
 import { useNodeStatus } from "@/hooks/useNodeStatus";
 import { useDurationInput } from "@/hooks/useDurationInput";
 import { useResourceAllocation } from "@/hooks/useResourceAllocation";
-import { prepareDataForBackend, parseDataFromBackend } from "@/lib/utils";
+import { prepareDataForBackend, parseDataFromBackend, parseJsonIfString } from "@/lib/utils";
+import { isFeatureNode } from "@/utils/type-guards";
+import { TeamAllocation } from "@/utils/allocation-utils";
+import { getEndDateFromDuration } from "@/utils/date-utils";
 
 /**
  * Hook for managing feature node state and operations
@@ -89,24 +91,6 @@ export function useFeatureNode(id: string, data: RFFeatureNodeData) {
     initialFetchCompletedRef.current = false;
   }, [id]);
   
-  // Process team allocations helper function
-  const processTeamAllocations = (allocationsData: any): TeamAllocation[] => {
-    let processedAllocations: TeamAllocation[] = [];
-    
-    if (Array.isArray(allocationsData)) {
-      processedAllocations = allocationsData;
-    } else if (typeof allocationsData === 'string') {
-      try {
-        processedAllocations = JSON.parse(allocationsData);
-      } catch (e) {
-        console.error('Failed to parse teamAllocations:', e);
-        processedAllocations = [];
-      }
-    }
-    
-    return processedAllocations;
-  };
-  
   // Function to refresh data from the server
   const refreshData = useCallback(async () => {
     if (GraphApiClient.isNodeBlacklisted(id)) return;
@@ -116,8 +100,14 @@ export function useFeatureNode(id: string, data: RFFeatureNodeData) {
       
       const serverData = await GraphApiClient.getNode('feature' as NodeType, id);
       
-      // Process team allocations
-      const processedTeamAllocations = processTeamAllocations(serverData.data.teamAllocations);
+      // Verify that we're working with a feature node in case the API returns a different type
+      const nodeFromGraph = getNodes().find(n => n.id === id);
+      if (nodeFromGraph && !isFeatureNode(nodeFromGraph)) {
+        console.warn(`Node ${id} exists but is not a feature node. Type: ${nodeFromGraph.type}`);
+      }
+      
+      // Process team allocations using parseJsonIfString utility
+      const processedTeamAllocations = parseJsonIfString<TeamAllocation[]>(serverData.data.teamAllocations, []);
       
       // Ensure buildType is valid
       const validBuildType = ensureValidBuildType(serverData.data.buildType);
@@ -145,7 +135,7 @@ export function useFeatureNode(id: string, data: RFFeatureNodeData) {
     } finally {
       setIsLoading(false);
     }
-  }, [id, parsedData, updateNodeData, ensureValidBuildType]);
+  }, [id, parsedData, updateNodeData, ensureValidBuildType, getNodes]);
   
   // Use effect to initialize data from server
   useEffect(() => {
@@ -163,8 +153,8 @@ export function useFeatureNode(id: string, data: RFFeatureNodeData) {
         try {
           const serverData = await GraphApiClient.getNode('feature' as NodeType, id);
           
-          // Process team allocations
-          const processedTeamAllocations = processTeamAllocations(serverData.data.teamAllocations);
+          // Process team allocations using parseJsonIfString utility
+          const processedTeamAllocations = parseJsonIfString<TeamAllocation[]>(serverData.data.teamAllocations, []);
           
           // Ensure buildType is valid
           const validBuildType = ensureValidBuildType(serverData.data.buildType);
@@ -203,7 +193,7 @@ export function useFeatureNode(id: string, data: RFFeatureNodeData) {
     };
     
     fetchData();
-  }, [id, parsedData, updateNodeData]);
+  }, [id, parsedData, updateNodeData, isLoading]);
   
   // Update local state when data changes from the props
   useEffect(() => {
@@ -223,7 +213,7 @@ export function useFeatureNode(id: string, data: RFFeatureNodeData) {
         setBuildType(validBuildType);
       }
     }
-  }, [parsedData.title, parsedData.description, parsedData.buildType, isLoading, initialFetchCompletedRef]);
+  }, [parsedData.title, parsedData.description, parsedData.buildType, isLoading, title, description, buildType]);
   
   // Save team allocations to backend
   const saveTeamAllocationsToBackend = useCallback(async (allocations: TeamAllocation[]) => {

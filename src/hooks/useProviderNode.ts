@@ -8,22 +8,24 @@ import { NodeType } from '@/services/graph/neo4j/api-urls';
 import { 
   RFProviderNodeData, 
   ProviderCost, 
-  DDItem, 
-  TeamAllocation
+  DDItem
 } from '@/services/graph/provider/provider.types';
 import { useTeamAllocation } from "@/hooks/useTeamAllocation";
 import { useNodeStatus } from "@/hooks/useNodeStatus";
 import { useDurationInput } from "@/hooks/useDurationInput";
 import { useResourceAllocation } from "@/hooks/useResourceAllocation";
 import { v4 as uuidv4 } from 'uuid';
-import { prepareDataForBackend, parseDataFromBackend } from "@/lib/utils";
+import { prepareDataForBackend, parseDataFromBackend, parseJsonIfString } from "@/lib/utils";
+import { isProviderNode } from "@/utils/type-guards";
+import { TeamAllocation } from "@/utils/allocation-utils";
+import { calculateCalendarDuration } from "@/utils/date-utils";
 
 /**
  * Hook for managing provider node state and operations
- * Separates domain logic from React Flow component state
+ * Handles provider-specific functionality like costs and due diligence items
  */
 export function useProviderNode(id: string, data: RFProviderNodeData) {
-  const { updateNodeData, setNodes, setEdges, getNodes } = useReactFlow();
+  const { getNodes, setNodes, getEdges, setEdges, updateNodeData } = useReactFlow();
   
   // Define JSON fields that need special handling
   const jsonFields = ['costs', 'ddItems', 'teamAllocations', 'memberAllocations'];
@@ -33,34 +35,50 @@ export function useProviderNode(id: string, data: RFProviderNodeData) {
     return parseDataFromBackend(data, jsonFields) as RFProviderNodeData;
   }, [data, jsonFields]);
   
-  // State for loading indicator
-  const [isLoading, setIsLoading] = useState(false);
-  
-  // Refs for debounce timers
-  const costsDebounceRef = useRef<NodeJS.Timeout | null>(null);
-  const ddItemsDebounceRef = useRef<NodeJS.Timeout | null>(null);
-  
-  // Process costs to ensure they're in the correct format
-  const processedCosts = useMemo(() => {
-    if (!parsedData.costs) return [];
-    
-    if (Array.isArray(parsedData.costs)) {
-      return parsedData.costs;
+  // Validate that the node is a provider node
+  useEffect(() => {
+    const nodeFromGraph = getNodes().find(n => n.id === id);
+    if (nodeFromGraph && !isProviderNode(nodeFromGraph)) {
+      console.warn(`Node ${id} exists but is not a provider node. Found type: ${nodeFromGraph.type}`);
     }
-    
-    return [];
-  }, [parsedData.costs]);
+  }, [id, getNodes]);
   
-  // Process DD items to ensure they're in the correct format
-  const processedDDItems = useMemo(() => {
-    if (!parsedData.ddItems) return [];
-    
-    if (Array.isArray(parsedData.ddItems)) {
-      return parsedData.ddItems;
+  // State for provider data
+  const [title, setTitle] = useState(parsedData.title || '');
+  const [description, setDescription] = useState(parsedData.description || '');
+  const [costs, setCosts] = useState<ProviderCost[]>(
+    Array.isArray(parsedData.costs) ? parsedData.costs : []
+  );
+  const [ddItems, setDDItems] = useState<DDItem[]>(
+    Array.isArray(parsedData.ddItems) ? parsedData.ddItems : []
+  );
+  
+  // State for editing costs
+  const [isEditingCost, setIsEditingCost] = useState(false);
+  const [currentCost, setCurrentCost] = useState<ProviderCost | null>(null);
+  
+  // State for editing due diligence items
+  const [isEditingDDItem, setIsEditingDDItem] = useState(false);
+  const [currentDDItem, setCurrentDDItem] = useState<DDItem | null>(null);
+  
+  // Refs for debouncing
+  const titleDebounceRef = useRef<NodeJS.Timeout | null>(null);
+  const descriptionDebounceRef = useRef<NodeJS.Timeout | null>(null);
+  
+  // Save to backend function
+  const saveToBackend = useCallback(async (updates: Partial<RFProviderNodeData>) => {
+    try {
+      // Prepare data for backend by stringifying JSON fields
+      const apiData = prepareDataForBackend(updates, jsonFields);
+      
+      // Send to backend
+      await GraphApiClient.updateNode('provider' as NodeType, id, apiData);
+      console.log(`Updated provider node ${id}:`, updates);
+    } catch (error) {
+      console.error(`Failed to update provider node ${id}:`, error);
+      toast.error(`Update Failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
-    
-    return [];
-  }, [parsedData.ddItems]);
+  }, [id, jsonFields]);
   
   // Save team allocations to backend
   const saveTeamAllocationsToBackend = useCallback(async (allocations: TeamAllocation[]) => {
@@ -73,7 +91,7 @@ export function useProviderNode(id: string, data: RFProviderNodeData) {
     }
   }, [id]);
   
-  // Use the team allocation hook for team-related operations
+  // Use the team allocation hook to manage team allocations
   const teamAllocationHook = useTeamAllocation(id, parsedData);
   
   // Add the saveTeamAllocationsToBackend function to the teamAllocationHook
@@ -86,25 +104,30 @@ export function useProviderNode(id: string, data: RFProviderNodeData) {
   const connectedTeams = teamAllocationHook.connectedTeams;
   
   // Get costs from the team allocation hook
-  const costsFromHook = teamAllocationHook.costs;
+  const costSummary = teamAllocationHook.costs;
   
   // Use the resource allocation hook to manage resource allocations
   const resourceAllocation = useResourceAllocation(parsedData, teamAllocationHook, getNodes);
-
-  // Use the node status hook for status-related operations
-  const { status, getStatusColor, cycleStatus } = useNodeStatus(id, parsedData, updateNodeData, {
-    canBeActive: true,
-    defaultStatus: 'planning'
-  });
+  
+  // Use the node status hook to manage status
+  const { status, getStatusColor, cycleStatus } = useNodeStatus(
+    id, 
+    parsedData, 
+    updateNodeData, 
+    {
+      canBeActive: true,
+      defaultStatus: 'planning'
+    }
+  );
   
   // Use the duration input hook for duration-related operations
   const duration = useDurationInput(id, parsedData, updateNodeData, {
-    maxDays: 90,
-    label: "Integration Time",
+    maxDays: 365,
+    label: "Contract Duration",
     fieldName: "duration",
-    tip: 'Use "w" for weeks (e.g. "2w" = 2 weeks) or ↑↓ keys. Hold Shift for week increments.'
+    tip: "Duration in days of the provider contract"
   });
-
+  
   // Save duration to backend when it changes
   useEffect(() => {
     if (parsedData.duration !== undefined) {
@@ -123,95 +146,45 @@ export function useProviderNode(id: string, data: RFProviderNodeData) {
     }
   }, [id, parsedData.duration]);
   
-  // Save to backend function
-  const saveToBackend = useCallback(async (updates: Partial<RFProviderNodeData>) => {
-    try {
-      // Prepare data for backend by stringifying JSON fields
-      const apiData = prepareDataForBackend(updates, jsonFields);
-      
-      // Send to backend
-      await GraphApiClient.updateNode('provider' as NodeType, id, apiData);
-      
-      // Update React Flow state with the original object data (not stringified)
-      updateNodeData(id, updates);
-    } catch (error) {
-      console.error(`Failed to update provider node:`, error);
-      toast.error(`Update Failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    }
-  }, [id, updateNodeData, jsonFields]);
-
-  // Save costs to backend with debouncing
-  const saveCostsToBackend = useCallback(async (costs: ProviderCost[]) => {
-    if (costsDebounceRef.current) {
-      clearTimeout(costsDebounceRef.current);
-    }
-    
-    costsDebounceRef.current = setTimeout(async () => {
-      try {
-        await GraphApiClient.updateNode('provider' as NodeType, id, { costs });
-      } catch (error) {
-        console.error(`Failed to update provider costs:`, error);
-        toast.error("Your cost changes couldn't be saved to the database.");
-      }
-      costsDebounceRef.current = null;
-    }, 1000);
-  }, [id]);
-
-  // Save ddItems to backend with debouncing
-  const saveDDItemsToBackend = useCallback(async (ddItems: DDItem[]) => {
-    if (ddItemsDebounceRef.current) {
-      clearTimeout(ddItemsDebounceRef.current);
-    }
-    
-    ddItemsDebounceRef.current = setTimeout(async () => {
-      try {
-        await GraphApiClient.updateNode('provider' as NodeType, id, { ddItems });
-      } catch (error) {
-        console.error(`Failed to update provider ddItems:`, error);
-        toast.error("Your due diligence changes couldn't be saved to the database.");
-      }
-      ddItemsDebounceRef.current = null;
-    }, 1000);
-  }, [id]);
-
   // Handle title change
   const handleTitleChange = useCallback((newTitle: string) => {
+    // Update local state first
+    setTitle(newTitle);
+    
+    // Then update ReactFlow state
     updateNodeData(id, { ...parsedData, title: newTitle });
-    saveToBackend({ title: newTitle });
+    
+    // Debounce the save to backend
+    if (titleDebounceRef.current) clearTimeout(titleDebounceRef.current);
+    
+    titleDebounceRef.current = setTimeout(() => {
+      saveToBackend({ title: newTitle });
+      titleDebounceRef.current = null;
+    }, 1000);
   }, [id, parsedData, updateNodeData, saveToBackend]);
-
+  
   // Handle description change
   const handleDescriptionChange = useCallback((newDescription: string) => {
+    // Update local state first
+    setDescription(newDescription);
+    
+    // Then update ReactFlow state 
     updateNodeData(id, { ...parsedData, description: newDescription });
-    saveToBackend({ description: newDescription });
+    
+    // Debounce the save to backend
+    if (descriptionDebounceRef.current) clearTimeout(descriptionDebounceRef.current);
+    
+    descriptionDebounceRef.current = setTimeout(() => {
+      saveToBackend({ description: newDescription });
+      descriptionDebounceRef.current = null;
+    }, 1000);
   }, [id, parsedData, updateNodeData, saveToBackend]);
-
-  // Handle node deletion
-  const handleDelete = useCallback(() => {
-    GraphApiClient.deleteNode('provider' as NodeType, id)
-      .then(() => {
-        setNodes((nodes) => nodes.filter((node) => node.id !== id));
-        
-        setEdges((edges) => {
-          const connectedEdges = edges.filter((edge) => edge.source === id || edge.target === id);
-          connectedEdges.forEach((edge) => {
-            GraphApiClient.deleteEdge('provider' as NodeType, edge.id)
-              .catch((error) => console.error(`Failed to delete edge:`, error));
-          });
-          return edges.filter((edge) => edge.source !== id && edge.target !== id);
-        });
-      })
-      .catch((error) => {
-        console.error(`Failed to delete provider node:`, error);
-        toast.error("The provider couldn't be deleted from the database.");
-      });
-  }, [id, setNodes, setEdges]);
-
-  // Add a new cost
+  
+  // Handle costs
   const addCost = useCallback(() => {
     const newCost: ProviderCost = {
-      id: uuidv4(),
-      name: 'New Cost',
+      id: `cost-${uuidv4()}`,
+      name: '',
       costType: 'fixed',
       details: {
         type: 'fixed',
@@ -220,92 +193,162 @@ export function useProviderNode(id: string, data: RFProviderNodeData) {
       }
     };
     
-    const updatedCosts = [...processedCosts, newCost];
-    updateNodeData(id, { ...parsedData, costs: updatedCosts });
-    saveCostsToBackend(updatedCosts);
-  }, [id, parsedData, processedCosts, updateNodeData, saveCostsToBackend]);
-
-  // Update an existing cost
-  const updateCost = useCallback((costId: string, updates: Partial<ProviderCost>) => {
-    const updatedCosts = processedCosts.map(cost => 
-      cost.id === costId ? { ...cost, ...updates } : cost
-    );
+    setCurrentCost(newCost);
+    setIsEditingCost(true);
+  }, []);
+  
+  const editCost = useCallback((cost: ProviderCost) => {
+    setCurrentCost(cost);
+    setIsEditingCost(true);
+  }, []);
+  
+  const saveCost = useCallback((cost: ProviderCost) => {
+    const updatedCosts = [...costs];
+    const existingIndex = updatedCosts.findIndex(c => c.id === cost.id);
     
+    if (existingIndex >= 0) {
+      updatedCosts[existingIndex] = cost;
+    } else {
+      updatedCosts.push(cost);
+    }
+    
+    setCosts(updatedCosts);
     updateNodeData(id, { ...parsedData, costs: updatedCosts });
-    saveCostsToBackend(updatedCosts);
-  }, [id, parsedData, processedCosts, updateNodeData, saveCostsToBackend]);
-
-  // Remove a cost
-  const removeCost = useCallback((costId: string) => {
-    const updatedCosts = processedCosts.filter(cost => cost.id !== costId);
+    saveToBackend({ costs: updatedCosts });
+    
+    setCurrentCost(null);
+    setIsEditingCost(false);
+  }, [costs, id, parsedData, updateNodeData, saveToBackend]);
+  
+  const deleteCost = useCallback((costId: string) => {
+    const updatedCosts = costs.filter(cost => cost.id !== costId);
+    setCosts(updatedCosts);
     updateNodeData(id, { ...parsedData, costs: updatedCosts });
-    saveCostsToBackend(updatedCosts);
-  }, [id, parsedData, processedCosts, updateNodeData, saveCostsToBackend]);
-
-  // Add a new due diligence item
+    saveToBackend({ costs: updatedCosts });
+  }, [costs, id, parsedData, updateNodeData, saveToBackend]);
+  
+  // Handle due diligence items
   const addDDItem = useCallback(() => {
-    const newItem: DDItem = {
-      id: uuidv4(),
+    const newDDItem: DDItem = {
+      id: `dd-${uuidv4()}`,
       name: '',
-      status: 'pending'
+      status: 'pending',
+      notes: ''
     };
     
-    const updatedItems = [...processedDDItems, newItem];
-    updateNodeData(id, { ...parsedData, ddItems: updatedItems });
-    saveDDItemsToBackend(updatedItems);
-  }, [id, parsedData, processedDDItems, updateNodeData, saveDDItemsToBackend]);
-
-  // Update an existing due diligence item
-  const updateDDItem = useCallback((item: DDItem) => {
-    const updatedItems = processedDDItems.map(i => 
-      i.id === item.id ? { ...i, ...item } : i
-    );
+    setCurrentDDItem(newDDItem);
+    setIsEditingDDItem(true);
+  }, []);
+  
+  const editDDItem = useCallback((ddItem: DDItem) => {
+    setCurrentDDItem(ddItem);
+    setIsEditingDDItem(true);
+  }, []);
+  
+  const saveDDItem = useCallback((ddItem: DDItem) => {
+    const updatedDDItems = [...ddItems];
+    const existingIndex = updatedDDItems.findIndex(item => item.id === ddItem.id);
     
-    updateNodeData(id, { ...parsedData, ddItems: updatedItems });
-    saveDDItemsToBackend(updatedItems);
-  }, [id, parsedData, processedDDItems, updateNodeData, saveDDItemsToBackend]);
-
-  // Remove a due diligence item
-  const removeDDItem = useCallback((itemId: string) => {
-    const updatedItems = processedDDItems.filter(item => item.id !== itemId);
-    updateNodeData(id, { ...parsedData, ddItems: updatedItems });
-    saveDDItemsToBackend(updatedItems);
-  }, [id, parsedData, processedDDItems, updateNodeData, saveDDItemsToBackend]);
-
+    if (existingIndex >= 0) {
+      updatedDDItems[existingIndex] = ddItem;
+    } else {
+      updatedDDItems.push(ddItem);
+    }
+    
+    setDDItems(updatedDDItems);
+    updateNodeData(id, { ...parsedData, ddItems: updatedDDItems });
+    saveToBackend({ ddItems: updatedDDItems });
+    
+    setCurrentDDItem(null);
+    setIsEditingDDItem(false);
+  }, [ddItems, id, parsedData, updateNodeData, saveToBackend]);
+  
+  const deleteDDItem = useCallback((ddItemId: string) => {
+    const updatedDDItems = ddItems.filter(item => item.id !== ddItemId);
+    setDDItems(updatedDDItems);
+    updateNodeData(id, { ...parsedData, ddItems: updatedDDItems });
+    saveToBackend({ ddItems: updatedDDItems });
+  }, [ddItems, id, parsedData, updateNodeData, saveToBackend]);
+  
+  // Handle node deletion
+  const handleDelete = useCallback(() => {
+    GraphApiClient.deleteNode('provider' as NodeType, id)
+      .then(() => {
+        setNodes((nodes) => nodes.filter((node) => node.id !== id));
+        
+        setEdges((edges) => {
+          // Find connected edges
+          const connectedEdges = edges.filter((edge) => edge.source === id || edge.target === id);
+          
+          // Try to delete each edge from backend
+          connectedEdges.forEach((edge) => {
+            GraphApiClient.deleteEdge('provider' as NodeType, edge.id)
+              .catch((error) => console.error(`Failed to delete edge ${edge.id}:`, error));
+          });
+          
+          // Remove edges from React Flow
+          return edges.filter((edge) => edge.source !== id && edge.target !== id);
+        });
+        
+        toast.success("Provider successfully deleted");
+      })
+      .catch((error) => {
+        console.error(`Failed to delete provider node ${id}:`, error);
+        toast.error("Delete Failed: Failed to delete the provider node from the server.");
+      });
+  }, [id, setNodes, setEdges]);
+  
   // Clean up timers on unmount
   useEffect(() => {
     return () => {
-      if (costsDebounceRef.current) clearTimeout(costsDebounceRef.current);
-      if (ddItemsDebounceRef.current) clearTimeout(ddItemsDebounceRef.current);
+      if (titleDebounceRef.current) clearTimeout(titleDebounceRef.current);
+      if (descriptionDebounceRef.current) clearTimeout(descriptionDebounceRef.current);
     };
   }, []);
-
+  
   // Return the hook API
   return useMemo(() => ({
     // State
-    title: parsedData.title || '',
-    description: parsedData.description || '',
+    title,
+    description,
+    costs,
+    ddItems,
+    isEditingCost,
+    currentCost,
+    isEditingDDItem,
+    currentDDItem,
     status,
-    processedCosts,
-    processedDDItems,
     processedTeamAllocations: teamAllocationsFromHook,
     connectedTeams,
-    costs: costsFromHook,
+    costSummary,
+    
+    // For compatibility with provider-node.tsx
+    processedCosts: costs,
+    processedDDItems: ddItems,
     
     // Handlers
     handleTitleChange,
     handleDescriptionChange,
+    addCost,
+    editCost,
+    saveCost,
+    deleteCost,
+    addDDItem,
+    editDDItem,
+    saveDDItem,
+    deleteDDItem,
     handleDelete,
     
-    // Cost handlers
-    addCost,
-    updateCost,
-    removeCost,
-    
-    // Due diligence handlers
-    addDDItem,
-    updateDDItem,
-    removeDDItem,
+    // For compatibility with provider-node.tsx
+    updateCost: (costId: string, updates: Partial<ProviderCost>) => {
+      const cost = costs.find(c => c.id === costId);
+      if (cost) {
+        saveCost({ ...cost, ...updates });
+      }
+    },
+    removeCost: (costId: string) => deleteCost(costId),
+    updateDDItem: saveDDItem,
+    removeDDItem: deleteDDItem,
     
     // Resource allocation handlers
     handleAllocationChangeLocal: resourceAllocation.handleAllocationChangeLocal,
@@ -322,23 +365,29 @@ export function useProviderNode(id: string, data: RFProviderNodeData) {
     // Duration
     duration,
   }), [
-    parsedData.title,
-    parsedData.description,
+    title,
+    description,
+    costs,
+    ddItems,
+    isEditingCost,
+    currentCost,
+    isEditingDDItem,
+    currentDDItem,
     status,
-    processedCosts,
-    processedDDItems,
     teamAllocationsFromHook,
     connectedTeams,
-    costsFromHook,
+    costSummary,
     handleTitleChange,
     handleDescriptionChange,
-    handleDelete,
     addCost,
-    updateCost,
-    removeCost,
+    editCost,
+    saveCost,
+    deleteCost,
     addDDItem,
-    updateDDItem,
-    removeDDItem,
+    editDDItem,
+    saveDDItem,
+    deleteDDItem,
+    handleDelete,
     resourceAllocation.handleAllocationChangeLocal,
     resourceAllocation.handleAllocationCommit,
     resourceAllocation.calculateMemberAllocations,

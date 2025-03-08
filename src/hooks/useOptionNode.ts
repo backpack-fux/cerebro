@@ -7,7 +7,6 @@ import {
   Goal, 
   Risk, 
   OptionType,
-  TeamAllocation,
 } from '@/services/graph/option/option.types';
 import { GraphApiClient } from '@/services/graph/neo4j/api-client';
 import { NodeType } from '@/services/graph/neo4j/api-urls';
@@ -18,8 +17,12 @@ import { useDurationInput } from './useDurationInput';
 import { v4 as uuidv4 } from 'uuid';
 import { 
   prepareDataForBackend,
-  parseDataFromBackend
+  parseDataFromBackend,
+  parseJsonIfString
 } from '@/lib/utils';
+import { isOptionNode } from "@/utils/type-guards";
+import { TeamAllocation } from "@/utils/allocation-utils";
+import { calculateCalendarDuration } from "@/utils/date-utils";
 
 /**
  * Hook for managing option node state and operations
@@ -67,18 +70,7 @@ export function useOptionNode(id: string, data: RFOptionNodeData) {
   
   // Ensure teamAllocations is always an array for UI rendering
   const processedTeamAllocations = useMemo(() => {
-    if (Array.isArray(parsedData.teamAllocations)) {
-      return parsedData.teamAllocations;
-    } else if (typeof parsedData.teamAllocations === 'string') {
-      try {
-        const parsed = JSON.parse(parsedData.teamAllocations);
-        return Array.isArray(parsed) ? parsed : [];
-      } catch (e) {
-        console.warn('Failed to parse teamAllocations string:', e);
-        return [];
-      }
-    }
-    return [];
+    return parseJsonIfString<TeamAllocation[]>(parsedData.teamAllocations, []);
   }, [parsedData.teamAllocations]);
 
   // Create a safe copy of the data for hooks
@@ -422,24 +414,20 @@ export function useOptionNode(id: string, data: RFOptionNodeData) {
         return;
       }
       
+      // Verify that we're working with an option node
+      const nodeFromGraph = getNodes().find(n => n.id === id);
+      if (nodeFromGraph && !isOptionNode(nodeFromGraph)) {
+        console.warn(`Node ${id} exists but is not an option node. Type: ${nodeFromGraph.type}`);
+        return;
+      }
+      
       // Use the GraphApiClient to fetch node data
       const serverData = await GraphApiClient.getNode('option' as NodeType, id);
       
       console.log(`🚀 Server returned refreshed data for ${id}:`, serverData);
       
-      // Process team allocations
-      let processedTeamAllocations: TeamAllocation[] = [];
-      
-      if (Array.isArray(serverData.data.teamAllocations)) {
-        processedTeamAllocations = serverData.data.teamAllocations;
-      } else if (typeof serverData.data.teamAllocations === 'string') {
-        try {
-          processedTeamAllocations = JSON.parse(serverData.data.teamAllocations);
-        } catch (e) {
-          console.error('❌ Failed to parse teamAllocations:', e);
-          processedTeamAllocations = [];
-        }
-      }
+      // Process team allocations using parseJsonIfString utility
+      const processedTeamAllocations = parseJsonIfString<TeamAllocation[]>(serverData.data.teamAllocations, []);
       
       // Update local state with all server data
       setTitle(serverData.data.title || '');
@@ -478,7 +466,7 @@ export function useOptionNode(id: string, data: RFOptionNodeData) {
       console.error(`❌ Error refreshing node data for ${id}:`, error);
       toast.error(`Failed to refresh option ${id}: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
-  }, [id, data, updateNodeData]);
+  }, [id, data, updateNodeData, getNodes]);
 
   // Return the hook API
   return useMemo(() => ({

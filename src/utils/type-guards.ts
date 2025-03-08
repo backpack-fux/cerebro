@@ -38,6 +38,15 @@ export interface OptionNodeData extends Record<string, unknown> {
   endDate?: string;
 }
 
+export interface ProviderNodeData extends Record<string, unknown> {
+  title: string;
+  description?: string;
+  teamAllocations?: Array<any> | string;
+  duration?: number;
+  costs?: Array<any>;
+  ddItems?: Array<any>;
+}
+
 /**
  * Type guard to check if a node is a Team node
  * @param node Node to check
@@ -85,6 +94,17 @@ export function isFeatureNode(node: Node | null | undefined): node is Node<Featu
 export function isOptionNode(node: Node | null | undefined): node is Node<OptionNodeData> {
   if (!node || node.type !== 'option' || !node.data) return false;
   const data = node.data as Partial<OptionNodeData>;
+  return typeof data.title === 'string';
+}
+
+/**
+ * Type guard to check if a node is a Provider node
+ * @param node Node to check
+ * @returns boolean indicating if the node is a Provider node
+ */
+export function isProviderNode(node: Node | null | undefined): node is Node<ProviderNodeData> {
+  if (!node || node.type !== 'provider' || !node.data) return false;
+  const data = node.data as Partial<ProviderNodeData>;
   return typeof data.title === 'string';
 }
 
