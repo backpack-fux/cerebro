@@ -9,10 +9,10 @@ import {
   TIMEZONES,
   DEFAULT_START_DATE,
   EARLIEST_START_DATE,
-  Role
 } from '@/services/graph/team-member/team-member.types';
 import { RFTeamNodeData, RosterMember } from '@/services/graph/team/team.types';
 import { ValidationError } from '@/types/validation';
+import { prepareDataForBackend, parseDataFromBackend } from "@/lib/utils";
 
 /**
  * Type guard for team nodes
@@ -38,6 +38,14 @@ export function useTeamMemberNode(
   const { updateNodeData, setNodes, getNodes, getNode } = useReactFlow();
   const connections = useNodeConnections({ id });
   
+  // Define JSON fields that need special handling
+  const jsonFields = ['skills', 'roles'];
+  
+  // Parse complex objects if they are strings
+  const parsedData = useMemo(() => {
+    return parseDataFromBackend(data, jsonFields) as RFTeamMemberNodeData;
+  }, [data, jsonFields]);
+  
   // Refs for debounce timers
   const titleDebounceRef = useRef<NodeJS.Timeout | null>(null);
   const bioDebounceRef = useRef<NodeJS.Timeout | null>(null);
@@ -48,19 +56,23 @@ export function useTeamMemberNode(
   const rolesDebounceRef = useRef<NodeJS.Timeout | null>(null);
   const timezoneDebounceRef = useRef<NodeJS.Timeout | null>(null);
   const allocationDebounceRef = useRef<NodeJS.Timeout | null>(null);
-
-  // Helper function to save data to backend
-  const saveToBackend = useCallback(async (updatedData: Partial<RFTeamMemberNodeData>) => {
+  
+  // Save to backend function
+  const saveToBackend = useCallback(async (updates: Partial<RFTeamMemberNodeData>) => {
     try {
-      await GraphApiClient.updateNode('teamMember' as NodeType, id, updatedData);
-      console.log(`Updated team member ${id}:`, updatedData);
+      // Prepare data for backend by stringifying JSON fields
+      const apiData = prepareDataForBackend(updates, jsonFields);
+      
+      // Send to backend
+      await GraphApiClient.updateNode('teamMember' as NodeType, id, apiData);
+      
+      // Update React Flow state with the original object data (not stringified)
+      updateNodeData(id, updates);
     } catch (error) {
-      console.error(`Failed to update team member ${id}:`, error);
-      toast.error(`Failed to save changes`, {
-        description: `${error instanceof Error ? error.message : 'Unknown error'}`
-      });
+      console.error(`Failed to update team member node:`, error);
+      toast.error(`Update Failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
-  }, [id]);
+  }, [id, updateNodeData, jsonFields]);
 
   // Initialize with defaults if values are undefined
   useEffect(() => {
@@ -222,10 +234,6 @@ export function useTeamMemberNode(
         const connectedEdges = getNodes().filter((node) => 
           connections.some(conn => conn.source === node.id || conn.target === node.id)
         );
-        
-        if (connectedEdges.length > 0) {
-          console.log('Deleting connected edges for team member:', connectedEdges);
-        }
       })
       .catch((error) => {
         console.error('Failed to delete team member node:', error);
@@ -473,10 +481,7 @@ export function useTeamMemberNode(
     // Constants
     TIMEZONES,
     DEFAULT_START_DATE,
-    EARLIEST_START_DATE,
-    
-    // Utilities
-    isTeamNode
+    EARLIEST_START_DATE
   }), [
     data.title,
     data.bio,

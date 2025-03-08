@@ -9,6 +9,7 @@ import {
   RosterMember 
 } from '@/services/graph/team/team.types';
 import { RFTeamMemberNodeData } from "@/services/graph/team-member/team-member.types";
+import { prepareDataForBackend, parseDataFromBackend } from "@/lib/utils";
 
 /**
  * Type guard for team member nodes
@@ -31,9 +32,17 @@ export function useTeamNode(id: string, data: RFTeamNodeData) {
   const connections = useNodeConnections({ id });
   const edges = useEdges();
   
+  // Define JSON fields that need special handling
+  const jsonFields = ['roster', 'seasons'];
+  
+  // Parse complex objects if they are strings
+  const parsedData = useMemo(() => {
+    return parseDataFromBackend(data, jsonFields) as RFTeamNodeData;
+  }, [data, jsonFields]);
+  
   // Local state for title and description to avoid excessive API calls
-  const [title, setTitle] = useState(data.title);
-  const [description, setDescription] = useState(data.description || '');
+  const [title, setTitle] = useState(parsedData.title);
+  const [description, setDescription] = useState(parsedData.description || '');
   
   // Refs for debounce timers
   const titleDebounceRef = useRef<NodeJS.Timeout | null>(null);
@@ -43,30 +52,41 @@ export function useTeamNode(id: string, data: RFTeamNodeData) {
   
   // Process roster to ensure it's always an array
   const processedRoster = useMemo(() => {
-    if (Array.isArray(data.roster)) {
-      return data.roster;
-    } else if (typeof data.roster === 'string') {
-      try {
-        const parsed = JSON.parse(data.roster);
-        if (Array.isArray(parsed)) {
-          return parsed;
-        }
-      } catch (e) {
-        console.warn('Failed to parse roster string:', e);
-      }
+    if (!parsedData.roster) return [];
+    
+    if (Array.isArray(parsedData.roster)) {
+      return parsedData.roster;
     }
+    
     return [];
-  }, [data.roster]);
+  }, [parsedData.roster]);
+  
+  // Save to backend function
+  const saveToBackend = useCallback(async (updates: Partial<RFTeamNodeData>) => {
+    try {
+      // Prepare data for backend by stringifying JSON fields
+      const apiData = prepareDataForBackend(updates, jsonFields);
+      
+      // Send to backend
+      await GraphApiClient.updateNode('team' as NodeType, id, apiData);
+      
+      // Update React Flow state with the original object data (not stringified)
+      updateNodeData(id, updates);
+    } catch (error) {
+      console.error(`Failed to update team node:`, error);
+      toast.error(`Update Failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }, [id, updateNodeData, jsonFields]);
   
   // Update local state when props change
   useEffect(() => {
-    setTitle(data.title);
-    setDescription(data.description || '');
-  }, [data.title, data.description]);
+    setTitle(parsedData.title);
+    setDescription(parsedData.description || '');
+  }, [parsedData.title, parsedData.description]);
 
   // Calculate season progress
   const seasonProgress = useMemo(() => {
-    if (!data.season?.startDate || !data.season?.endDate) {
+    if (!parsedData.season?.startDate || !parsedData.season?.endDate) {
       return {
         progress: 0,
         daysRemaining: 0,
@@ -76,8 +96,8 @@ export function useTeamNode(id: string, data: RFTeamNodeData) {
       };
     }
 
-    const start = new Date(data.season.startDate);
-    const end = new Date(data.season.endDate);
+    const start = new Date(parsedData.season.startDate);
+    const end = new Date(parsedData.season.endDate);
     const now = new Date();
     
     const total = end.getTime() - start.getTime();
@@ -93,7 +113,7 @@ export function useTeamNode(id: string, data: RFTeamNodeData) {
       hasStarted: now >= start,
       hasEnded: now > end
     };
-  }, [data.season]);
+  }, [parsedData.season]);
 
   // Calculate bandwidth
   const bandwidth = useMemo(() => {
@@ -140,17 +160,6 @@ export function useTeamNode(id: string, data: RFTeamNodeData) {
     };
   }, [processedRoster, getNodes]);
 
-  // Function to save data to backend
-  const saveToBackend = useCallback(async (field: string, value: any) => {
-    try {
-      await GraphApiClient.updateNode('team' as NodeType, id, { [field]: value });
-      console.log(`Updated team node ${id} ${field}`);
-    } catch (error) {
-      console.error(`Failed to update team node ${id}:`, error);
-      toast.error(`Update Failed: Failed to save ${field} to the server.`);
-    }
-  }, [id]);
-
   // Save roster to backend with debouncing
   const saveRosterToBackend = useCallback(async (roster: RosterMember[]) => {
     if (rosterDebounceRef.current) clearTimeout(rosterDebounceRef.current);
@@ -165,7 +174,7 @@ export function useTeamNode(id: string, data: RFTeamNodeData) {
         allocations: member.allocations || []
       }));
       
-      await saveToBackend('roster', validRoster);
+      await saveToBackend({ roster: validRoster });
       rosterDebounceRef.current = null;
     }, 1000);
   }, [saveToBackend]);
@@ -175,7 +184,7 @@ export function useTeamNode(id: string, data: RFTeamNodeData) {
     if (seasonDebounceRef.current) clearTimeout(seasonDebounceRef.current);
     
     seasonDebounceRef.current = setTimeout(async () => {
-      await saveToBackend('season', season);
+      await saveToBackend({ season });
       seasonDebounceRef.current = null;
     }, 1000);
   }, [saveToBackend]);
@@ -183,28 +192,28 @@ export function useTeamNode(id: string, data: RFTeamNodeData) {
   // Handle title change
   const handleTitleChange = useCallback((newTitle: string) => {
     setTitle(newTitle);
-    updateNodeData(id, { ...data, title: newTitle });
+    updateNodeData(id, { ...parsedData, title: newTitle });
     
     if (titleDebounceRef.current) clearTimeout(titleDebounceRef.current);
     
     titleDebounceRef.current = setTimeout(async () => {
-      await saveToBackend('title', newTitle);
+      await saveToBackend({ title: newTitle });
       titleDebounceRef.current = null;
     }, 1000);
-  }, [id, data, updateNodeData, saveToBackend]);
+  }, [id, parsedData, updateNodeData, saveToBackend]);
 
   // Handle description change
   const handleDescriptionChange = useCallback((newDescription: string) => {
     setDescription(newDescription);
-    updateNodeData(id, { ...data, description: newDescription });
+    updateNodeData(id, { ...parsedData, description: newDescription });
     
     if (descriptionDebounceRef.current) clearTimeout(descriptionDebounceRef.current);
     
     descriptionDebounceRef.current = setTimeout(async () => {
-      await saveToBackend('description', newDescription);
+      await saveToBackend({ description: newDescription });
       descriptionDebounceRef.current = null;
     }, 1000);
-  }, [id, data, updateNodeData, saveToBackend]);
+  }, [id, parsedData, updateNodeData, saveToBackend]);
 
   // Handle season change
   const handleSeasonChange = useCallback((updates: Partial<Season>) => {
@@ -214,15 +223,15 @@ export function useTeamNode(id: string, data: RFTeamNodeData) {
       name: 'New Season'
     };
 
-    const updatedSeason = { ...(data.season || defaultSeason), ...updates };
+    const updatedSeason = { ...(parsedData.season || defaultSeason), ...updates };
     
     updateNodeData(id, {
-      ...data,
+      ...parsedData,
       season: updatedSeason
     });
     
     saveSeasonToBackend(updatedSeason);
-  }, [id, data, updateNodeData, saveSeasonToBackend]);
+  }, [id, parsedData, updateNodeData, saveSeasonToBackend]);
 
   // Remove roster member
   const removeRosterMember = useCallback((memberId: string) => {
@@ -231,7 +240,7 @@ export function useTeamNode(id: string, data: RFTeamNodeData) {
     const updatedRoster = rosterArray.filter((member: RosterMember) => member.memberId !== memberId);
     
     updateNodeData(id, {
-      ...data,
+      ...parsedData,
       roster: updatedRoster
     });
     
@@ -250,7 +259,7 @@ export function useTeamNode(id: string, data: RFTeamNodeData) {
     }
     
     saveRosterToBackend(updatedRoster);
-  }, [id, data, updateNodeData, edges, setEdges, processedRoster, saveRosterToBackend]);
+  }, [id, parsedData, updateNodeData, edges, setEdges, processedRoster, saveRosterToBackend]);
 
   // Handle allocation change
   const handleAllocationChange = useCallback((memberId: string, allocation: number) => {
@@ -264,7 +273,7 @@ export function useTeamNode(id: string, data: RFTeamNodeData) {
     });
     
     updateNodeData(id, {
-      ...data,
+      ...parsedData,
       roster: updatedRoster
     });
     
@@ -281,7 +290,7 @@ export function useTeamNode(id: string, data: RFTeamNodeData) {
           });
         });
     }
-  }, [id, data, updateNodeData, getNodes, processedRoster, saveRosterToBackend]);
+  }, [id, parsedData, updateNodeData, getNodes, processedRoster, saveRosterToBackend]);
 
   // Handle node deletion
   const handleDelete = useCallback(() => {
@@ -314,7 +323,7 @@ export function useTeamNode(id: string, data: RFTeamNodeData) {
 
   // Initialize season with defaults if it doesn't exist
   useEffect(() => {
-    if (!data.season) {
+    if (!parsedData.season) {
       const defaultSeason: Season = {
         startDate: '2025-01-01',
         endDate: '2025-12-31',
@@ -322,13 +331,13 @@ export function useTeamNode(id: string, data: RFTeamNodeData) {
       };
       
       updateNodeData(id, {
-        ...data,
+        ...parsedData,
         season: defaultSeason
       });
       
       saveSeasonToBackend(defaultSeason);
     }
-  }, [id, data, updateNodeData, saveSeasonToBackend]);
+  }, [id, parsedData, updateNodeData, saveSeasonToBackend]);
 
   // Watch for member connections
   useEffect(() => {
@@ -365,14 +374,14 @@ export function useTeamNode(id: string, data: RFTeamNodeData) {
     if (newMembers.length > 0) {
       const updatedRoster = [...rosterArray, ...newMembers];
       updateNodeData(id, {
-        ...data,
+        ...parsedData,
         roster: updatedRoster
       });
       
       // Save to backend
       saveRosterToBackend(updatedRoster);
     }
-  }, [connections, data, id, updateNodeData, getNodes, processedRoster, saveRosterToBackend]);
+  }, [connections, parsedData, id, updateNodeData, getNodes, processedRoster, saveRosterToBackend]);
 
   // Clean up timers on unmount
   useEffect(() => {
@@ -394,7 +403,7 @@ export function useTeamNode(id: string, data: RFTeamNodeData) {
     // Data
     title,
     description,
-    season: data.season,
+    season: parsedData.season,
     seasonProgress,
     bandwidth,
     processedRoster,
@@ -415,7 +424,7 @@ export function useTeamNode(id: string, data: RFTeamNodeData) {
   }), [
     title,
     description,
-    data.season,
+    parsedData.season,
     seasonProgress,
     bandwidth,
     processedRoster,

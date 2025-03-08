@@ -25,10 +25,13 @@ export function useFeatureNode(id: string, data: RFFeatureNodeData) {
   
   // Track if we've loaded data from the server
   const initialFetchCompletedRef = useRef(false);
+  const isInitializedRef = useRef(false);
+  
+  // Refs for debouncing
   const titleDebounceRef = useRef<NodeJS.Timeout | null>(null);
   const descriptionDebounceRef = useRef<NodeJS.Timeout | null>(null);
-  const teamAllocationsDebounceRef = useRef<{ timeout: NodeJS.Timeout | null }>({ timeout: null });
-  const isInitializedRef = useRef(false);
+  const buildTypeDebounceRef = useRef<NodeJS.Timeout | null>(null);
+  const durationDebounceRef = useRef<NodeJS.Timeout | null>(null);
   
   // Define JSON fields that need special handling
   const jsonFields = ['teamAllocations', 'memberAllocations', 'teamMembers', 'availableBandwidth'];
@@ -42,7 +45,6 @@ export function useFeatureNode(id: string, data: RFFeatureNodeData) {
   const [title, setTitle] = useState(parsedData.title || '');
   const [description, setDescription] = useState(parsedData.description || '');
   const [buildType, setBuildType] = useState<BuildType>(parsedData.buildType || 'internal');
-  const [teamAllocations, setTeamAllocations] = useState<TeamAllocation[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   
   // Ensure valid build type
@@ -75,7 +77,6 @@ export function useFeatureNode(id: string, data: RFFeatureNodeData) {
       
       // Send to backend
       await GraphApiClient.updateNode('feature' as NodeType, id, apiData);
-      
       console.log(`Updated feature node ${id}:`, updates);
     } catch (error) {
       console.error(`Failed to update feature node ${id}:`, error);
@@ -88,73 +89,58 @@ export function useFeatureNode(id: string, data: RFFeatureNodeData) {
     initialFetchCompletedRef.current = false;
   }, [id]);
   
+  // Process team allocations helper function
+  const processTeamAllocations = (allocationsData: any): TeamAllocation[] => {
+    let processedAllocations: TeamAllocation[] = [];
+    
+    if (Array.isArray(allocationsData)) {
+      processedAllocations = allocationsData;
+    } else if (typeof allocationsData === 'string') {
+      try {
+        processedAllocations = JSON.parse(allocationsData);
+      } catch (e) {
+        console.error('Failed to parse teamAllocations:', e);
+        processedAllocations = [];
+      }
+    }
+    
+    return processedAllocations;
+  };
+  
   // Function to refresh data from the server
   const refreshData = useCallback(async () => {
-    console.log(`🔄 Manually refreshing feature data for ${id}`);
+    if (GraphApiClient.isNodeBlacklisted(id)) return;
     
     try {
       setIsLoading(true);
       
-      // Check if this is a known blacklisted node
-      if (GraphApiClient.isNodeBlacklisted(id)) {
-        console.warn(`🚫 Skipping refresh for blacklisted node ${id}`);
-        return;
-      }
-      
-      // Use the GraphApiClient to fetch node data
       const serverData = await GraphApiClient.getNode('feature' as NodeType, id);
       
-      console.log(`🚀 Server returned refreshed data for ${id}:`, serverData);
-      
       // Process team allocations
-      let processedTeamAllocations: TeamAllocation[] = [];
-      
-      console.log('🔍 Processing teamAllocations:', {
-        teamAllocations: serverData.data.teamAllocations,
-        type: typeof serverData.data.teamAllocations,
-        isArray: Array.isArray(serverData.data.teamAllocations)
-      });
-      
-      if (Array.isArray(serverData.data.teamAllocations)) {
-        processedTeamAllocations = serverData.data.teamAllocations;
-        console.log('🚀 Server returned teamAllocations as array:', processedTeamAllocations);
-      } else if (typeof serverData.data.teamAllocations === 'string') {
-        try {
-          processedTeamAllocations = JSON.parse(serverData.data.teamAllocations);
-          console.log('🚀 Parsed teamAllocations from string:', processedTeamAllocations);
-        } catch (e) {
-          console.error('❌ Failed to parse teamAllocations:', e);
-          processedTeamAllocations = [];
-        }
-      }
-      
-      console.log('✅ Final processed teamAllocations:', processedTeamAllocations);
+      const processedTeamAllocations = processTeamAllocations(serverData.data.teamAllocations);
       
       // Ensure buildType is valid
-      const buildType = ensureValidBuildType(serverData.data.buildType);
+      const validBuildType = ensureValidBuildType(serverData.data.buildType);
       
       // Update local state with all server data
       setTitle(serverData.data.title || '');
       setDescription(serverData.data.description || '');
-      setBuildType(buildType);
-      setTeamAllocations(processedTeamAllocations);
+      setBuildType(validBuildType);
       
       // Update node data in ReactFlow
       updateNodeData(id, {
         ...parsedData,
         title: serverData.data.title || parsedData.title,
         description: serverData.data.description || parsedData.description,
-        buildType,
+        buildType: validBuildType,
         teamAllocations: processedTeamAllocations,
         startDate: serverData.data.startDate,
         endDate: serverData.data.endDate,
         duration: serverData.data.duration
       });
       
-      console.log('✅ Successfully refreshed feature data with teamAllocations:', processedTeamAllocations);
-      
     } catch (error) {
-      console.error(`❌ Error refreshing node data for ${id}:`, error);
+      console.error(`Error refreshing node data for ${id}:`, error);
       toast.error(`Failed to refresh feature ${id}: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       setIsLoading(false);
@@ -165,75 +151,43 @@ export function useFeatureNode(id: string, data: RFFeatureNodeData) {
   useEffect(() => {
     if (isLoading || initialFetchCompletedRef.current) return;
     
-    console.log(`🔄 Fetching feature data for ${id}`);
-    
     const fetchData = async () => {
       try {
         setIsLoading(true);
         
-        // Check if this is a known blacklisted node
         if (GraphApiClient.isNodeBlacklisted(id)) {
-          console.warn(`🚫 Skipping fetch for blacklisted node ${id}`);
-          setIsLoading(false);
           initialFetchCompletedRef.current = true;
           return;
         }
         
-        // Use the GraphApiClient to fetch node data instead of direct fetch call
         try {
           const serverData = await GraphApiClient.getNode('feature' as NodeType, id);
           
-          console.log(`🚀 Server returned initial data for ${id}:`, serverData);
-          
           // Process team allocations
-          let processedTeamAllocations: TeamAllocation[] = [];
-          
-          console.log('🔍 Initial processing of teamAllocations:', {
-            teamAllocations: serverData.data.teamAllocations,
-            type: typeof serverData.data.teamAllocations,
-            isArray: Array.isArray(serverData.data.teamAllocations)
-          });
-          
-          if (Array.isArray(serverData.data.teamAllocations)) {
-            processedTeamAllocations = serverData.data.teamAllocations;
-            console.log('🚀 Server returned teamAllocations as array:', processedTeamAllocations);
-          } else if (typeof serverData.data.teamAllocations === 'string') {
-            try {
-              processedTeamAllocations = JSON.parse(serverData.data.teamAllocations);
-              console.log('🚀 Parsed teamAllocations from string:', processedTeamAllocations);
-            } catch (e) {
-              console.error('❌ Failed to parse teamAllocations:', e);
-              processedTeamAllocations = [];
-            }
-          }
-          
-          console.log('✅ Final initial processed teamAllocations:', processedTeamAllocations);
+          const processedTeamAllocations = processTeamAllocations(serverData.data.teamAllocations);
           
           // Ensure buildType is valid
-          const buildType = ensureValidBuildType(serverData.data.buildType);
+          const validBuildType = ensureValidBuildType(serverData.data.buildType);
           
           // Update local state with all server data
           setTitle(serverData.data.title || '');
           setDescription(serverData.data.description || '');
-          setBuildType(buildType);
-          setTeamAllocations(processedTeamAllocations);
+          setBuildType(validBuildType);
           
           // Update node data in ReactFlow
           updateNodeData(id, {
             ...parsedData,
             title: serverData.data.title || parsedData.title,
             description: serverData.data.description || parsedData.description,
-            buildType,
+            buildType: validBuildType,
             teamAllocations: processedTeamAllocations,
             startDate: serverData.data.startDate,
             endDate: serverData.data.endDate,
             duration: serverData.data.duration
           });
           
-          console.log('✅ Successfully initialized feature data with teamAllocations:', processedTeamAllocations);
-          
         } catch (error) {
-          console.error(`❌ Error fetching node data for ${id}:`, error);
+          console.error(`Error fetching node data for ${id}:`, error);
           
           // If the node doesn't exist, we should still mark it as initialized
           if (error instanceof Error && error.message.includes('404')) {
@@ -255,8 +209,6 @@ export function useFeatureNode(id: string, data: RFFeatureNodeData) {
   useEffect(() => {
     // Only update if we're not loading and the initial fetch is complete
     if (!isLoading && initialFetchCompletedRef.current) {
-      console.log(`🔄 Updating local state from data props for ${id}`);
-      
       // Check if the data has changed to avoid unnecessary updates
       if (title !== parsedData.title) {
         setTitle(parsedData.title || '');
@@ -270,52 +222,17 @@ export function useFeatureNode(id: string, data: RFFeatureNodeData) {
       if (buildType !== validBuildType) {
         setBuildType(validBuildType);
       }
-      
-      // Process teamAllocations if it's available
-      if (parsedData.teamAllocations) {
-        let processedAllocations: TeamAllocation[] = [];
-        
-        if (Array.isArray(parsedData.teamAllocations)) {
-          processedAllocations = parsedData.teamAllocations;
-        } else if (typeof parsedData.teamAllocations === 'string') {
-          try {
-            processedAllocations = JSON.parse(parsedData.teamAllocations);
-          } catch (e) {
-            console.error('❌ Failed to parse teamAllocations from props:', e);
-          }
-        } else {
-          console.warn('Unexpected teamAllocations format:', typeof parsedData.teamAllocations, parsedData.teamAllocations);
-          // Keep existing allocations
-          processedAllocations = teamAllocations;
-        }
-        
-        // Only update if there's a difference
-        const currentString = JSON.stringify(teamAllocations);
-        const newString = JSON.stringify(processedAllocations);
-        
-        if (currentString !== newString) {
-          console.log('🔄 Updating teamAllocations from data props:', processedAllocations);
-          setTeamAllocations(processedAllocations);
-        }
-      } else {
-        console.warn('Unexpected teamAllocations format:', typeof parsedData.teamAllocations, parsedData.teamAllocations);
-        setTeamAllocations([]);
-      }
     }
-  }, [parsedData.title, parsedData.description, parsedData.buildType, parsedData.teamAllocations, isLoading, initialFetchCompletedRef]);
+  }, [parsedData.title, parsedData.description, parsedData.buildType, isLoading, initialFetchCompletedRef]);
   
   // Save team allocations to backend
   const saveTeamAllocationsToBackend = useCallback(async (allocations: TeamAllocation[]) => {
     try {
-      // Log the team allocations before sending to backend
-      console.log('Team allocations being sent to backend:', JSON.stringify(allocations, null, 2));
-      
       await GraphApiClient.updateNode('feature' as NodeType, id, {
         teamAllocations: allocations
       });
-      console.log('✅ Successfully saved team allocations to backend');
     } catch (error) {
-      console.error('❌ Failed to save team allocations to backend:', error);
+      console.error('Failed to save team allocations to backend:', error);
     }
   }, [id]);
 
@@ -369,8 +286,14 @@ export function useFeatureNode(id: string, data: RFFeatureNodeData) {
     // Then update ReactFlow state
     updateNodeData(id, { ...parsedData, title: newTitle });
     
-    // Save to backend
-    saveToBackend({ title: newTitle });
+    // Clear existing timeout
+    if (titleDebounceRef.current) clearTimeout(titleDebounceRef.current);
+    
+    // Debounce the save to backend
+    titleDebounceRef.current = setTimeout(() => {
+      saveToBackend({ title: newTitle });
+      titleDebounceRef.current = null;
+    }, 1000);
   }, [id, parsedData, updateNodeData, saveToBackend]);
 
   // Handle description change
@@ -381,20 +304,23 @@ export function useFeatureNode(id: string, data: RFFeatureNodeData) {
     // Then update ReactFlow state
     updateNodeData(id, { ...parsedData, description: newDescription });
     
-    // Save to backend
-    saveToBackend({ description: newDescription });
+    // Clear existing timeout
+    if (descriptionDebounceRef.current) clearTimeout(descriptionDebounceRef.current);
+    
+    // Debounce the save to backend
+    descriptionDebounceRef.current = setTimeout(() => {
+      saveToBackend({ description: newDescription });
+      descriptionDebounceRef.current = null;
+    }, 1000);
   }, [id, parsedData, updateNodeData, saveToBackend]);
 
   // Handle build type change
   const handleBuildTypeChange = useCallback((newBuildType: BuildType) => {
-    console.log(`Changing build type to: ${newBuildType}`);
-    
     // Ensure the new build type is valid
     const validBuildType = ensureValidBuildType(newBuildType);
     
     // Check if value actually changed to prevent unnecessary updates
     if (buildType === validBuildType) {
-      console.log('Build type unchanged, skipping update');
       return;
     }
     
@@ -404,21 +330,23 @@ export function useFeatureNode(id: string, data: RFFeatureNodeData) {
     // Update local state first
     setBuildType(validBuildType);
     
-    // Create a new object for the update to avoid reference issues
-    const updatedData = { ...parsedData, buildType: validBuildType };
-    
     // Then update ReactFlow state
-    updateNodeData(id, updatedData);
+    updateNodeData(id, { ...parsedData, buildType: validBuildType });
     
-    // Save to backend
-    saveToBackend({ buildType: validBuildType });
+    // Clear existing timeout
+    if (buildTypeDebounceRef.current) clearTimeout(buildTypeDebounceRef.current);
+    
+    // Debounce the save to backend
+    buildTypeDebounceRef.current = setTimeout(() => {
+      saveToBackend({ buildType: validBuildType });
+      buildTypeDebounceRef.current = null;
+    }, 1000);
   }, [id, parsedData, updateNodeData, saveToBackend, buildType, ensureValidBuildType]);
 
   // Handle node deletion
   const handleDelete = useCallback(() => {
     GraphApiClient.deleteNode('feature' as NodeType, id)
       .then(() => {
-        console.log(`Successfully deleted feature node ${id}`);
         setNodes((nodes) => nodes.filter((node) => node.id !== id));
         
         setEdges((edges) => {
@@ -439,16 +367,29 @@ export function useFeatureNode(id: string, data: RFFeatureNodeData) {
   // Save duration to backend when it changes
   useEffect(() => {
     if (parsedData.duration !== undefined) {
-      saveToBackend({ duration: parsedData.duration });
+      // Clear existing timeout
+      if (durationDebounceRef.current) clearTimeout(durationDebounceRef.current);
+      
+      // Debounce the save to backend
+      durationDebounceRef.current = setTimeout(() => {
+        saveToBackend({ duration: parsedData.duration });
+        durationDebounceRef.current = null;
+      }, 1000);
     }
+    
+    // Cleanup the timeout when the component unmounts or when duration changes again
+    return () => {
+      if (durationDebounceRef.current) clearTimeout(durationDebounceRef.current);
+    };
   }, [parsedData.duration, saveToBackend]);
-  
-  // Clean up timers on unmount
+
+  // Cleanup timeouts on unmount
   useEffect(() => {
     return () => {
       if (titleDebounceRef.current) clearTimeout(titleDebounceRef.current);
       if (descriptionDebounceRef.current) clearTimeout(descriptionDebounceRef.current);
-      if (teamAllocationsDebounceRef.current?.timeout) clearTimeout(teamAllocationsDebounceRef.current.timeout);
+      if (buildTypeDebounceRef.current) clearTimeout(buildTypeDebounceRef.current);
+      if (durationDebounceRef.current) clearTimeout(durationDebounceRef.current);
     };
   }, []);
 
@@ -460,8 +401,6 @@ export function useFeatureNode(id: string, data: RFFeatureNodeData) {
     buildType,
     status,
     isLoading,
-    processedGoals: [],
-    processedRisks: [],
     processedTeamAllocations: teamAllocationsFromHook,
     connectedTeams,
     costs,
@@ -480,16 +419,6 @@ export function useFeatureNode(id: string, data: RFFeatureNodeData) {
     calculateCostSummary: resourceAllocation.calculateCostSummary,
     requestTeamAllocation: teamAllocationHook.requestTeamAllocation,
     saveTeamAllocationsToBackend,
-    
-    // Goal handlers
-    addGoal: () => {},
-    updateGoal: () => {},
-    removeGoal: () => {},
-    
-    // Risk handlers
-    addRisk: () => {},
-    updateRisk: () => {},
-    removeRisk: () => {},
     
     // Status
     getStatusColor,

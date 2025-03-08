@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useNodeConnections, useReactFlow, Node } from '@xyflow/react';
 
-
 // Core data types
 interface TeamNodeData extends Record<string, unknown> {
   title: string;
@@ -40,7 +39,7 @@ interface WorkAllocation {
 export interface FeatureNodeData extends Record<string, unknown> {
   title: string;
   description?: string;
-  teamAllocations?: Array<TeamAllocation>;
+  teamAllocations?: Array<TeamAllocation> | string;
   duration?: number;  // In days
   startDate?: string;
   endDate?: string;
@@ -70,13 +69,11 @@ interface AvailableMember {
   name: string;
   availableHours: number;
   dailyRate: number;
-  // Add additional properties to pass through to feature nodes
   hoursPerDay: number;
   daysPerWeek: number;
   weeklyCapacity: number;
 }
 
-      // Define types for team allocations
 interface ConnectedTeam {
   teamId: string;
   name: string;
@@ -106,33 +103,12 @@ interface CostSummary {
   }>;
 }
 
-// Add these interfaces
 interface CostSummaryProps {
-  costs: {
-    dailyCost: number;
-    totalCost: number;
-    totalHours: number;
-    totalDays: number;
-    calendarDuration?: number;
-    allocations: Array<{
-      member: {
-        memberId: string;
-        name: string;
-        dailyRate: number;
-      };
-      allocation: number;
-      allocatedDays: number;
-      hours: number;
-      hoursPerDay?: number;
-      startDate?: string;
-      endDate?: string;
-      cost: number;
-    }>;
-  };
+  costs: CostSummary;
   duration?: number;
 }
 
-// Add the CostSummary component
+// Cost Summary Component
 const CostSummaryComponent = ({ costs, duration }: CostSummaryProps) => {
   return (
     <div className="space-y-4">
@@ -235,42 +211,32 @@ function isMemberNode(node: Node | null | undefined): node is Node<MemberNodeDat
   );
 }
 
+/**
+ * Parse JSON data if it's a string, or return the original value if it's already parsed
+ * @param value The value to parse
+ * @param defaultValue Default value to return if parsing fails
+ */
+function parseJsonIfString<T>(value: unknown, defaultValue: T): T {
+  if (typeof value !== 'string') {
+    return Array.isArray(value) || typeof value === 'object' 
+      ? value as T 
+      : defaultValue;
+  }
+  
+  try {
+    return JSON.parse(value) as T;
+  } catch (e) {
+    return defaultValue;
+  }
+}
+
+/**
+ * Hook for managing team allocations for feature nodes
+ */
 export function useTeamAllocation(nodeId: string, data: FeatureNodeData) {
-  // Parse teamAllocations if they're a string
-  const parseTeamAllocations = (allocations: any): TeamAllocation[] => {
-    if (Array.isArray(allocations)) {
-      return allocations;
-    } else if (typeof allocations === 'string') {
-      try {
-        return JSON.parse(allocations);
-      } catch (e) {
-        console.error('❌ Failed to parse teamAllocations in useTeamAllocation:', e);
-        return [];
-      }
-    }
-    return [];
-  };
-
-  // Process teamAllocations
-  const processedTeamAllocations = useMemo(() => {
-    return parseTeamAllocations(data.teamAllocations);
-  }, [data.teamAllocations]);
-
-  // Add a very visible debug log
-  console.log('🔍 USE TEAM ALLOCATION HOOK CALLED:', { 
-    nodeId, 
-    teamAllocations: data.teamAllocations,
-    teamAllocationsType: typeof data.teamAllocations,
-    isArray: Array.isArray(data.teamAllocations),
-    processedTeamAllocations
-  });
-
   const { updateNodeData, getNodes } = useReactFlow();
   const connections = useNodeConnections({ id: nodeId });
 
-  // Track render count to debug refresh issues
-  const renderCountRef = useRef(0);
-  
   // Refs for caching team allocations
   const previousTeamAllocationsStringifiedRef = useRef<string>('');
   const previousTeamAllocationsResultRef = useRef<TeamAllocation[]>([]);
@@ -298,80 +264,28 @@ export function useTeamAllocation(nodeId: string, data: FeatureNodeData) {
   // Ref to track node IDs that have already been confirmed to not exist
   const nonExistentNodeIdsRef = useRef<Set<string>>(new Set());
 
-  // Debug connection issues
-  console.log('Node Connections:', {
-    nodeId,
-    connections: connections.map(c => ({
-      source: c.source,
-      target: c.target,
-      sourceNode: getNodes().find(n => n.id === c.source)?.type
-    }))
-  });
-
-  // Debug team allocations data
-  console.log('Team Allocations Data:', {
-    nodeId,
-    teamAllocations: data.teamAllocations,
-    teamAllocationsType: typeof data.teamAllocations,
-    isArray: Array.isArray(data.teamAllocations),
-    processedTeamAllocations
-  });
-
-  useEffect(() => {
-    renderCountRef.current += 1;
-    console.log(`🔄 useTeamAllocation render #${renderCountRef.current} for node ${nodeId}`, {
-      teamAllocations: data.teamAllocations,
-      teamAllocationsType: typeof data.teamAllocations,
-      isArray: Array.isArray(data.teamAllocations),
-      hasTeamAllocations: data.teamAllocations && 
-        (Array.isArray(data.teamAllocations) ? data.teamAllocations.length > 0 : true),
-      processedTeamAllocations
-    });
-  });
-
-  // Process team allocations from the node data
-  const teamAllocations = useMemo(() => {
-    console.log(`🔄 Processing team allocations for node ${nodeId}`);
-    
-    // Create a deep copy of the existing allocations
-    let result: TeamAllocation[] = [];
-    
-    // First, try to use data.teamAllocations directly if it's already an array
-    if (Array.isArray(data.teamAllocations)) {
-      console.log(`✅ Team allocations is already an array with ${data.teamAllocations.length} items`);
-      result = [...data.teamAllocations];
-    }
-    // Otherwise, try to parse it if it's a string
-    else if (typeof data.teamAllocations === 'string' && data.teamAllocations) {
-      try {
-        const parsed = JSON.parse(data.teamAllocations);
-        if (Array.isArray(parsed)) {
-          console.log(`✅ Successfully parsed team allocations string into array with ${parsed.length} items`);
-          result = parsed;
-        } else {
-          console.warn(`⚠️ Parsed team allocations is not an array:`, parsed);
-          result = [];
-        }
-      } catch (error) {
-        console.error(`❌ Failed to parse team allocations:`, error);
-        result = [];
-      }
-    }
-    // Default to empty array if undefined or not valid
-    else {
-      console.log(`ℹ️ No team allocations found, using empty array`);
-      result = [];
-    }
-    
-    console.log(`🔄 Final processed team allocations:`, result);
-    return result;
-  }, [nodeId, data.teamAllocations]);
+  // Parse team allocations from the node data
+  const processedTeamAllocations = useMemo(() => {
+    return parseJsonIfString<TeamAllocation[]>(data.teamAllocations, []);
+  }, [data.teamAllocations]);
 
   // Update the getNodes function to filter out known non-existent nodes
   const getNodesWithFilter = useCallback(() => {
     const allNodes = getNodes();
     return allNodes.filter(node => !nonExistentNodeIdsRef.current.has(node.id));
   }, [getNodes]);
+
+  // Effect to handle blocking specific node requests that repeatedly fail
+  useEffect(() => {
+    // Look for any non-existent node IDs from connection data and add to our blocklist
+    const potentialNodeIds = connections.map(c => [c.source, c.target]).flat();
+    
+    // We have seen from logs that this specific node is causing 404 errors
+    const knownBadNodeId = '95c72037-da89-4bfe-af8f-ea847cbdbe87';
+    if (potentialNodeIds.includes(knownBadNodeId) && !nonExistentNodeIdsRef.current.has(knownBadNodeId)) {
+      nonExistentNodeIdsRef.current.add(knownBadNodeId);
+    }
+  }, [connections]);
 
   // Get connected teams
   const connectedTeams = useMemo(() => {
@@ -407,9 +321,7 @@ export function useTeamAllocation(nodeId: string, data: FeatureNodeData) {
         if (teamNode.data.roster) {
           try {
             // Parse the roster if it's a string
-            const roster = typeof teamNode.data.roster === 'string' 
-              ? JSON.parse(teamNode.data.roster) 
-              : teamNode.data.roster;
+            const roster = parseJsonIfString<RosterMember[]>(teamNode.data.roster, []);
             
             // Map the roster to available members
             availableBandwidth = roster.map((member: any) => {
@@ -435,14 +347,13 @@ export function useTeamAllocation(nodeId: string, data: FeatureNodeData) {
                 name: memberName,
                 availableHours,
                 dailyRate,
-                // Add additional properties to pass through to feature nodes
                 hoursPerDay,
                 daysPerWeek,
                 weeklyCapacity
               };
             });
           } catch (e) {
-            console.error('Failed to parse team roster:', e);
+            // Error handled silently, returns empty array
           }
         }
         
@@ -460,37 +371,19 @@ export function useTeamAllocation(nodeId: string, data: FeatureNodeData) {
     
     return teamNodes;
   }, [connections, getNodes, processedTeamAllocations]);
-
-  // Effect to handle blocking specific node requests that repeatedly fail
-  useEffect(() => {
-    // Look for any non-existent node IDs from connection data and add to our blocklist
-    const potentialNodeIds = connections.map(c => [c.source, c.target]).flat();
-    
-    // We have seen from logs that this specific node is causing 404 errors
-    const knownBadNodeId = '95c72037-da89-4bfe-af8f-ea847cbdbe87';
-    if (potentialNodeIds.includes(knownBadNodeId) && !nonExistentNodeIdsRef.current.has(knownBadNodeId)) {
-      console.log(`🚫 Blocking requests to known non-existent node: ${knownBadNodeId}`);
-      nonExistentNodeIdsRef.current.add(knownBadNodeId);
-    }
-    
-    // This will prevent any future API calls to this node
-  }, [connections]);
   
-  // Enhance the requestTeamAllocation function
+  // Request team allocation
   const requestTeamAllocation = useCallback((
     teamId: string, 
     requestedHours: number, 
     memberData: string[] | Array<{ memberId: string; name?: string; hours?: number }> = []
   ) => {
-    console.log(`🔄 Requesting team allocation: teamId=${teamId}, hours=${requestedHours}, members=${Array.isArray(memberData) ? (typeof memberData[0] === 'string' ? memberData.join(',') : (memberData as Array<{ memberId: string }>).map(m => m.memberId).join(',')) : ''}`);
-    
     if (!teamId) {
-      console.warn('⚠️ Cannot request allocation without a team ID');
       return;
     }
     
     // Get the current team allocations
-    const currentAllocations = parseTeamAllocations(data.teamAllocations);
+    const currentAllocations = processedTeamAllocations;
     
     // Find the existing allocation for this team
     const existingAllocationIndex = currentAllocations.findIndex(a => a.teamId === teamId);
@@ -501,19 +394,11 @@ export function useTeamAllocation(nodeId: string, data: FeatureNodeData) {
     // Get the team node to access its roster
     const teamNode = getNodes().find(n => n.id === teamId);
     if (!teamNode) {
-      console.warn(`⚠️ Team node ${teamId} not found`);
       return;
     }
     
     // Get the team's roster
-    let roster: any[] = [];
-    try {
-      roster = typeof teamNode.data.roster === 'string' 
-        ? JSON.parse(teamNode.data.roster) 
-        : teamNode.data.roster || [];
-    } catch (e) {
-      console.error('❌ Failed to parse team roster:', e);
-    }
+    const roster = parseJsonIfString<RosterMember[]>(teamNode.data.roster, []);
     
     // Process member data
     let allocatedMembers: Array<{ memberId: string; name?: string; hours: number }> = [];
@@ -629,9 +514,9 @@ export function useTeamAllocation(nodeId: string, data: FeatureNodeData) {
     
     // Return the updated allocations
     return newAllocations;
-  }, [data, getNodes, nodeId, updateNodeData]);
+  }, [data, getNodes, nodeId, updateNodeData, processedTeamAllocations]);
 
-  // Add this function after requestTeamAllocation
+  // Remove member allocation
   const removeMemberAllocation = useCallback((
     teamId: string,
     memberId: string
@@ -670,7 +555,7 @@ export function useTeamAllocation(nodeId: string, data: FeatureNodeData) {
 
     // Update the feature node
     // Use the utility function to ensure teamAllocations is an array
-    const teamAllocationsArray = parseTeamAllocations(data.teamAllocations);
+    const teamAllocationsArray = processedTeamAllocations;
 
     // Find the team allocation
     const teamAllocation = teamAllocationsArray.find(a => a.teamId === teamId);
@@ -698,9 +583,9 @@ export function useTeamAllocation(nodeId: string, data: FeatureNodeData) {
       ...data,
       teamAllocations: updatedTeamAllocations
     });
-  }, [nodeId, data, getNodes, updateNodeData]);
+  }, [nodeId, data, getNodes, updateNodeData, processedTeamAllocations]);
 
-  // Add this function after removeMemberAllocation
+  // Update member allocation
   const updateMemberAllocation = useCallback((
     teamId: string,
     memberId: string,
@@ -799,7 +684,7 @@ export function useTeamAllocation(nodeId: string, data: FeatureNodeData) {
 
     // Update the feature node
     // Use the utility function to ensure teamAllocations is an array
-    const teamAllocationsArray = parseTeamAllocations(data.teamAllocations);
+    const teamAllocationsArray = processedTeamAllocations;
 
     // Find the team allocation
     const teamAllocationIndex = teamAllocationsArray.findIndex(a => a.teamId === teamId);
@@ -880,27 +765,19 @@ export function useTeamAllocation(nodeId: string, data: FeatureNodeData) {
         teamAllocations: [...teamAllocationsArray, newTeamAllocation]
       });
     }
-  }, [nodeId, data, getNodes, updateNodeData]);
+  }, [nodeId, data, getNodes, updateNodeData, processedTeamAllocations]);
 
   // Calculate costs based on team allocations
   const costs = useMemo(() => {
-    console.log('🔍 Calculating costs for team allocations:', {
-      nodeId,
-      teamAllocationsCount: teamAllocations?.length || 0
-    });
-    
     // Add caching to prevent unnecessary recalculations
-    const teamAllocationsString = JSON.stringify(teamAllocations);
+    const teamAllocationsString = JSON.stringify(processedTeamAllocations);
     const connectedTeamsString = JSON.stringify(connectedTeams.map(t => t.teamId));
     const cacheKey = `${teamAllocationsString}-${connectedTeamsString}`;
     
     // Return cached result if inputs haven't changed
     if (cacheKey === prevCostCacheKeyRef.current) {
-      console.log('✅ Using cached cost calculation - no changes detected');
       return prevCostResultRef.current;
     }
-    
-    console.log('🔄 Recalculating costs for team allocations');
     
     // Start with empty cost summary
     const costSummary: CostSummary = {
@@ -912,14 +789,14 @@ export function useTeamAllocation(nodeId: string, data: FeatureNodeData) {
     };
     
     // If no team allocations, return empty cost summary
-    if (!teamAllocations || teamAllocations.length === 0) {
+    if (!processedTeamAllocations || processedTeamAllocations.length === 0) {
       prevCostCacheKeyRef.current = cacheKey;
       prevCostResultRef.current = costSummary;
       return costSummary;
     }
     
     // Calculate costs for each team allocation
-    teamAllocations.forEach(allocation => {
+    processedTeamAllocations.forEach(allocation => {
       // Find the team in connected teams
       const team = connectedTeams.find(t => t.teamId === allocation.teamId);
       if (!team) return;
@@ -982,7 +859,7 @@ export function useTeamAllocation(nodeId: string, data: FeatureNodeData) {
     prevCostResultRef.current = costSummary;
     
     return costSummary;
-  }, [teamAllocations, connectedTeams, nodeId]);
+  }, [processedTeamAllocations, connectedTeams]);
 
   return {
     connectedTeams,

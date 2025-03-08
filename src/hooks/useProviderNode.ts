@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useReactFlow } from "@xyflow/react";
 import { toast } from "sonner";
 import { GraphApiClient } from '@/services/graph/neo4j/api-client';
@@ -9,21 +9,14 @@ import {
   RFProviderNodeData, 
   ProviderCost, 
   DDItem, 
-  CostType, 
-  FixedCost, 
-  UnitCost, 
-  RevenueCost, 
-  TieredCost, 
-  DDStatus,
-  TierRange,
   TeamAllocation
 } from '@/services/graph/provider/provider.types';
 import { useTeamAllocation } from "@/hooks/useTeamAllocation";
 import { useNodeStatus } from "@/hooks/useNodeStatus";
 import { useDurationInput } from "@/hooks/useDurationInput";
 import { useResourceAllocation } from "@/hooks/useResourceAllocation";
-import { NodeStatus } from "@/services/graph/shared/shared.types";
 import { v4 as uuidv4 } from 'uuid';
+import { prepareDataForBackend, parseDataFromBackend } from "@/lib/utils";
 
 /**
  * Hook for managing provider node state and operations
@@ -32,81 +25,56 @@ import { v4 as uuidv4 } from 'uuid';
 export function useProviderNode(id: string, data: RFProviderNodeData) {
   const { updateNodeData, setNodes, setEdges, getNodes } = useReactFlow();
   
+  // Define JSON fields that need special handling
+  const jsonFields = ['costs', 'ddItems', 'teamAllocations', 'memberAllocations'];
+  
+  // Parse complex objects if they are strings
+  const parsedData = useMemo(() => {
+    return parseDataFromBackend(data, jsonFields) as RFProviderNodeData;
+  }, [data, jsonFields]);
+  
+  // State for loading indicator
+  const [isLoading, setIsLoading] = useState(false);
+  
   // Refs for debounce timers
-  const titleDebounceRef = useRef<NodeJS.Timeout | null>(null);
-  const descriptionDebounceRef = useRef<NodeJS.Timeout | null>(null);
   const costsDebounceRef = useRef<NodeJS.Timeout | null>(null);
   const ddItemsDebounceRef = useRef<NodeJS.Timeout | null>(null);
-  const teamAllocationsDebounceRef = useRef<{ timeout: NodeJS.Timeout | null }>({ timeout: null });
   
-  // Process team allocations to ensure it's always an array
-  const processedTeamAllocations = useMemo(() => {
-    if (Array.isArray(data.teamAllocations)) {
-      return data.teamAllocations;
-    } else if (typeof data.teamAllocations === 'string') {
-      try {
-        const parsed = JSON.parse(data.teamAllocations);
-        if (Array.isArray(parsed)) {
-          return parsed;
-        }
-      } catch (e) {
-        console.warn('Failed to parse teamAllocations string:', e);
-      }
-    }
-    return [];
-  }, [data.teamAllocations]);
-  
-  // Process costs to ensure it's always an array
+  // Process costs to ensure they're in the correct format
   const processedCosts = useMemo(() => {
-    if (Array.isArray(data.costs)) {
-      return data.costs;
-    } else if (typeof data.costs === 'string') {
-      try {
-        const parsed = JSON.parse(data.costs);
-        if (Array.isArray(parsed)) {
-          return parsed;
-        }
-      } catch (e) {
-        console.warn('Failed to parse costs string:', e);
-      }
+    if (!parsedData.costs) return [];
+    
+    if (Array.isArray(parsedData.costs)) {
+      return parsedData.costs;
     }
+    
     return [];
-  }, [data.costs]);
+  }, [parsedData.costs]);
   
-  // Process ddItems to ensure it's always an array
+  // Process DD items to ensure they're in the correct format
   const processedDDItems = useMemo(() => {
-    if (Array.isArray(data.ddItems)) {
-      return data.ddItems;
-    } else if (typeof data.ddItems === 'string') {
-      try {
-        const parsed = JSON.parse(data.ddItems);
-        if (Array.isArray(parsed)) {
-          return parsed;
-        }
-      } catch (e) {
-        console.warn('Failed to parse ddItems string:', e);
-      }
+    if (!parsedData.ddItems) return [];
+    
+    if (Array.isArray(parsedData.ddItems)) {
+      return parsedData.ddItems;
     }
+    
     return [];
-  }, [data.ddItems]);
+  }, [parsedData.ddItems]);
   
   // Save team allocations to backend
   const saveTeamAllocationsToBackend = useCallback(async (allocations: TeamAllocation[]) => {
     try {
-      // Log the team allocations before sending to backend
-      console.log('Team allocations being sent to backend:', JSON.stringify(allocations, null, 2));
-      
       await GraphApiClient.updateNode('provider' as NodeType, id, {
         teamAllocations: allocations
       });
-      console.log('✅ Successfully saved team allocations to backend');
     } catch (error) {
-      console.error('❌ Failed to save team allocations to backend:', error);
+      console.error('Failed to save team allocations to backend:', error);
     }
   }, [id]);
   
   // Use the team allocation hook for team-related operations
-  const teamAllocationHook = useTeamAllocation(id, data);
+  const teamAllocationHook = useTeamAllocation(id, parsedData);
   
   // Add the saveTeamAllocationsToBackend function to the teamAllocationHook
   (teamAllocationHook as any).saveTeamAllocationsToBackend = saveTeamAllocationsToBackend;
@@ -118,19 +86,19 @@ export function useProviderNode(id: string, data: RFProviderNodeData) {
   const connectedTeams = teamAllocationHook.connectedTeams;
   
   // Get costs from the team allocation hook
-  const costs = teamAllocationHook.costs;
+  const costsFromHook = teamAllocationHook.costs;
   
   // Use the resource allocation hook to manage resource allocations
-  const resourceAllocation = useResourceAllocation(data, teamAllocationHook, getNodes);
+  const resourceAllocation = useResourceAllocation(parsedData, teamAllocationHook, getNodes);
 
   // Use the node status hook for status-related operations
-  const { status, getStatusColor, cycleStatus } = useNodeStatus(id, data, updateNodeData, {
+  const { status, getStatusColor, cycleStatus } = useNodeStatus(id, parsedData, updateNodeData, {
     canBeActive: true,
     defaultStatus: 'planning'
   });
   
   // Use the duration input hook for duration-related operations
-  const duration = useDurationInput(id, data, updateNodeData, {
+  const duration = useDurationInput(id, parsedData, updateNodeData, {
     maxDays: 90,
     label: "Integration Time",
     fieldName: "duration",
@@ -139,41 +107,38 @@ export function useProviderNode(id: string, data: RFProviderNodeData) {
 
   // Save duration to backend when it changes
   useEffect(() => {
-    if (data.duration !== undefined) {
+    if (parsedData.duration !== undefined) {
       // Debounce the save to avoid excessive API calls
       const durationDebounceRef = setTimeout(async () => {
         try {
           await GraphApiClient.updateNode('provider' as NodeType, id, {
-            duration: data.duration
+            duration: parsedData.duration
           });
-          console.log(`Updated provider ${id} duration to ${data.duration}`);
         } catch (error) {
-          console.error(`Failed to update provider ${id} duration:`, error);
+          console.error(`Failed to update provider duration:`, error);
         }
       }, 1000);
       
       return () => clearTimeout(durationDebounceRef);
     }
-  }, [id, data.duration]);
+  }, [id, parsedData.duration]);
   
-  // Function to save data to backend with debouncing
-  const saveToBackend = useCallback(async (field: string, value: any) => {
-    if (titleDebounceRef.current) {
-      clearTimeout(titleDebounceRef.current);
+  // Save to backend function
+  const saveToBackend = useCallback(async (updates: Partial<RFProviderNodeData>) => {
+    try {
+      // Prepare data for backend by stringifying JSON fields
+      const apiData = prepareDataForBackend(updates, jsonFields);
+      
+      // Send to backend
+      await GraphApiClient.updateNode('provider' as NodeType, id, apiData);
+      
+      // Update React Flow state with the original object data (not stringified)
+      updateNodeData(id, updates);
+    } catch (error) {
+      console.error(`Failed to update provider node:`, error);
+      toast.error(`Update Failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
-    
-    titleDebounceRef.current = setTimeout(async () => {
-      try {
-        const updateData = { [field]: value };
-        await GraphApiClient.updateNode('provider' as NodeType, id, updateData);
-        console.log(`Updated provider ${id} field ${field}`);
-      } catch (error) {
-        console.error(`Failed to update provider ${id} field ${field}:`, error);
-        toast.error("Your changes couldn't be saved to the database.");
-      }
-      titleDebounceRef.current = null;
-    }, 1000);
-  }, [id]);
+  }, [id, updateNodeData, jsonFields]);
 
   // Save costs to backend with debouncing
   const saveCostsToBackend = useCallback(async (costs: ProviderCost[]) => {
@@ -184,9 +149,8 @@ export function useProviderNode(id: string, data: RFProviderNodeData) {
     costsDebounceRef.current = setTimeout(async () => {
       try {
         await GraphApiClient.updateNode('provider' as NodeType, id, { costs });
-        console.log(`Updated provider ${id} costs`);
       } catch (error) {
-        console.error(`Failed to update provider ${id} costs:`, error);
+        console.error(`Failed to update provider costs:`, error);
         toast.error("Your cost changes couldn't be saved to the database.");
       }
       costsDebounceRef.current = null;
@@ -202,9 +166,8 @@ export function useProviderNode(id: string, data: RFProviderNodeData) {
     ddItemsDebounceRef.current = setTimeout(async () => {
       try {
         await GraphApiClient.updateNode('provider' as NodeType, id, { ddItems });
-        console.log(`Updated provider ${id} ddItems`);
       } catch (error) {
-        console.error(`Failed to update provider ${id} ddItems:`, error);
+        console.error(`Failed to update provider ddItems:`, error);
         toast.error("Your due diligence changes couldn't be saved to the database.");
       }
       ddItemsDebounceRef.current = null;
@@ -213,34 +176,33 @@ export function useProviderNode(id: string, data: RFProviderNodeData) {
 
   // Handle title change
   const handleTitleChange = useCallback((newTitle: string) => {
-    updateNodeData(id, { ...data, title: newTitle });
-    saveToBackend('title', newTitle);
-  }, [id, data, updateNodeData, saveToBackend]);
+    updateNodeData(id, { ...parsedData, title: newTitle });
+    saveToBackend({ title: newTitle });
+  }, [id, parsedData, updateNodeData, saveToBackend]);
 
   // Handle description change
   const handleDescriptionChange = useCallback((newDescription: string) => {
-    updateNodeData(id, { ...data, description: newDescription });
-    saveToBackend('description', newDescription);
-  }, [id, data, updateNodeData, saveToBackend]);
+    updateNodeData(id, { ...parsedData, description: newDescription });
+    saveToBackend({ description: newDescription });
+  }, [id, parsedData, updateNodeData, saveToBackend]);
 
   // Handle node deletion
   const handleDelete = useCallback(() => {
     GraphApiClient.deleteNode('provider' as NodeType, id)
       .then(() => {
-        console.log(`Successfully deleted provider node ${id}`);
         setNodes((nodes) => nodes.filter((node) => node.id !== id));
         
         setEdges((edges) => {
           const connectedEdges = edges.filter((edge) => edge.source === id || edge.target === id);
           connectedEdges.forEach((edge) => {
             GraphApiClient.deleteEdge('provider' as NodeType, edge.id)
-              .catch((error) => console.error(`Failed to delete edge ${edge.id}:`, error));
+              .catch((error) => console.error(`Failed to delete edge:`, error));
           });
           return edges.filter((edge) => edge.source !== id && edge.target !== id);
         });
       })
       .catch((error) => {
-        console.error(`Failed to delete provider node ${id}:`, error);
+        console.error(`Failed to delete provider node:`, error);
         toast.error("The provider couldn't be deleted from the database.");
       });
   }, [id, setNodes, setEdges]);
@@ -259,9 +221,9 @@ export function useProviderNode(id: string, data: RFProviderNodeData) {
     };
     
     const updatedCosts = [...processedCosts, newCost];
-    updateNodeData(id, { ...data, costs: updatedCosts });
+    updateNodeData(id, { ...parsedData, costs: updatedCosts });
     saveCostsToBackend(updatedCosts);
-  }, [id, data, processedCosts, updateNodeData, saveCostsToBackend]);
+  }, [id, parsedData, processedCosts, updateNodeData, saveCostsToBackend]);
 
   // Update an existing cost
   const updateCost = useCallback((costId: string, updates: Partial<ProviderCost>) => {
@@ -269,16 +231,16 @@ export function useProviderNode(id: string, data: RFProviderNodeData) {
       cost.id === costId ? { ...cost, ...updates } : cost
     );
     
-    updateNodeData(id, { ...data, costs: updatedCosts });
+    updateNodeData(id, { ...parsedData, costs: updatedCosts });
     saveCostsToBackend(updatedCosts);
-  }, [id, data, processedCosts, updateNodeData, saveCostsToBackend]);
+  }, [id, parsedData, processedCosts, updateNodeData, saveCostsToBackend]);
 
   // Remove a cost
   const removeCost = useCallback((costId: string) => {
     const updatedCosts = processedCosts.filter(cost => cost.id !== costId);
-    updateNodeData(id, { ...data, costs: updatedCosts });
+    updateNodeData(id, { ...parsedData, costs: updatedCosts });
     saveCostsToBackend(updatedCosts);
-  }, [id, data, processedCosts, updateNodeData, saveCostsToBackend]);
+  }, [id, parsedData, processedCosts, updateNodeData, saveCostsToBackend]);
 
   // Add a new due diligence item
   const addDDItem = useCallback(() => {
@@ -289,9 +251,9 @@ export function useProviderNode(id: string, data: RFProviderNodeData) {
     };
     
     const updatedItems = [...processedDDItems, newItem];
-    updateNodeData(id, { ...data, ddItems: updatedItems });
+    updateNodeData(id, { ...parsedData, ddItems: updatedItems });
     saveDDItemsToBackend(updatedItems);
-  }, [id, data, processedDDItems, updateNodeData, saveDDItemsToBackend]);
+  }, [id, parsedData, processedDDItems, updateNodeData, saveDDItemsToBackend]);
 
   // Update an existing due diligence item
   const updateDDItem = useCallback((item: DDItem) => {
@@ -299,39 +261,36 @@ export function useProviderNode(id: string, data: RFProviderNodeData) {
       i.id === item.id ? { ...i, ...item } : i
     );
     
-    updateNodeData(id, { ...data, ddItems: updatedItems });
+    updateNodeData(id, { ...parsedData, ddItems: updatedItems });
     saveDDItemsToBackend(updatedItems);
-  }, [id, data, processedDDItems, updateNodeData, saveDDItemsToBackend]);
+  }, [id, parsedData, processedDDItems, updateNodeData, saveDDItemsToBackend]);
 
   // Remove a due diligence item
   const removeDDItem = useCallback((itemId: string) => {
     const updatedItems = processedDDItems.filter(item => item.id !== itemId);
-    updateNodeData(id, { ...data, ddItems: updatedItems });
+    updateNodeData(id, { ...parsedData, ddItems: updatedItems });
     saveDDItemsToBackend(updatedItems);
-  }, [id, data, processedDDItems, updateNodeData, saveDDItemsToBackend]);
+  }, [id, parsedData, processedDDItems, updateNodeData, saveDDItemsToBackend]);
 
   // Clean up timers on unmount
   useEffect(() => {
     return () => {
-      if (titleDebounceRef.current) clearTimeout(titleDebounceRef.current);
-      if (descriptionDebounceRef.current) clearTimeout(descriptionDebounceRef.current);
       if (costsDebounceRef.current) clearTimeout(costsDebounceRef.current);
       if (ddItemsDebounceRef.current) clearTimeout(ddItemsDebounceRef.current);
-      if (teamAllocationsDebounceRef.current?.timeout) clearTimeout(teamAllocationsDebounceRef.current.timeout);
     };
   }, []);
 
   // Return the hook API
-  return {
+  return useMemo(() => ({
     // State
-    title: data.title || '',
-    description: data.description || '',
+    title: parsedData.title || '',
+    description: parsedData.description || '',
     status,
     processedCosts,
     processedDDItems,
     processedTeamAllocations: teamAllocationsFromHook,
     connectedTeams,
-    costs,
+    costs: costsFromHook,
     
     // Handlers
     handleTitleChange,
@@ -362,5 +321,32 @@ export function useProviderNode(id: string, data: RFProviderNodeData) {
     
     // Duration
     duration,
-  };
+  }), [
+    parsedData.title,
+    parsedData.description,
+    status,
+    processedCosts,
+    processedDDItems,
+    teamAllocationsFromHook,
+    connectedTeams,
+    costsFromHook,
+    handleTitleChange,
+    handleDescriptionChange,
+    handleDelete,
+    addCost,
+    updateCost,
+    removeCost,
+    addDDItem,
+    updateDDItem,
+    removeDDItem,
+    resourceAllocation.handleAllocationChangeLocal,
+    resourceAllocation.handleAllocationCommit,
+    resourceAllocation.calculateMemberAllocations,
+    resourceAllocation.calculateCostSummary,
+    teamAllocationHook.requestTeamAllocation,
+    saveTeamAllocationsToBackend,
+    getStatusColor,
+    cycleStatus,
+    duration
+  ]);
 } 

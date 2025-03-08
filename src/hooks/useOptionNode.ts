@@ -8,8 +8,6 @@ import {
   Risk, 
   OptionType,
   TeamAllocation,
-  ImpactLevel,
-  SeverityLevel
 } from '@/services/graph/option/option.types';
 import { GraphApiClient } from '@/services/graph/neo4j/api-client';
 import { NodeType } from '@/services/graph/neo4j/api-urls';
@@ -19,22 +17,9 @@ import { useNodeStatus } from './useNodeStatus';
 import { useDurationInput } from './useDurationInput';
 import { v4 as uuidv4 } from 'uuid';
 import { 
-  calculateWeeklyCapacity, 
-  percentageToHours,
-  MemberCapacity
+  prepareDataForBackend,
+  parseDataFromBackend
 } from '@/lib/utils';
-
-// Utility function to round numbers to 1 decimal place for better display
-const roundToOneDecimal = (num: number): number => {
-  return Math.round(num * 10) / 10;
-};
-
-// Define a more specific type for member allocations if not already defined in option.types.ts
-interface MemberAllocation {
-  memberId: string;
-  name?: string;
-  hours: number;
-}
 
 /**
  * Hook for managing option node state and operations
@@ -43,42 +28,50 @@ interface MemberAllocation {
 export function useOptionNode(id: string, data: RFOptionNodeData) {
   const { updateNodeData, setNodes, setEdges, getEdges, getNodes } = useReactFlow();
   
+  // Define JSON fields that need special handling
+  const jsonFields = ['goals', 'risks', 'teamAllocations', 'memberAllocations'];
+  
+  // Parse complex objects if they are strings
+  const parsedData = useMemo(() => {
+    return parseDataFromBackend(data, jsonFields) as RFOptionNodeData;
+  }, [data, jsonFields]);
+  
   // State for option data
-  const [title, setTitle] = useState(data.title || '');
-  const [description, setDescription] = useState(data.description || '');
-  const [optionType, setOptionType] = useState<OptionType | undefined>(data.optionType || 'customer');
-  const [transactionFeeRate, setTransactionFeeRate] = useState<number | undefined>(data.transactionFeeRate);
-  const [monthlyVolume, setMonthlyVolume] = useState<number | undefined>(data.monthlyVolume);
-  const [goals, setGoals] = useState<Goal[]>(data.goals || []);
-  const [risks, setRisks] = useState<Risk[]>(data.risks || []);
+  const [title, setTitle] = useState(parsedData.title || '');
+  const [description, setDescription] = useState(parsedData.description || '');
+  const [optionType, setOptionType] = useState<OptionType | undefined>(parsedData.optionType || 'customer');
+  const [transactionFeeRate, setTransactionFeeRate] = useState<number | undefined>(parsedData.transactionFeeRate);
+  const [monthlyVolume, setMonthlyVolume] = useState<number | undefined>(parsedData.monthlyVolume);
+  const [goals, setGoals] = useState<Goal[]>(parsedData.goals || []);
+  const [risks, setRisks] = useState<Risk[]>(parsedData.risks || []);
   const [teamAllocations, setTeamAllocations] = useState<TeamAllocation[]>(
-    Array.isArray(data.teamAllocations) ? data.teamAllocations : []
+    Array.isArray(parsedData.teamAllocations) ? parsedData.teamAllocations : []
   );
   
   // Ensure complex objects are always arrays
   const processedGoals = useMemo(() => {
-    return Array.isArray(data.goals) ? data.goals : [];
-  }, [data.goals]);
+    return Array.isArray(parsedData.goals) ? parsedData.goals : [];
+  }, [parsedData.goals]);
   
   const processedRisks = useMemo(() => {
-    return Array.isArray(data.risks) ? data.risks : [];
-  }, [data.risks]);
+    return Array.isArray(parsedData.risks) ? parsedData.risks : [];
+  }, [parsedData.risks]);
   
   const processedTeamMembers = useMemo(() => {
-    return Array.isArray(data.teamMembers) ? data.teamMembers : [];
-  }, [data.teamMembers]);
+    return Array.isArray(parsedData.teamMembers) ? parsedData.teamMembers : [];
+  }, [parsedData.teamMembers]);
   
   const processedMemberAllocations = useMemo(() => {
-    return Array.isArray(data.memberAllocations) ? data.memberAllocations : [];
-  }, [data.memberAllocations]);
+    return Array.isArray(parsedData.memberAllocations) ? parsedData.memberAllocations : [];
+  }, [parsedData.memberAllocations]);
   
   // Ensure teamAllocations is always an array for UI rendering
   const processedTeamAllocations = useMemo(() => {
-    if (Array.isArray(data.teamAllocations)) {
-      return data.teamAllocations;
-    } else if (typeof data.teamAllocations === 'string') {
+    if (Array.isArray(parsedData.teamAllocations)) {
+      return parsedData.teamAllocations;
+    } else if (typeof parsedData.teamAllocations === 'string') {
       try {
-        const parsed = JSON.parse(data.teamAllocations);
+        const parsed = JSON.parse(parsedData.teamAllocations);
         return Array.isArray(parsed) ? parsed : [];
       } catch (e) {
         console.warn('Failed to parse teamAllocations string:', e);
@@ -86,17 +79,17 @@ export function useOptionNode(id: string, data: RFOptionNodeData) {
       }
     }
     return [];
-  }, [data.teamAllocations]);
+  }, [parsedData.teamAllocations]);
 
   // Create a safe copy of the data for hooks
   const safeOptionData = useMemo(() => ({
-    ...data,
+    ...parsedData,
     goals: processedGoals,
     risks: processedRisks,
     teamMembers: processedTeamMembers,
     memberAllocations: processedMemberAllocations,
     teamAllocations: processedTeamAllocations
-  }), [data, processedGoals, processedRisks, processedTeamMembers, processedMemberAllocations, processedTeamAllocations]);
+  }), [parsedData, processedGoals, processedRisks, processedTeamMembers, processedMemberAllocations, processedTeamAllocations]);
 
   // Save team allocations to backend
   const saveTeamAllocationsToBackend = useCallback(async (allocations: TeamAllocation[]) => {
@@ -184,17 +177,23 @@ export function useOptionNode(id: string, data: RFOptionNodeData) {
   const monthlyVolumeDebounceRef = useRef<NodeJS.Timeout | null>(null);
 
   // Save to backend function
-  const saveToBackend = useCallback(async (field: string, value: any) => {
+  const saveToBackend = useCallback(async (updates: Partial<RFOptionNodeData>) => {
     try {
-      await GraphApiClient.updateNode('option' as NodeType, id, {
-        [field]: value
-      });
-      console.log(`Updated option node ${id} ${field}`);
+      // Prepare data for backend by stringifying JSON fields
+      const apiData = prepareDataForBackend(updates, jsonFields);
+      
+      // Send to backend
+      await GraphApiClient.updateNode('option' as NodeType, id, apiData);
+      
+      // Update React Flow state with the original object data (not stringified)
+      updateNodeData(id, updates);
+      
+      console.log(`Updated option node ${id}:`, updates);
     } catch (error) {
       console.error(`Failed to update option node ${id}:`, error);
-      toast.error(`Update Failed: Failed to save ${field} to the server.`);
+      toast.error(`Update Failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
-  }, [id]);
+  }, [id, updateNodeData, jsonFields]);
 
   // Handle title change
   const handleTitleChange = useCallback((newTitle: string) => {
@@ -203,7 +202,7 @@ export function useOptionNode(id: string, data: RFOptionNodeData) {
     if (titleDebounceRef.current) clearTimeout(titleDebounceRef.current);
     
     titleDebounceRef.current = setTimeout(async () => {
-      await saveToBackend('title', newTitle);
+      await saveToBackend({ title: newTitle });
       titleDebounceRef.current = null;
     }, 1000);
   }, [id, safeOptionData, updateNodeData, saveToBackend]);
@@ -215,7 +214,7 @@ export function useOptionNode(id: string, data: RFOptionNodeData) {
     if (descriptionDebounceRef.current) clearTimeout(descriptionDebounceRef.current);
     
     descriptionDebounceRef.current = setTimeout(async () => {
-      await saveToBackend('description', newDescription);
+      await saveToBackend({ description: newDescription });
       descriptionDebounceRef.current = null;
     }, 1000);
   }, [id, safeOptionData, updateNodeData, saveToBackend]);
@@ -232,7 +231,7 @@ export function useOptionNode(id: string, data: RFOptionNodeData) {
       ...safeOptionData, 
       goals: updatedGoals
     });
-    saveToBackend('goals', updatedGoals);
+    saveToBackend({ goals: updatedGoals });
   }, [id, safeOptionData, processedGoals, updateNodeData, saveToBackend]);
 
   // Update an existing goal
@@ -244,7 +243,7 @@ export function useOptionNode(id: string, data: RFOptionNodeData) {
       ...safeOptionData,
       goals: updatedGoals
     });
-    saveToBackend('goals', updatedGoals);
+    saveToBackend({ goals: updatedGoals });
   }, [id, safeOptionData, processedGoals, updateNodeData, saveToBackend]);
 
   // Remove a goal
@@ -254,7 +253,7 @@ export function useOptionNode(id: string, data: RFOptionNodeData) {
       ...safeOptionData,
       goals: updatedGoals
     });
-    saveToBackend('goals', updatedGoals);
+    saveToBackend({ goals: updatedGoals });
   }, [id, safeOptionData, processedGoals, updateNodeData, saveToBackend]);
 
   // Add a new risk
@@ -269,7 +268,7 @@ export function useOptionNode(id: string, data: RFOptionNodeData) {
       ...safeOptionData, 
       risks: updatedRisks
     });
-    saveToBackend('risks', updatedRisks);
+    saveToBackend({ risks: updatedRisks });
   }, [id, safeOptionData, processedRisks, updateNodeData, saveToBackend]);
 
   // Update an existing risk
@@ -281,7 +280,7 @@ export function useOptionNode(id: string, data: RFOptionNodeData) {
       ...safeOptionData,
       risks: updatedRisks
     });
-    saveToBackend('risks', updatedRisks);
+    saveToBackend({ risks: updatedRisks });
   }, [id, safeOptionData, processedRisks, updateNodeData, saveToBackend]);
 
   // Remove a risk
@@ -291,7 +290,7 @@ export function useOptionNode(id: string, data: RFOptionNodeData) {
       ...safeOptionData,
       risks: updatedRisks
     });
-    saveToBackend('risks', updatedRisks);
+    saveToBackend({ risks: updatedRisks });
   }, [id, safeOptionData, processedRisks, updateNodeData, saveToBackend]);
 
   // Delete the node
@@ -318,7 +317,7 @@ export function useOptionNode(id: string, data: RFOptionNodeData) {
   const handleOptionTypeChange = useCallback((value: OptionType) => {
     setOptionType(value);
     updateNodeData(id, { ...safeOptionData, optionType: value });
-    saveToBackend('optionType', value);
+    saveToBackend({ optionType: value });
   }, [id, safeOptionData, updateNodeData, saveToBackend]);
 
   // Handle transaction fee change
@@ -336,7 +335,7 @@ export function useOptionNode(id: string, data: RFOptionNodeData) {
       }
       
       transactionFeeDebounceRef.current = setTimeout(() => {
-        saveToBackend('transactionFeeRate', value);
+        saveToBackend({ transactionFeeRate: value });
         transactionFeeDebounceRef.current = null;
       }, 500);
     }
@@ -357,7 +356,7 @@ export function useOptionNode(id: string, data: RFOptionNodeData) {
       }
       
       monthlyVolumeDebounceRef.current = setTimeout(() => {
-        saveToBackend('monthlyVolume', value);
+        saveToBackend({ monthlyVolume: value });
         monthlyVolumeDebounceRef.current = null;
       }, 500);
     }
@@ -408,7 +407,7 @@ export function useOptionNode(id: string, data: RFOptionNodeData) {
       const defaultOptionType: OptionType = 'customer';
       console.log('Setting default option type to customer');
       updateNodeData(id, { ...data, optionType: defaultOptionType });
-      saveToBackend('optionType', defaultOptionType);
+      saveToBackend({ optionType: defaultOptionType });
     }
   }, [id, data, updateNodeData, saveToBackend]);
 
@@ -507,11 +506,6 @@ export function useOptionNode(id: string, data: RFOptionNodeData) {
     handleDelete,
     refreshData,
     
-    // Team allocation handlers - these are now provided by the shared resource allocation hook
-    // handleAllocationChangeLocal,
-    // handleAllocationCommit,
-    // handleTeamAllocation,
-    // handleTeamMemberAllocation,
     requestTeamAllocation: teamAllocationHook.requestTeamAllocation,
     saveTeamAllocationsToBackend,
     
@@ -552,10 +546,6 @@ export function useOptionNode(id: string, data: RFOptionNodeData) {
     handleMonthlyVolumeChange,
     handleDelete,
     refreshData,
-    // handleAllocationChangeLocal,
-    // handleAllocationCommit,
-    // handleTeamAllocation,
-    // handleTeamMemberAllocation,
     teamAllocationHook.requestTeamAllocation,
     saveTeamAllocationsToBackend,
     addGoal,

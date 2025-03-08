@@ -3,6 +3,7 @@ import { useReactFlow, useEdges } from "@xyflow/react";
 import { toast } from "sonner";
 import { RFMetaNode, RFMetaNodeData } from '@/services/graph/meta/meta.types';
 import { API_URLS } from '@/services/graph/neo4j/api-urls';
+import { prepareDataForBackend, parseDataFromBackend } from "@/lib/utils";
 
 /**
  * Hook for managing meta node state and operations
@@ -12,9 +13,17 @@ export function useMetaNode(id: string, data: RFMetaNodeData) {
   const { updateNodeData, setNodes, setEdges } = useReactFlow();
   const edges = useEdges();
   
+  // Define JSON fields that need special handling
+  const jsonFields: string[] = [];
+  
+  // Parse complex objects if they are strings
+  const parsedData = useMemo(() => {
+    return parseDataFromBackend(data, jsonFields) as RFMetaNodeData;
+  }, [data, jsonFields]);
+  
   // Local state for title and description to avoid excessive API calls
-  const [title, setTitle] = useState(data.title || '');
-  const [description, setDescription] = useState(data.description || '');
+  const [title, setTitle] = useState(parsedData.title || '');
+  const [description, setDescription] = useState(parsedData.description || '');
   
   // Refs for debounce timers
   const titleDebounceRef = useRef<NodeJS.Timeout | null>(null);
@@ -22,37 +31,43 @@ export function useMetaNode(id: string, data: RFMetaNodeData) {
   
   // Update local state when props change
   useEffect(() => {
-    setTitle(data.title || '');
-    setDescription(data.description || '');
-  }, [data.title, data.description]);
+    setTitle(parsedData.title || '');
+    setDescription(parsedData.description || '');
+  }, [parsedData.title, parsedData.description]);
   
   // Helper function to save data to backend
-  const saveToBackend = useCallback(async (updatedData: Partial<RFMetaNodeData>) => {
+  const saveToBackend = useCallback(async (updates: Partial<RFMetaNodeData>) => {
     try {
+      // Prepare data for backend by stringifying JSON fields
+      const apiData = prepareDataForBackend(updates, jsonFields);
+      
       const response = await fetch(`${API_URLS['meta']}/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(updatedData),
+        body: JSON.stringify(apiData),
       });
 
       if (!response.ok) {
         throw new Error(`Failed to update meta node: ${response.status} ${response.statusText}`);
       }
       
-      console.log(`Updated meta node ${id}:`, updatedData);
+      // Update React Flow state with the original object data (not stringified)
+      updateNodeData(id, updates);
+      
+      console.log(`Updated meta node ${id}:`, updates);
     } catch (error) {
       console.error(`Failed to update meta node ${id}:`, error);
       toast.error(`Failed to save changes`, {
         description: `${error instanceof Error ? error.message : 'Unknown error'}`
       });
     }
-  }, [id]);
+  }, [id, jsonFields, updateNodeData]);
 
   const handleTitleChange = useCallback((newTitle: string) => {
     // Update local state immediately for responsive UI
     setTitle(newTitle);
     // Update ReactFlow state for consistency
-    updateNodeData(id, { ...data, title: newTitle });
+    updateNodeData(id, { ...parsedData, title: newTitle });
     
     // Clear any existing debounce timer
     if (titleDebounceRef.current) {
@@ -63,7 +78,7 @@ export function useMetaNode(id: string, data: RFMetaNodeData) {
     titleDebounceRef.current = setTimeout(async () => {
       try {
         // Only make API call if value has changed
-        if (newTitle !== data.title) {
+        if (newTitle !== parsedData.title) {
           // Persist the change to the database
           await saveToBackend({ title: newTitle });
           console.log(`Updated meta node ${id} title to "${newTitle}"`);
@@ -73,13 +88,13 @@ export function useMetaNode(id: string, data: RFMetaNodeData) {
       }
       titleDebounceRef.current = null;
     }, 1000); // 1 second debounce
-  }, [id, data, updateNodeData, saveToBackend]);
+  }, [id, parsedData, updateNodeData, saveToBackend]);
 
   const handleDescriptionChange = useCallback((newDescription: string) => {
     // Update local state immediately for responsive UI
     setDescription(newDescription);
     // Update ReactFlow state for consistency
-    updateNodeData(id, { ...data, description: newDescription });
+    updateNodeData(id, { ...parsedData, description: newDescription });
     
     // Clear any existing debounce timer
     if (descriptionDebounceRef.current) {
@@ -90,7 +105,7 @@ export function useMetaNode(id: string, data: RFMetaNodeData) {
     descriptionDebounceRef.current = setTimeout(async () => {
       try {
         // Only make API call if value has changed
-        if (newDescription !== data.description) {
+        if (newDescription !== parsedData.description) {
           // Persist the change to the database
           await saveToBackend({ description: newDescription });
           console.log(`Updated meta node ${id} description`);
@@ -100,7 +115,7 @@ export function useMetaNode(id: string, data: RFMetaNodeData) {
       }
       descriptionDebounceRef.current = null;
     }, 1000); // 1 second debounce
-  }, [id, data, updateNodeData, saveToBackend]);
+  }, [id, parsedData, updateNodeData, saveToBackend]);
   
   // Clean up timers on unmount
   useEffect(() => {
