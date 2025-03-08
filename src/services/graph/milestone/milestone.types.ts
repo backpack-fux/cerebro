@@ -10,6 +10,29 @@ export type KPI = {
   unit: string;
 };
 
+// Feature allocation summary for milestone
+export type FeatureAllocationSummary = {
+  featureId: string;
+  name: string;
+  totalHours: number;
+  totalCost: number;
+};
+
+// Option revenue summary for milestone
+export type OptionRevenueSummary = {
+  optionId: string;
+  name: string;
+  monthlyRevenue: number;
+};
+
+// Provider cost summary for milestone
+export type ProviderCostSummary = {
+  id: string;
+  name: string;
+  amount: number;
+  type: string;
+};
+
 // Frontend types for React Flow
 export interface RFMilestoneNodeData extends ReactFlowNodeBase {
   title: string;
@@ -17,6 +40,14 @@ export interface RFMilestoneNodeData extends ReactFlowNodeBase {
   status?: NodeStatus;
   kpis?: KPI[];
   position?: XYPosition;
+  // Cost and revenue data
+  totalCost?: number;
+  monthlyValue?: number;
+  teamCosts?: number;
+  providerCosts?: number;
+  featureAllocations?: FeatureAllocationSummary[];
+  optionDetails?: OptionRevenueSummary[];
+  providerDetails?: ProviderCostSummary[];
 }
 
 export interface RFMilestoneNode extends Node<RFMilestoneNodeData> {}
@@ -36,6 +67,13 @@ interface UpdatableMilestoneNodeData {
   status?: NodeStatus;
   kpis?: KPI[];
   position?: XYPosition;
+  // Cost and revenue data
+  totalCost?: number;
+  monthlyValue?: number;
+  teamCosts?: number;
+  providerCosts?: number;
+  featureAllocations?: FeatureAllocationSummary[];
+  optionDetails?: OptionRevenueSummary[];
 }
 
 export type UpdateMilestoneNodeParams = UpdatableMilestoneNodeData & {
@@ -54,6 +92,14 @@ export interface Neo4jMilestoneNodeData {
   updatedAt: string;
   positionX: number;
   positionY: number;
+  // Cost and revenue data stored as strings in Neo4j
+  totalCost?: number;
+  monthlyValue?: number;
+  teamCosts?: number;
+  providerCosts?: number;
+  featureAllocations?: string; // Stored as JSON string in Neo4j
+  optionDetails?: string; // Stored as JSON string in Neo4j
+  providerDetails?: string; // Stored as JSON string in Neo4j
 }
 
 // Edge types for milestone connections

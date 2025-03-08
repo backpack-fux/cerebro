@@ -9,7 +9,7 @@ import {
   NodeHeaderMenuAction,
 } from '@/components/nodes/node-header';
 import { DropdownMenuItem } from "@radix-ui/react-dropdown-menu";
-import { memo, useMemo } from "react";
+import { memo, useMemo, useState, useEffect } from "react";
 import { useEdges, useReactFlow } from "@xyflow/react";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
@@ -60,6 +60,46 @@ export const OptionNode = memo(function OptionNode({ id, data, selected }: NodeP
   
   // Use the shared resource allocation hook
   const resourceAllocation = useResourceAllocation(data, option, getNodes);
+  
+  // Local state for input values to prevent clearing during re-renders
+  const [localTransactionFee, setLocalTransactionFee] = useState<string>(
+    option.transactionFeeRate !== undefined ? option.transactionFeeRate.toString() : ''
+  );
+  const [localMonthlyVolume, setLocalMonthlyVolume] = useState<string>(
+    option.monthlyVolume !== undefined ? option.monthlyVolume.toString() : ''
+  );
+  
+  // Update local state when option values change
+  useEffect(() => {
+    if (option.transactionFeeRate !== undefined) {
+      setLocalTransactionFee(option.transactionFeeRate.toString());
+    }
+    if (option.monthlyVolume !== undefined) {
+      setLocalMonthlyVolume(option.monthlyVolume.toString());
+    }
+  }, [option.transactionFeeRate, option.monthlyVolume]);
+  
+  // Handle transaction fee input change
+  const handleTransactionFeeInput = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    setLocalTransactionFee(value);
+    
+    const numValue = parseFloat(value);
+    if (!isNaN(numValue)) {
+      option.handleTransactionFeeChange(numValue);
+    }
+  };
+  
+  // Handle monthly volume input change
+  const handleMonthlyVolumeInput = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    setLocalMonthlyVolume(value);
+    
+    const numValue = parseFloat(value);
+    if (!isNaN(numValue)) {
+      option.handleMonthlyVolumeChange(numValue);
+    }
+  };
   
   /**
    * Format a member name from various data sources
@@ -173,15 +213,15 @@ export const OptionNode = memo(function OptionNode({ id, data, selected }: NodeP
           </RadioGroup>
         </div>
 
-        {option.optionType === 'customer' && (
+        {(option.optionType === 'customer' || option.optionType === undefined) && (
           <div className="space-y-4 p-3 bg-muted/30 rounded-lg">
             <div className="space-y-2">
               <Label>Transaction Fee Rate</Label>
               <div className="relative">
                 <Input
                   type="number"
-                  value={option.transactionFeeRate || ''}
-                  onChange={(e) => option.handleTransactionFeeChange(parseFloat(e.target.value))}
+                  value={localTransactionFee}
+                  onChange={handleTransactionFeeInput}
                   className="pr-8 bg-transparent"
                   placeholder="0.00"
                   min={0}
@@ -202,8 +242,8 @@ export const OptionNode = memo(function OptionNode({ id, data, selected }: NodeP
                 </span>
                 <Input
                   type="number"
-                  value={option.monthlyVolume || ''}
-                  onChange={(e) => option.handleMonthlyVolumeChange(parseFloat(e.target.value))}
+                  value={localMonthlyVolume}
+                  onChange={handleMonthlyVolumeInput}
                   className="pl-7 bg-transparent"
                   placeholder="0.00"
                   min={0}

@@ -2,16 +2,19 @@ import { NextRequest, NextResponse } from 'next/server';
 import { milestoneService } from '@/services/graph/neo4j/neo4j.provider';
 import { UpdateMilestoneNodeParams } from '@/services/graph/milestone/milestone.types';
 
-interface RouteParams {
-  params: {
-    id: string;
-  };
+// Helper function to extract ID from URL
+function getIdFromUrl(request: NextRequest): string {
+  const url = new URL(request.url);
+  const pathParts = url.pathname.split('/');
+  return pathParts[pathParts.length - 1];
 }
 
 // GET /api/graph/milestone/[id]
-export async function GET(request: NextRequest, { params }: RouteParams) {
+export async function GET(request: NextRequest) {
   try {
-    const { id } = params;
+    const id = getIdFromUrl(request);
+    console.log(`[API] Getting milestone node: ${id}`);
+    
     const node = await milestoneService.getMilestoneNode(id);
     
     if (!node) {
@@ -20,15 +23,18 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     
     return NextResponse.json(node);
   } catch (error) {
-    console.error(`[API] Error getting milestone node ${params.id}:`, error);
+    const id = getIdFromUrl(request);
+    console.error(`[API] Error getting milestone node ${id}:`, error);
     return NextResponse.json({ error: 'Failed to get milestone node' }, { status: 500 });
   }
 }
 
 // PATCH /api/graph/milestone/[id]
-export async function PATCH(request: NextRequest, { params }: RouteParams) {
+export async function PATCH(request: NextRequest) {
   try {
-    const { id } = params;
+    const id = getIdFromUrl(request);
+    console.log(`[API] Updating milestone node: ${id}`);
+    
     const body = await request.json();
     
     // Combine the ID from the URL with the update data from the body
@@ -40,19 +46,23 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
     const node = await milestoneService.updateMilestoneNode(updateParams);
     return NextResponse.json(node);
   } catch (error) {
-    console.error(`[API] Error updating milestone node ${params.id}:`, error);
+    const id = getIdFromUrl(request);
+    console.error(`[API] Error updating milestone node ${id}:`, error);
     return NextResponse.json({ error: 'Failed to update milestone node' }, { status: 500 });
   }
 }
 
 // DELETE /api/graph/milestone/[id]
-export async function DELETE(request: NextRequest, { params }: RouteParams) {
+export async function DELETE(request: NextRequest) {
   try {
-    const { id } = params;
+    const id = getIdFromUrl(request);
+    console.log(`[API] Deleting milestone node: ${id}`);
+    
     await milestoneService.deleteMilestoneNode(id);
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.error(`[API] Error deleting milestone node ${params.id}:`, error);
+    const id = getIdFromUrl(request);
+    console.error(`[API] Error deleting milestone node ${id}:`, error);
     return NextResponse.json({ error: 'Failed to delete milestone node' }, { status: 500 });
   }
 } 

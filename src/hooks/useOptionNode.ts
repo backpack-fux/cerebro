@@ -46,7 +46,7 @@ export function useOptionNode(id: string, data: RFOptionNodeData) {
   // State for option data
   const [title, setTitle] = useState(data.title || '');
   const [description, setDescription] = useState(data.description || '');
-  const [optionType, setOptionType] = useState<OptionType | undefined>(data.optionType);
+  const [optionType, setOptionType] = useState<OptionType | undefined>(data.optionType || 'customer');
   const [transactionFeeRate, setTransactionFeeRate] = useState<number | undefined>(data.transactionFeeRate);
   const [monthlyVolume, setMonthlyVolume] = useState<number | undefined>(data.monthlyVolume);
   const [goals, setGoals] = useState<Goal[]>(data.goals || []);
@@ -156,6 +156,9 @@ export function useOptionNode(id: string, data: RFOptionNodeData) {
   const titleDebounceRef = useRef<NodeJS.Timeout | null>(null);
   const descriptionDebounceRef = useRef<NodeJS.Timeout | null>(null);
   const teamAllocationsDebounceRef = useRef<{ timeout: NodeJS.Timeout | null }>({ timeout: null });
+  const defaultOptionTypeSetRef = useRef<boolean>(false);
+  const transactionFeeDebounceRef = useRef<NodeJS.Timeout | null>(null);
+  const monthlyVolumeDebounceRef = useRef<NodeJS.Timeout | null>(null);
 
   // Save to backend function
   const saveToBackend = useCallback(async (field: string, value: any) => {
@@ -290,6 +293,7 @@ export function useOptionNode(id: string, data: RFOptionNodeData) {
 
   // Handle option type change
   const handleOptionTypeChange = useCallback((value: OptionType) => {
+    setOptionType(value);
     updateNodeData(id, { ...safeOptionData, optionType: value });
     saveToBackend('optionType', value);
   }, [id, safeOptionData, updateNodeData, saveToBackend]);
@@ -297,16 +301,42 @@ export function useOptionNode(id: string, data: RFOptionNodeData) {
   // Handle transaction fee change
   const handleTransactionFeeChange = useCallback((value: number) => {
     if (!isNaN(value) && value >= 0 && value <= 100) {
+      // Update local state immediately for responsive UI
+      setTransactionFeeRate(value);
+      
+      // Update ReactFlow state
       updateNodeData(id, { ...safeOptionData, transactionFeeRate: value });
-      saveToBackend('transactionFeeRate', value);
+      
+      // Debounce the backend save to prevent too many requests
+      if (transactionFeeDebounceRef.current) {
+        clearTimeout(transactionFeeDebounceRef.current);
+      }
+      
+      transactionFeeDebounceRef.current = setTimeout(() => {
+        saveToBackend('transactionFeeRate', value);
+        transactionFeeDebounceRef.current = null;
+      }, 500);
     }
   }, [id, safeOptionData, updateNodeData, saveToBackend]);
 
   // Handle monthly volume change
   const handleMonthlyVolumeChange = useCallback((value: number) => {
     if (!isNaN(value) && value >= 0) {
+      // Update local state immediately for responsive UI
+      setMonthlyVolume(value);
+      
+      // Update ReactFlow state
       updateNodeData(id, { ...safeOptionData, monthlyVolume: value });
-      saveToBackend('monthlyVolume', value);
+      
+      // Debounce the backend save to prevent too many requests
+      if (monthlyVolumeDebounceRef.current) {
+        clearTimeout(monthlyVolumeDebounceRef.current);
+      }
+      
+      monthlyVolumeDebounceRef.current = setTimeout(() => {
+        saveToBackend('monthlyVolume', value);
+        monthlyVolumeDebounceRef.current = null;
+      }, 500);
     }
   }, [id, safeOptionData, updateNodeData, saveToBackend]);
 
@@ -340,8 +370,24 @@ export function useOptionNode(id: string, data: RFOptionNodeData) {
       if (titleDebounceRef.current) clearTimeout(titleDebounceRef.current);
       if (descriptionDebounceRef.current) clearTimeout(descriptionDebounceRef.current);
       if (teamAllocationsDebounceRef.current?.timeout) clearTimeout(teamAllocationsDebounceRef.current.timeout);
+      if (transactionFeeDebounceRef.current) clearTimeout(transactionFeeDebounceRef.current);
+      if (monthlyVolumeDebounceRef.current) clearTimeout(monthlyVolumeDebounceRef.current);
     };
   }, []);
+
+  // Set default option type if not already set
+  useEffect(() => {
+    // Only run this effect once
+    if (!defaultOptionTypeSetRef.current && data.optionType === undefined) {
+      defaultOptionTypeSetRef.current = true;
+      
+      // Set default option type to 'customer'
+      const defaultOptionType: OptionType = 'customer';
+      console.log('Setting default option type to customer');
+      updateNodeData(id, { ...data, optionType: defaultOptionType });
+      saveToBackend('optionType', defaultOptionType);
+    }
+  }, [id, data, updateNodeData, saveToBackend]);
 
   // Function to refresh data from the server
   const refreshData = useCallback(async () => {
