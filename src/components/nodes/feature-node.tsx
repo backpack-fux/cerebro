@@ -17,12 +17,11 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { RFFeatureNodeData } from '@/services/graph/feature/feature.types';
 import { useFeatureNode } from '@/hooks/useFeatureNode';
-import { useResourceAllocation } from '@/hooks/useResourceAllocation';
 import { useReactFlow } from "@xyflow/react";
 import { RefreshCw } from "lucide-react";
 import { CostReceipt } from '@/components/shared/CostReceipt';
 import { TeamAllocation } from '@/components/shared/TeamAllocation';
-import { formatNumber, formatHours } from '@/utils/format-utils';
+import { formatHours } from '@/utils/format-utils';
 import { formatMemberName } from '@/utils/node-utils';
 
 /**

@@ -23,7 +23,7 @@ import { useOptionNode } from '@/hooks/useOptionNode';
 import { useResourceAllocation } from '@/hooks/useResourceAllocation';
 import { CostReceipt } from '@/components/shared/CostReceipt';
 import { TeamAllocation } from '@/components/shared/TeamAllocation';
-import { formatNumber, formatHours, formatCurrency, formatPercentage } from '@/utils/format-utils';
+import { formatNumber, formatHours } from '@/utils/format-utils';
 import { formatMemberName } from '@/utils/node-utils';
 
 /**

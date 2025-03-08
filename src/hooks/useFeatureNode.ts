@@ -16,14 +16,13 @@ import { useResourceAllocation } from "@/hooks/useResourceAllocation";
 import { prepareDataForBackend, parseDataFromBackend, parseJsonIfString } from "@/lib/utils";
 import { isFeatureNode } from "@/utils/type-guards";
 import { TeamAllocation } from "@/utils/allocation-utils";
-import { getEndDateFromDuration } from "@/utils/date-utils";
 
 /**
  * Hook for managing feature node state and operations
  * Separates domain logic from React Flow component state
  */
 export function useFeatureNode(id: string, data: RFFeatureNodeData) {
-  const { getNodes, setNodes, getEdges, setEdges } = useReactFlow();
+  const { getNodes, setNodes, setEdges } = useReactFlow();
   
   // Track if we've loaded data from the server
   const initialFetchCompletedRef = useRef(false);

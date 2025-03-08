@@ -9,15 +9,15 @@ import {
   NodeHeaderMenuAction,
 } from '@/components/nodes/node-header';
 import { DropdownMenuItem } from "@radix-ui/react-dropdown-menu";
-import { useState, useMemo, memo } from "react";
+import { useMemo, memo } from "react";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
-import { Plus, Trash, RefreshCw } from "lucide-react";
+import { Plus, Trash } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Slider } from "@/components/ui/slider";
+
 import { 
   RFProviderNodeData, 
   ProviderCost, 
@@ -34,7 +34,7 @@ import { useProviderNode } from '@/hooks/useProviderNode';
 import { useReactFlow } from "@xyflow/react";
 import { CostReceipt } from '@/components/shared/CostReceipt';
 import { TeamAllocation } from '@/components/shared/TeamAllocation';
-import { formatHours, formatCurrency, formatNumber } from '@/utils/format-utils';
+import { formatHours} from '@/utils/format-utils';
 import { formatMemberName } from '@/utils/node-utils';
 
 // Use React.memo to prevent unnecessary re-renders
