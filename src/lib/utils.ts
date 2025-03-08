@@ -308,3 +308,22 @@ export function parseDataFromBackend<T extends Record<string, any>>(
   
   return parsedData;
 }
+
+/**
+ * Parse JSON data if it's a string, or return the original value if it's already parsed
+ * @param value The value to parse
+ * @param defaultValue Default value to return if parsing fails
+ */
+export function parseJsonIfString<T>(value: unknown, defaultValue: T): T {
+  if (typeof value !== 'string') {
+    return Array.isArray(value) || typeof value === 'object' 
+      ? value as T 
+      : defaultValue;
+  }
+  
+  try {
+    return JSON.parse(value) as T;
+  } catch (e) {
+    return defaultValue;
+  }
+}
