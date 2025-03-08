@@ -1,6 +1,7 @@
 import { RFMilestoneNode, RFMilestoneNodeData, Neo4jMilestoneNodeData, RFMilestoneEdge, Neo4jMilestoneEdge, FeatureAllocationSummary, OptionRevenueSummary, ProviderCostSummary } from '@/services/graph/milestone/milestone.types';
 import { GraphEdge, GraphNode } from '../neo4j/graph.interface';
 import { Node as Neo4jNode, Relationship as Neo4jRelationship } from 'neo4j-driver';
+import { parseDataFromBackend } from '@/lib/utils';
 
 export function reactFlowToNeo4j(milestoneNode: RFMilestoneNode): Neo4jMilestoneNodeData {
   const data = milestoneNode.data as RFMilestoneNodeData; // Cast to ensure type safety
@@ -20,16 +21,17 @@ export function reactFlowToNeo4j(milestoneNode: RFMilestoneNode): Neo4jMilestone
         JSON.parse(data.featureAllocations);
         // If it parses successfully, use it as is
         featureAllocationsValue = data.featureAllocations;
-      } catch (e) {
-        // If it's not valid JSON, stringify it
+      } catch (error) {
+        // If it fails to parse, stringify it
         featureAllocationsValue = JSON.stringify(data.featureAllocations);
       }
     } else {
-      // If it's an array, stringify it
+      // If it's not a string, stringify it
       featureAllocationsValue = JSON.stringify(data.featureAllocations);
     }
   }
   
+  // Convert option details to JSON string for Neo4j storage
   let optionDetailsValue = undefined;
   if (data.optionDetails) {
     if (typeof data.optionDetails === 'string') {
@@ -38,16 +40,17 @@ export function reactFlowToNeo4j(milestoneNode: RFMilestoneNode): Neo4jMilestone
         JSON.parse(data.optionDetails);
         // If it parses successfully, use it as is
         optionDetailsValue = data.optionDetails;
-      } catch (e) {
-        // If it's not valid JSON, stringify it
+      } catch (error) {
+        // If it fails to parse, stringify it
         optionDetailsValue = JSON.stringify(data.optionDetails);
       }
     } else {
-      // If it's an array, stringify it
+      // If it's not a string, stringify it
       optionDetailsValue = JSON.stringify(data.optionDetails);
     }
   }
   
+  // Convert provider details to JSON string for Neo4j storage
   let providerDetailsValue = undefined;
   if (data.providerDetails) {
     if (typeof data.providerDetails === 'string') {
@@ -56,27 +59,27 @@ export function reactFlowToNeo4j(milestoneNode: RFMilestoneNode): Neo4jMilestone
         JSON.parse(data.providerDetails);
         // If it parses successfully, use it as is
         providerDetailsValue = data.providerDetails;
-      } catch (e) {
-        // If it's not valid JSON, stringify it
+      } catch (error) {
+        // If it fails to parse, stringify it
         providerDetailsValue = JSON.stringify(data.providerDetails);
       }
     } else {
-      // If it's an array, stringify it
+      // If it's not a string, stringify it
       providerDetailsValue = JSON.stringify(data.providerDetails);
     }
   }
-    
+  
   return {
-    id: cleanId, // Use clean ID without prefix
-    name: data.title || 'Untitled Milestone', // Default fallback
-    description: data.description,
+    id: cleanId,
     title: data.title,
+    description: data.description,
     status: data.status,
-    kpis: data.kpis ? JSON.stringify(data.kpis) : undefined, // Convert KPIs to JSON string for Neo4j
-    createdAt: data.createdAt || new Date().toISOString(), // Default to now if not provided
-    updatedAt: data.updatedAt || new Date().toISOString(), // Default to now if not provided
+    name: data.name || data.title || 'Untitled Milestone',
+    kpis: data.kpis ? JSON.stringify(data.kpis) : undefined,
     positionX: milestoneNode.position.x,
     positionY: milestoneNode.position.y,
+    createdAt: data.createdAt,
+    updatedAt: new Date().toISOString(),
     // Add cost and revenue data
     totalCost: data.totalCost,
     monthlyValue: data.monthlyValue,
@@ -89,53 +92,19 @@ export function reactFlowToNeo4j(milestoneNode: RFMilestoneNode): Neo4jMilestone
 }
 
 export function neo4jToReactFlow(neo4jData: Neo4jMilestoneNodeData): RFMilestoneNode {
-  // Parse KPIs from JSON string if available
-  const kpis = neo4jData.kpis ? JSON.parse(neo4jData.kpis) : undefined;
+  console.log('[Transform] Converting Neo4j milestone to React Flow:', {
+    id: neo4jData.id,
+    title: neo4jData.title,
+    featureAllocations: typeof neo4jData.featureAllocations === 'string' ? 'string' : typeof neo4jData.featureAllocations,
+    optionDetails: typeof neo4jData.optionDetails === 'string' ? 'string' : typeof neo4jData.optionDetails,
+    providerDetails: typeof neo4jData.providerDetails === 'string' ? 'string' : typeof neo4jData.providerDetails
+  });
+
+  // Define JSON fields that need special handling
+  const jsonFields = ['kpis', 'featureAllocations', 'optionDetails', 'providerDetails'];
   
-  // Parse feature allocations from JSON string if available
-  let featureAllocations: FeatureAllocationSummary[] = [];
-  if (neo4jData.featureAllocations) {
-    try {
-      if (typeof neo4jData.featureAllocations === 'string') {
-        featureAllocations = JSON.parse(neo4jData.featureAllocations);
-      } else if (Array.isArray(neo4jData.featureAllocations)) {
-        featureAllocations = neo4jData.featureAllocations;
-      }
-    } catch (error) {
-      console.error('Error parsing featureAllocations JSON:', error);
-      featureAllocations = [];
-    }
-  }
-  
-  // Parse option details from JSON string if available
-  let optionDetails: OptionRevenueSummary[] = [];
-  if (neo4jData.optionDetails) {
-    try {
-      if (typeof neo4jData.optionDetails === 'string') {
-        optionDetails = JSON.parse(neo4jData.optionDetails);
-      } else if (Array.isArray(neo4jData.optionDetails)) {
-        optionDetails = neo4jData.optionDetails;
-      }
-    } catch (error) {
-      console.error('Error parsing optionDetails JSON:', error);
-      optionDetails = [];
-    }
-  }
-  
-  // Parse provider details from JSON string if available
-  let providerDetails: ProviderCostSummary[] = [];
-  if (neo4jData.providerDetails) {
-    try {
-      if (typeof neo4jData.providerDetails === 'string') {
-        providerDetails = JSON.parse(neo4jData.providerDetails);
-      } else if (Array.isArray(neo4jData.providerDetails)) {
-        providerDetails = neo4jData.providerDetails;
-      }
-    } catch (error) {
-      console.error('Error parsing providerDetails JSON:', error);
-      providerDetails = [];
-    }
-  }
+  // Parse all JSON fields
+  const parsedData = parseDataFromBackend(neo4jData, jsonFields);
   
   return {
     id: neo4jData.id, // Use the ID directly without adding a prefix
@@ -145,7 +114,7 @@ export function neo4jToReactFlow(neo4jData: Neo4jMilestoneNodeData): RFMilestone
       title: neo4jData.title,
       description: neo4jData.description,
       status: neo4jData.status,
-      kpis,
+      kpis: parsedData.kpis,
       name: neo4jData.name,
       createdAt: neo4jData.createdAt,
       updatedAt: neo4jData.updatedAt,
@@ -154,10 +123,11 @@ export function neo4jToReactFlow(neo4jData: Neo4jMilestoneNodeData): RFMilestone
       monthlyValue: neo4jData.monthlyValue,
       teamCosts: neo4jData.teamCosts,
       providerCosts: neo4jData.providerCosts,
-      featureAllocations,
-      optionDetails,
-      providerDetails
+      featureAllocations: parsedData.featureAllocations,
+      optionDetails: parsedData.optionDetails,
+      providerDetails: parsedData.providerDetails
     } as RFMilestoneNodeData,
+    // Add any other properties needed for React Flow
   };
 }
 
@@ -222,9 +192,14 @@ export function transformMilestoneNode(node: Neo4jNode): GraphNode<RFMilestoneNo
   let parsedFeatureAllocations: FeatureAllocationSummary[] = [];
   if (featureAllocations) {
     try {
-      parsedFeatureAllocations = JSON.parse(featureAllocations as string);
+      if (typeof featureAllocations === 'string') {
+        parsedFeatureAllocations = JSON.parse(featureAllocations as string);
+        console.log('[Transform] Successfully parsed featureAllocations:', parsedFeatureAllocations);
+      } else if (Array.isArray(featureAllocations)) {
+        parsedFeatureAllocations = featureAllocations as unknown as FeatureAllocationSummary[];
+      }
     } catch (error) {
-      console.error('Error parsing featureAllocations JSON:', error);
+      console.error('Error parsing featureAllocations JSON:', error, { featureAllocations });
     }
   }
   
@@ -232,9 +207,14 @@ export function transformMilestoneNode(node: Neo4jNode): GraphNode<RFMilestoneNo
   let parsedOptionDetails: OptionRevenueSummary[] = [];
   if (optionDetails) {
     try {
-      parsedOptionDetails = JSON.parse(optionDetails as string);
+      if (typeof optionDetails === 'string') {
+        parsedOptionDetails = JSON.parse(optionDetails as string);
+        console.log('[Transform] Successfully parsed optionDetails:', parsedOptionDetails);
+      } else if (Array.isArray(optionDetails)) {
+        parsedOptionDetails = optionDetails as unknown as OptionRevenueSummary[];
+      }
     } catch (error) {
-      console.error('Error parsing optionDetails JSON:', error);
+      console.error('Error parsing optionDetails JSON:', error, { optionDetails });
     }
   }
   
@@ -242,9 +222,14 @@ export function transformMilestoneNode(node: Neo4jNode): GraphNode<RFMilestoneNo
   let parsedProviderDetails: ProviderCostSummary[] = [];
   if (providerDetails) {
     try {
-      parsedProviderDetails = JSON.parse(providerDetails as string);
+      if (typeof providerDetails === 'string') {
+        parsedProviderDetails = JSON.parse(providerDetails as string);
+        console.log('[Transform] Successfully parsed providerDetails:', parsedProviderDetails);
+      } else if (Array.isArray(providerDetails)) {
+        parsedProviderDetails = providerDetails as unknown as ProviderCostSummary[];
+      }
     } catch (error) {
-      console.error('Error parsing providerDetails JSON:', error);
+      console.error('Error parsing providerDetails JSON:', error, { providerDetails });
     }
   }
 

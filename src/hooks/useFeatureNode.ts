@@ -14,16 +14,7 @@ import { useTeamAllocation } from "@/hooks/useTeamAllocation";
 import { useNodeStatus } from "@/hooks/useNodeStatus";
 import { useDurationInput } from "@/hooks/useDurationInput";
 import { useResourceAllocation } from "@/hooks/useResourceAllocation";
-import { 
-  calculateWeeklyCapacity, 
-  percentageToHours,
-  MemberCapacity
-} from '@/lib/utils';
-
-// Utility function to round numbers to 1 decimal place for better display
-const roundToOneDecimal = (num: number): number => {
-  return Math.round(num * 10) / 10;
-};
+import { prepareDataForBackend, parseDataFromBackend } from "@/lib/utils";
 
 /**
  * Hook for managing feature node state and operations
@@ -39,10 +30,18 @@ export function useFeatureNode(id: string, data: RFFeatureNodeData) {
   const teamAllocationsDebounceRef = useRef<{ timeout: NodeJS.Timeout | null }>({ timeout: null });
   const isInitializedRef = useRef(false);
   
+  // Define JSON fields that need special handling
+  const jsonFields = ['teamAllocations', 'memberAllocations', 'teamMembers', 'availableBandwidth'];
+  
+  // Parse complex objects if they are strings
+  const parsedData = useMemo(() => {
+    return parseDataFromBackend(data, jsonFields) as RFFeatureNodeData;
+  }, [data, jsonFields]);
+  
   // State for the feature node
-  const [title, setTitle] = useState(data.title || '');
-  const [description, setDescription] = useState(data.description || '');
-  const [buildType, setBuildType] = useState<BuildType>(data.buildType || 'internal');
+  const [title, setTitle] = useState(parsedData.title || '');
+  const [description, setDescription] = useState(parsedData.description || '');
+  const [buildType, setBuildType] = useState<BuildType>(parsedData.buildType || 'internal');
   const [teamAllocations, setTeamAllocations] = useState<TeamAllocation[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   
@@ -71,13 +70,18 @@ export function useFeatureNode(id: string, data: RFFeatureNodeData) {
   // Save to backend function
   const saveToBackend = useCallback(async (updates: Partial<RFFeatureNodeData>) => {
     try {
-      await GraphApiClient.updateNode('feature' as NodeType, id, updates);
+      // Prepare data for backend by stringifying JSON fields
+      const apiData = prepareDataForBackend(updates, jsonFields);
+      
+      // Send to backend
+      await GraphApiClient.updateNode('feature' as NodeType, id, apiData);
+      
       console.log(`Updated feature node ${id}:`, updates);
     } catch (error) {
       console.error(`Failed to update feature node ${id}:`, error);
       toast.error(`Update Failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
-  }, [id]);
+  }, [id, jsonFields]);
   
   // Reset the initialFetchCompletedRef when the ID changes
   useEffect(() => {
@@ -137,9 +141,9 @@ export function useFeatureNode(id: string, data: RFFeatureNodeData) {
       
       // Update node data in ReactFlow
       updateNodeData(id, {
-        ...data,
-        title: serverData.data.title || data.title,
-        description: serverData.data.description || data.description,
+        ...parsedData,
+        title: serverData.data.title || parsedData.title,
+        description: serverData.data.description || parsedData.description,
         buildType,
         teamAllocations: processedTeamAllocations,
         startDate: serverData.data.startDate,
@@ -155,7 +159,7 @@ export function useFeatureNode(id: string, data: RFFeatureNodeData) {
     } finally {
       setIsLoading(false);
     }
-  }, [id, data, updateNodeData, ensureValidBuildType]);
+  }, [id, parsedData, updateNodeData, ensureValidBuildType]);
   
   // Use effect to initialize data from server
   useEffect(() => {
@@ -216,9 +220,9 @@ export function useFeatureNode(id: string, data: RFFeatureNodeData) {
           
           // Update node data in ReactFlow
           updateNodeData(id, {
-            ...data,
-            title: serverData.data.title || data.title,
-            description: serverData.data.description || data.description,
+            ...parsedData,
+            title: serverData.data.title || parsedData.title,
+            description: serverData.data.description || parsedData.description,
             buildType,
             teamAllocations: processedTeamAllocations,
             startDate: serverData.data.startDate,
@@ -245,7 +249,7 @@ export function useFeatureNode(id: string, data: RFFeatureNodeData) {
     };
     
     fetchData();
-  }, [id, data, updateNodeData]);
+  }, [id, parsedData, updateNodeData]);
   
   // Update local state when data changes from the props
   useEffect(() => {
@@ -254,33 +258,33 @@ export function useFeatureNode(id: string, data: RFFeatureNodeData) {
       console.log(`🔄 Updating local state from data props for ${id}`);
       
       // Check if the data has changed to avoid unnecessary updates
-      if (title !== data.title) {
-        setTitle(data.title || '');
+      if (title !== parsedData.title) {
+        setTitle(parsedData.title || '');
       }
       
-      if (description !== data.description) {
-        setDescription(data.description || '');
+      if (description !== parsedData.description) {
+        setDescription(parsedData.description || '');
       }
       
-      const validBuildType = ensureValidBuildType(data.buildType);
+      const validBuildType = ensureValidBuildType(parsedData.buildType);
       if (buildType !== validBuildType) {
         setBuildType(validBuildType);
       }
       
       // Process teamAllocations if it's available
-      if (data.teamAllocations) {
+      if (parsedData.teamAllocations) {
         let processedAllocations: TeamAllocation[] = [];
         
-        if (Array.isArray(data.teamAllocations)) {
-          processedAllocations = data.teamAllocations;
-        } else if (typeof data.teamAllocations === 'string') {
+        if (Array.isArray(parsedData.teamAllocations)) {
+          processedAllocations = parsedData.teamAllocations;
+        } else if (typeof parsedData.teamAllocations === 'string') {
           try {
-            processedAllocations = JSON.parse(data.teamAllocations);
+            processedAllocations = JSON.parse(parsedData.teamAllocations);
           } catch (e) {
             console.error('❌ Failed to parse teamAllocations from props:', e);
           }
         } else {
-          console.warn('Unexpected teamAllocations format:', typeof data.teamAllocations, data.teamAllocations);
+          console.warn('Unexpected teamAllocations format:', typeof parsedData.teamAllocations, parsedData.teamAllocations);
           // Keep existing allocations
           processedAllocations = teamAllocations;
         }
@@ -294,11 +298,11 @@ export function useFeatureNode(id: string, data: RFFeatureNodeData) {
           setTeamAllocations(processedAllocations);
         }
       } else {
-        console.warn('Unexpected teamAllocations format:', typeof data.teamAllocations, data.teamAllocations);
+        console.warn('Unexpected teamAllocations format:', typeof parsedData.teamAllocations, parsedData.teamAllocations);
         setTeamAllocations([]);
       }
     }
-  }, [data.title, data.description, data.buildType, data.teamAllocations, isLoading, initialFetchCompletedRef]);
+  }, [parsedData.title, parsedData.description, parsedData.buildType, parsedData.teamAllocations, isLoading, initialFetchCompletedRef]);
   
   // Save team allocations to backend
   const saveTeamAllocationsToBackend = useCallback(async (allocations: TeamAllocation[]) => {
@@ -316,7 +320,7 @@ export function useFeatureNode(id: string, data: RFFeatureNodeData) {
   }, [id]);
 
   // Use the team allocation hook to manage team allocations
-  const teamAllocationHook = useTeamAllocation(id, data);
+  const teamAllocationHook = useTeamAllocation(id, parsedData);
   
   // Add the saveTeamAllocationsToBackend function to the teamAllocationHook
   (teamAllocationHook as any).saveTeamAllocationsToBackend = saveTeamAllocationsToBackend;
@@ -331,12 +335,12 @@ export function useFeatureNode(id: string, data: RFFeatureNodeData) {
   const costs = teamAllocationHook.costs;
   
   // Use the resource allocation hook to manage resource allocations
-  const resourceAllocation = useResourceAllocation(data, teamAllocationHook, getNodes);
+  const resourceAllocation = useResourceAllocation(parsedData, teamAllocationHook, getNodes);
   
   // Use the node status hook to manage status
   const { status, getStatusColor, cycleStatus } = useNodeStatus(
     id, 
-    data, 
+    parsedData, 
     updateNodeData, 
     {
       canBeActive: true,
@@ -347,7 +351,7 @@ export function useFeatureNode(id: string, data: RFFeatureNodeData) {
   // Use the duration input hook to manage duration
   const duration = useDurationInput(
     id, 
-    data, 
+    parsedData, 
     updateNodeData,
     {
       maxDays: 180,
@@ -363,11 +367,11 @@ export function useFeatureNode(id: string, data: RFFeatureNodeData) {
     setTitle(newTitle);
     
     // Then update ReactFlow state
-    updateNodeData(id, { ...data, title: newTitle });
+    updateNodeData(id, { ...parsedData, title: newTitle });
     
     // Save to backend
     saveToBackend({ title: newTitle });
-  }, [id, data, updateNodeData, saveToBackend]);
+  }, [id, parsedData, updateNodeData, saveToBackend]);
 
   // Handle description change
   const handleDescriptionChange = useCallback((newDescription: string) => {
@@ -375,11 +379,11 @@ export function useFeatureNode(id: string, data: RFFeatureNodeData) {
     setDescription(newDescription);
     
     // Then update ReactFlow state
-    updateNodeData(id, { ...data, description: newDescription });
+    updateNodeData(id, { ...parsedData, description: newDescription });
     
     // Save to backend
     saveToBackend({ description: newDescription });
-  }, [id, data, updateNodeData, saveToBackend]);
+  }, [id, parsedData, updateNodeData, saveToBackend]);
 
   // Handle build type change
   const handleBuildTypeChange = useCallback((newBuildType: BuildType) => {
@@ -401,14 +405,14 @@ export function useFeatureNode(id: string, data: RFFeatureNodeData) {
     setBuildType(validBuildType);
     
     // Create a new object for the update to avoid reference issues
-    const updatedData = { ...data, buildType: validBuildType };
+    const updatedData = { ...parsedData, buildType: validBuildType };
     
     // Then update ReactFlow state
     updateNodeData(id, updatedData);
     
     // Save to backend
     saveToBackend({ buildType: validBuildType });
-  }, [id, data, updateNodeData, saveToBackend, buildType, ensureValidBuildType]);
+  }, [id, parsedData, updateNodeData, saveToBackend, buildType, ensureValidBuildType]);
 
   // Handle node deletion
   const handleDelete = useCallback(() => {
@@ -434,10 +438,10 @@ export function useFeatureNode(id: string, data: RFFeatureNodeData) {
 
   // Save duration to backend when it changes
   useEffect(() => {
-    if (data.duration !== undefined) {
-      saveToBackend({ duration: data.duration });
+    if (parsedData.duration !== undefined) {
+      saveToBackend({ duration: parsedData.duration });
     }
-  }, [data.duration, saveToBackend]);
+  }, [parsedData.duration, saveToBackend]);
   
   // Clean up timers on unmount
   useEffect(() => {

@@ -248,3 +248,63 @@ export function getMemberTotalAllocations(memberId: string, allNodes: any[]): nu
       return total + (memberAllocation?.hours || 0);
     }, 0);
 }
+
+/**
+ * Prepares data for backend storage by converting complex objects to JSON strings
+ * @param data The data object to prepare
+ * @param jsonFields Array of field names that should be stringified if they are objects
+ * @returns A new object with complex fields stringified for backend storage
+ */
+export function prepareDataForBackend<T extends Record<string, any>>(
+  data: Partial<T>,
+  jsonFields: string[]
+): Record<string, any> {
+  // Create a copy of the data
+  const apiData: Record<string, any> = { ...data };
+  
+  // Process each JSON field
+  for (const field of jsonFields) {
+    if (apiData[field] !== undefined && typeof apiData[field] !== 'string') {
+      try {
+        // Only stringify if it's not already a string
+        apiData[field] = JSON.stringify(apiData[field]);
+        console.log(`[prepareDataForBackend] Stringified ${field}:`, apiData[field]);
+      } catch (error) {
+        console.error(`[prepareDataForBackend] Error stringifying ${field}:`, error);
+        // Keep the original value if stringification fails
+      }
+    }
+  }
+  
+  return apiData;
+}
+
+/**
+ * Parses JSON fields in data received from the backend
+ * @param data The data object from the backend
+ * @param jsonFields Array of field names that should be parsed if they are strings
+ * @returns A new object with string fields parsed into objects
+ */
+export function parseDataFromBackend<T extends Record<string, any>>(
+  data: Partial<T>,
+  jsonFields: string[]
+): Record<string, any> {
+  // Create a copy of the data
+  const parsedData: Record<string, any> = { ...data };
+  
+  // Process each JSON field
+  for (const field of jsonFields) {
+    if (typeof parsedData[field] === 'string') {
+      try {
+        parsedData[field] = JSON.parse(parsedData[field] as string);
+        console.log(`[parseDataFromBackend] Parsed ${field}:`, parsedData[field]);
+      } catch (error) {
+        console.error(`[parseDataFromBackend] Error parsing ${field}:`, error);
+        // Set to empty array if parsing fails
+        parsedData[field] = [];
+      }
+    }
+  }
+  
+  return parsedData;
+}

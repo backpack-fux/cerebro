@@ -136,6 +136,25 @@ export function useProviderNode(id: string, data: RFProviderNodeData) {
     fieldName: "duration",
     tip: 'Use "w" for weeks (e.g. "2w" = 2 weeks) or ↑↓ keys. Hold Shift for week increments.'
   });
+
+  // Save duration to backend when it changes
+  useEffect(() => {
+    if (data.duration !== undefined) {
+      // Debounce the save to avoid excessive API calls
+      const durationDebounceRef = setTimeout(async () => {
+        try {
+          await GraphApiClient.updateNode('provider' as NodeType, id, {
+            duration: data.duration
+          });
+          console.log(`Updated provider ${id} duration to ${data.duration}`);
+        } catch (error) {
+          console.error(`Failed to update provider ${id} duration:`, error);
+        }
+      }, 1000);
+      
+      return () => clearTimeout(durationDebounceRef);
+    }
+  }, [id, data.duration]);
   
   // Function to save data to backend with debouncing
   const saveToBackend = useCallback(async (field: string, value: any) => {

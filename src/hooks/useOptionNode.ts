@@ -138,19 +138,42 @@ export function useOptionNode(id: string, data: RFOptionNodeData) {
       defaultStatus: 'planning'
     }
   );
+
   
-  // Use the duration input hook to manage duration
-  const duration = useDurationInput(
+  // Use the duration input hook to manage timeToClose
+  const timeToClose = useDurationInput(
     id, 
     data, 
     updateNodeData,
     {
       maxDays: 180,
       label: 'Time to Close',
-      fieldName: 'duration',
-      tip: 'Use "d" for days or "w" for weeks.',
+      fieldName: 'timeToClose',
+      tip: 'Estimated time to close this option',
     }
   );
+  
+  // Save duration fields to backend when they change
+  useEffect(() => {
+    if (data.duration !== undefined || data.buildDuration !== undefined || data.timeToClose !== undefined) {
+      // Debounce the save to avoid excessive API calls
+      const durationDebounceRef = setTimeout(async () => {
+        try {
+          const updateData: any = {};
+          if (data.duration !== undefined) updateData.duration = data.duration;
+          if (data.buildDuration !== undefined) updateData.buildDuration = data.buildDuration;
+          if (data.timeToClose !== undefined) updateData.timeToClose = data.timeToClose;
+          
+          await GraphApiClient.updateNode('option' as NodeType, id, updateData);
+          console.log(`Updated option ${id} duration fields:`, updateData);
+        } catch (error) {
+          console.error(`Failed to update option ${id} duration fields:`, error);
+        }
+      }, 1000);
+      
+      return () => clearTimeout(durationDebounceRef);
+    }
+  }, [id, data.duration, data.buildDuration, data.timeToClose]);
 
   // Refs for debouncing
   const titleDebounceRef = useRef<NodeJS.Timeout | null>(null);
@@ -505,9 +528,9 @@ export function useOptionNode(id: string, data: RFOptionNodeData) {
     // Status
     getStatusColor,
     cycleStatus,
-    
-    // Duration
-    duration,
+  
+    // Time to Close
+    timeToClose,
   }), [
     title,
     description,
@@ -543,6 +566,6 @@ export function useOptionNode(id: string, data: RFOptionNodeData) {
     removeRisk,
     getStatusColor,
     cycleStatus,
-    duration,
+    timeToClose,
   ]);
 } 

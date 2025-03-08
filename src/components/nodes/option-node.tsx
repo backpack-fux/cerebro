@@ -293,23 +293,22 @@ export const OptionNode = memo(function OptionNode({ id, data, selected }: NodeP
             )}
           </div>
         )}
-
-        {/* Time to Close Section */}
-        <div className="space-y-2">
-          <div className="flex items-center justify-between">
-            <Label>{option.duration.config.label}</Label>
-            <Badge variant="outline" className="font-mono">
-              {option.duration.displayValue}
-            </Badge>
+        
+        {/* Time to Close */}
+        <div className="space-y-1">
+          <Label>{option.timeToClose.config.label}</Label>
+          <div className="flex items-center space-x-2">
+            <div className="text-sm font-medium">
+              {option.timeToClose.displayValue}
+            </div>
+            <Input
+              value={option.timeToClose.value || ''}
+              onChange={(e) => option.timeToClose.handleDurationChange(e.target.value)}
+              onKeyDown={option.timeToClose.handleDurationKeyDown}
+              className="w-20 h-8"
+              placeholder="Days"
+            />
           </div>
-          <Input
-            type="text"
-            value={option.duration.value || ''}
-            onChange={(e) => option.duration.handleDurationChange(e.target.value)}
-            onKeyDown={option.duration.handleDurationKeyDown}
-            className="bg-transparent"
-            placeholder="e.g. 12 or 2w"
-          />
         </div>
 
         <Textarea

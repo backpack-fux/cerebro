@@ -6,6 +6,7 @@ import { NodeType } from '@/services/graph/neo4j/api-urls';
 import { RFMilestoneNodeData, FeatureAllocationSummary, OptionRevenueSummary, KPI, ProviderCostSummary } from '@/services/graph/milestone/milestone.types';
 import { useNodeStatus, NodeStatus } from "@/hooks/useNodeStatus";
 import { useMilestoneMetrics } from "@/hooks/useMilestoneMetrics";
+import { prepareDataForBackend, parseDataFromBackend } from "@/lib/utils";
 
 /**
  * Hook for managing milestone node state and operations
@@ -16,80 +17,43 @@ export function useMilestoneNode(id: string, data: RFMilestoneNodeData) {
   const edges = useEdges();
   const metrics = useMilestoneMetrics(id);
   
-  // Local state for title and description to avoid excessive API calls
-  const [title, setTitle] = useState(data.title || '');
-  const [description, setDescription] = useState(data.description || '');
+  // Define JSON fields that need special handling
+  const jsonFields = ['featureAllocations', 'optionDetails', 'providerDetails'];
   
-  // Refs for debounce timers
+  // Parse complex objects if they are strings
+  const parsedData = useMemo(() => {
+    return parseDataFromBackend(data, jsonFields) as RFMilestoneNodeData;
+  }, [data]);
+  
+  // State for the milestone node
+  const [title, setTitle] = useState(parsedData.title || '');
+  const [description, setDescription] = useState(parsedData.description || '');
+  
+  // Refs for debouncing
   const titleDebounceRef = useRef<NodeJS.Timeout | null>(null);
   const descriptionDebounceRef = useRef<NodeJS.Timeout | null>(null);
   const statusDebounceRef = useRef<NodeJS.Timeout | null>(null);
   const metricsDebounceRef = useRef<NodeJS.Timeout | null>(null);
-  const lastMetricsRef = useRef<{
-    totalCost: number;
-    monthlyValue: number;
-    teamCosts: number;
-    providerCosts: number;
-  }>({
-    totalCost: 0,
-    monthlyValue: 0,
-    teamCosts: 0,
-    providerCosts: 0
-  });
-  
-  // Update local state when props change
-  useEffect(() => {
-    setTitle(data.title || '');
-    setDescription(data.description || '');
-  }, [data.title, data.description]);
-  
-  // Helper function to save data to backend
-  const saveToBackend = useCallback(async (updatedData: Partial<RFMilestoneNodeData>) => {
+  const lastMetricsRef = useRef<any>(null);
+
+  // Save to backend function
+  const saveToBackend = useCallback(async (updates: Partial<RFMilestoneNodeData>) => {
     try {
-      // Stringify complex objects before saving to backend
-      const processedData: Partial<RFMilestoneNodeData> = { ...updatedData };
+      // Prepare data for backend by stringifying JSON fields
+      const apiData = prepareDataForBackend(updates, jsonFields);
       
-      // Stringify featureAllocations if it exists and is not already a string
-      if (processedData.featureAllocations) {
-        // Create a new object without the featureAllocations property
-        const { featureAllocations, ...rest } = processedData;
-        // Add the stringified featureAllocations as a string property
-        processedData.featureAllocations = JSON.stringify(featureAllocations) as unknown as FeatureAllocationSummary[];
-      }
+      // Send to backend
+      await GraphApiClient.updateNode('milestone' as NodeType, id, apiData);
       
-      // Stringify optionDetails if it exists and is not already a string
-      if (processedData.optionDetails) {
-        // Create a new object without the optionDetails property
-        const { optionDetails, ...rest } = processedData;
-        // Add the stringified optionDetails as a string property
-        processedData.optionDetails = JSON.stringify(optionDetails) as unknown as OptionRevenueSummary[];
-      }
+      // Update React Flow state with the original object data (not stringified)
+      updateNodeData(id, updates);
       
-      // Stringify providerDetails if it exists and is not already a string
-      if (processedData.providerDetails) {
-        // Create a new object without the providerDetails property
-        const { providerDetails, ...rest } = processedData;
-        // Add the stringified providerDetails as a string property
-        processedData.providerDetails = JSON.stringify(providerDetails) as unknown as ProviderCostSummary[];
-      }
-      
-      // Stringify kpis if it exists and is not already a string
-      if (processedData.kpis) {
-        // Create a new object without the kpis property
-        const { kpis, ...rest } = processedData;
-        // Add the stringified kpis as a string property
-        processedData.kpis = JSON.stringify(kpis) as unknown as KPI[];
-      }
-      
-      await GraphApiClient.updateNode('milestone' as NodeType, id, processedData);
-      console.log(`Updated milestone ${id}:`, processedData);
+      console.log(`Updated milestone node ${id}`);
     } catch (error) {
-      console.error(`Failed to update milestone ${id}:`, error);
-      toast.error(`Failed to save changes`, {
-        description: `${error instanceof Error ? error.message : 'Unknown error'}`
-      });
+      console.error(`Failed to update milestone node ${id}:`, error);
+      toast.error(`Update Failed: Failed to save milestone data to the server.`);
     }
-  }, [id]);
+  }, [id, updateNodeData, jsonFields]);
   
   // Helper function to check if a value is a string
   const isString = (value: any): value is string => {
@@ -99,7 +63,7 @@ export function useMilestoneNode(id: string, data: RFMilestoneNodeData) {
   // Override the handleStatusChange to include API persistence
   const persistStatusChange = useCallback((newStatus: NodeStatus) => {
     // Update ReactFlow state for consistency
-    updateNodeData(id, { ...data, status: newStatus });
+    updateNodeData(id, { ...parsedData, status: newStatus });
     
     // Clear any existing debounce timer
     if (statusDebounceRef.current) {
@@ -117,7 +81,7 @@ export function useMilestoneNode(id: string, data: RFMilestoneNodeData) {
       }
       statusDebounceRef.current = null;
     }, 1000); // 1 second debounce
-  }, [id, data, updateNodeData, saveToBackend]);
+  }, [id, parsedData, updateNodeData, saveToBackend]);
 
   // Create a wrapper function that matches the signature expected by useNodeStatus
   const handleNodeStatusChange = useCallback((nodeId: string, nodeData: any) => {
@@ -129,7 +93,7 @@ export function useMilestoneNode(id: string, data: RFMilestoneNodeData) {
   // Use the standard hook with our wrapper
   const { status, getStatusColor, cycleStatus } = useNodeStatus(
     id, 
-    data, 
+    parsedData, 
     handleNodeStatusChange, 
     {
       canBeActive: true,
@@ -139,6 +103,10 @@ export function useMilestoneNode(id: string, data: RFMilestoneNodeData) {
 
   // Auto-update milestone status based on connected nodes
   useEffect(() => {
+    if (!metrics) {
+      return; // Skip if metrics is null or undefined
+    }
+    
     if (metrics.nodeCount > 0) {
       let newStatus: NodeStatus = 'planning';
       
@@ -154,11 +122,15 @@ export function useMilestoneNode(id: string, data: RFMilestoneNodeData) {
         persistStatusChange(newStatus);
       }
     }
-  }, [metrics.completedCount, metrics.nodeCount, status, persistStatusChange]);
+  }, [metrics?.completedCount, metrics?.nodeCount, status, persistStatusChange]);
 
   // Save metrics to backend when they change
   useEffect(() => {
     // Check if metrics have changed significantly
+    if (!metrics) {
+      return; // Skip if metrics is null or undefined
+    }
+    
     const currentMetrics = {
       totalCost: metrics.totalCost,
       monthlyValue: metrics.monthlyValue,
@@ -166,9 +138,14 @@ export function useMilestoneNode(id: string, data: RFMilestoneNodeData) {
       providerCosts: metrics.providerCosts
     };
     
-    const lastMetrics = lastMetricsRef.current;
+    const lastMetrics = lastMetricsRef.current || {
+      totalCost: 0,
+      monthlyValue: 0,
+      teamCosts: 0,
+      providerCosts: 0
+    };
     
-    // Only update if metrics have changed by more than 0.01
+    // Check if any value has changed by more than 1 cent
     const hasChanged = 
       Math.abs(currentMetrics.totalCost - lastMetrics.totalCost) > 0.01 ||
       Math.abs(currentMetrics.monthlyValue - lastMetrics.monthlyValue) > 0.01 ||
@@ -181,7 +158,7 @@ export function useMilestoneNode(id: string, data: RFMilestoneNodeData) {
       
       // Update ReactFlow state for consistency
       updateNodeData(id, { 
-        ...data, 
+        ...parsedData, 
         totalCost: metrics.totalCost,
         monthlyValue: metrics.monthlyValue,
         teamCosts: metrics.teamCosts,
@@ -236,6 +213,8 @@ export function useMilestoneNode(id: string, data: RFMilestoneNodeData) {
             type: provider.type
           }));
           
+          console.log(`[useMilestoneNode] Saving provider details:`, providerDetails);
+          
           // Persist the metrics to the database
           await saveToBackend({
             totalCost: metrics.totalCost,
@@ -259,13 +238,13 @@ export function useMilestoneNode(id: string, data: RFMilestoneNodeData) {
         metricsDebounceRef.current = null;
       }, 2000); // 2 second debounce to avoid excessive API calls
     }
-  }, [id, data, metrics, updateNodeData, saveToBackend]);
+  }, [id, parsedData, metrics, updateNodeData, saveToBackend]);
 
   const handleTitleChange = useCallback((newTitle: string) => {
     // Update local state immediately for responsive UI
     setTitle(newTitle);
     // Update ReactFlow state for consistency
-    updateNodeData(id, { ...data, title: newTitle });
+    updateNodeData(id, { ...parsedData, title: newTitle });
     
     // Clear any existing debounce timer
     if (titleDebounceRef.current) {
@@ -276,7 +255,7 @@ export function useMilestoneNode(id: string, data: RFMilestoneNodeData) {
     titleDebounceRef.current = setTimeout(async () => {
       try {
         // Only make API call if value has changed
-        if (newTitle !== data.title) {
+        if (newTitle !== parsedData.title) {
           // Persist the change to the database
           await saveToBackend({ title: newTitle });
           console.log(`Updated milestone ${id} title to "${newTitle}"`);
@@ -286,13 +265,13 @@ export function useMilestoneNode(id: string, data: RFMilestoneNodeData) {
       }
       titleDebounceRef.current = null;
     }, 1000); // 1 second debounce
-  }, [id, data, updateNodeData, saveToBackend]);
+  }, [id, parsedData, updateNodeData, saveToBackend]);
 
   const handleDescriptionChange = useCallback((newDescription: string) => {
     // Update local state immediately for responsive UI
     setDescription(newDescription);
     // Update ReactFlow state for consistency
-    updateNodeData(id, { ...data, description: newDescription });
+    updateNodeData(id, { ...parsedData, description: newDescription });
     
     // Clear any existing debounce timer
     if (descriptionDebounceRef.current) {
@@ -303,7 +282,7 @@ export function useMilestoneNode(id: string, data: RFMilestoneNodeData) {
     descriptionDebounceRef.current = setTimeout(async () => {
       try {
         // Only make API call if value has changed
-        if (newDescription !== data.description) {
+        if (newDescription !== parsedData.description) {
           // Persist the change to the database
           await saveToBackend({ description: newDescription });
           console.log(`Updated milestone ${id} description`);
@@ -313,7 +292,7 @@ export function useMilestoneNode(id: string, data: RFMilestoneNodeData) {
       }
       descriptionDebounceRef.current = null;
     }, 1000); // 1 second debounce
-  }, [id, data, updateNodeData, saveToBackend]);
+  }, [id, parsedData, updateNodeData, saveToBackend]);
   
   // Clean up timers on unmount
   useEffect(() => {

@@ -23,6 +23,7 @@ import { Toaster } from "@/components/ui/sonner";
 import { toast } from "sonner";
 
 // Configure panning buttons (1 = middle mouse, 2 = right mouse)
+// Use middle mouse button (1) for panning to avoid conflicts with selection
 const panOnDragButtons = [1];
 
 export default function Canvas() {
@@ -678,6 +679,19 @@ export default function Canvas() {
         }
     }, [nodes, setNodes, setError]);
     
+    // Handle selection events
+    const onSelectionStart = useCallback(() => {
+        console.log('Selection started');
+    }, []);
+    
+    const onSelectionEnd = useCallback(() => {
+        console.log('Selection ended');
+    }, []);
+    
+    const onSelectionChange = useCallback(({ nodes, edges }: { nodes: Node[]; edges: any[] }) => {
+        console.log('Selection changed:', { selectedNodes: nodes.length, selectedEdges: edges.length });
+    }, []);
+    
     // Return the ReactFlow component with all necessary props
     return (
         <div className="w-full h-full">
@@ -692,10 +706,16 @@ export default function Canvas() {
                 fitView
                 panOnScroll
                 selectionMode={SelectionMode.Partial}
+                selectionOnDrag={true}
+                selectionKeyCode="Shift"
+                multiSelectionKeyCode="Control"
                 panOnDrag={panOnDragButtons}
                 deleteKeyCode={['Backspace', 'Delete']}
                 onNodesDelete={(nodes) => nodes.forEach(node => handleNodeDelete(node.id))}
                 onEdgesDelete={(edges) => edges.forEach(edge => handleEdgeDelete(edge.id))}
+                onSelectionStart={onSelectionStart}
+                onSelectionEnd={onSelectionEnd}
+                onSelectionChange={onSelectionChange}
             >
                 <Background variant={BackgroundVariant.Dots} gap={12} size={1} />
             </ReactFlow>

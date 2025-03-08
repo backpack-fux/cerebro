@@ -161,12 +161,53 @@ export class Neo4jGraphStorage<T> implements IGraphStorage<T> {
         delete (cleanProperties as any).position;
       }
       
+      // Process properties to ensure all complex objects are stringified
+      // Neo4j only accepts primitive types or arrays of primitive types
+      const processedProperties: Record<string, any> = {};
+      
+      for (const [key, value] of Object.entries(cleanProperties)) {
+        if (value === null || value === undefined) {
+          processedProperties[key] = value;
+        } else if (
+          typeof value === 'string' || 
+          typeof value === 'number' || 
+          typeof value === 'boolean' ||
+          value instanceof Date
+        ) {
+          // Primitive types can be stored directly
+          processedProperties[key] = value;
+        } else if (Array.isArray(value)) {
+          // Check if array contains complex objects
+          const hasComplexObjects = value.some(item => 
+            item !== null && 
+            typeof item === 'object' && 
+            !(item instanceof Date)
+          );
+          
+          if (hasComplexObjects) {
+            // If array contains complex objects, stringify the whole array
+            processedProperties[key] = JSON.stringify(value);
+          } else {
+            // Arrays of primitives can be stored directly
+            processedProperties[key] = value;
+          }
+        } else if (typeof value === 'object') {
+          // All other objects need to be stringified
+          processedProperties[key] = JSON.stringify(value);
+        } else {
+          // Fallback for any other types
+          processedProperties[key] = String(value);
+        }
+      }
+      
+      console.log(`[Neo4jService] Processed properties for node ${nodeId}:`, processedProperties);
+      
       const result = await session.run(CYPHER_QUERIES.UPDATE_NODE, {
         id: nodeId,
         updatedAt: now,
         positionX,
         positionY,
-        properties: cleanProperties,
+        properties: processedProperties,
       });
   
       const node = result.records[0].get('n') as Neo4jNode;

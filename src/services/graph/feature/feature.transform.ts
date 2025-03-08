@@ -1,6 +1,7 @@
 import { RFFeatureNode, RFFeatureNodeData, Neo4jFeatureNodeData, RFFeatureEdge, Neo4jFeatureEdge, MemberAllocation, TeamAllocation } from '@/services/graph/feature/feature.types';
 import { GraphEdge, GraphNode } from '../neo4j/graph.interface';
 import { Node as Neo4jNode, Relationship as Neo4jRelationship } from 'neo4j-driver';
+import { parseDataFromBackend } from '@/lib/utils';
 
 export function reactFlowToNeo4j(featureNode: RFFeatureNode): Neo4jFeatureNodeData {
   const data = featureNode.data as RFFeatureNodeData; // Cast to ensure type safety
@@ -59,72 +60,31 @@ export function reactFlowToNeo4j(featureNode: RFFeatureNode): Neo4jFeatureNodeDa
 }
 
 export function neo4jToReactFlow(neo4jData: Neo4jFeatureNodeData): RFFeatureNode {
-  // Parse JSON strings back to objects
-  let teamMembers: string[] = [];
-  let memberAllocations: MemberAllocation[] = [];
-  let teamAllocations: TeamAllocation[] = [];
-
-  // Safely parse teamMembers
-  if (neo4jData.teamMembers) {
-    try {
-      if (typeof neo4jData.teamMembers === 'string') {
-        teamMembers = JSON.parse(neo4jData.teamMembers);
-      } else if (Array.isArray(neo4jData.teamMembers)) {
-        teamMembers = neo4jData.teamMembers;
-      }
-    } catch (error) {
-      console.error('Error parsing teamMembers JSON:', error);
-      teamMembers = [];
-    }
-  }
-
-  // Safely parse memberAllocations
-  if (neo4jData.memberAllocations) {
-    try {
-      if (typeof neo4jData.memberAllocations === 'string') {
-        memberAllocations = JSON.parse(neo4jData.memberAllocations);
-      } else if (Array.isArray(neo4jData.memberAllocations)) {
-        memberAllocations = neo4jData.memberAllocations;
-      }
-    } catch (error) {
-      console.error('Error parsing memberAllocations JSON:', error);
-      memberAllocations = [];
-    }
-  }
-
-  // Safely parse teamAllocations
-  if (neo4jData.teamAllocations) {
-    try {
-      if (typeof neo4jData.teamAllocations === 'string') {
-        teamAllocations = JSON.parse(neo4jData.teamAllocations);
-      } else if (Array.isArray(neo4jData.teamAllocations)) {
-        teamAllocations = neo4jData.teamAllocations;
-      }
-    } catch (error) {
-      console.error('Error parsing teamAllocations JSON:', error);
-      teamAllocations = [];
-    }
-  }
-
+  // Define JSON fields that need special handling
+  const jsonFields = ['teamMembers', 'memberAllocations', 'teamAllocations', 'availableBandwidth'];
+  
+  // Parse all JSON fields
+  const parsedData = parseDataFromBackend(neo4jData, jsonFields);
+  
   return {
     id: neo4jData.id,
-    type: 'feature', // Hardcoded for FeatureNode
+    type: 'feature',
     position: { x: neo4jData.positionX, y: neo4jData.positionY },
     data: {
       title: neo4jData.title,
       description: neo4jData.description,
-      name: neo4jData.name,
-      buildType: neo4jData.buildType as 'internal' | 'external' | undefined,
+      buildType: neo4jData.buildType,
       cost: neo4jData.cost,
       duration: neo4jData.duration,
-      timeUnit: neo4jData.timeUnit as 'days' | 'weeks' | undefined,
-      teamMembers: teamMembers,
-      memberAllocations: memberAllocations,
-      teamAllocations: teamAllocations,
+      timeUnit: neo4jData.timeUnit,
       status: neo4jData.status,
+      teamMembers: parsedData.teamMembers,
+      memberAllocations: parsedData.memberAllocations,
+      teamAllocations: parsedData.teamAllocations,
+      availableBandwidth: parsedData.availableBandwidth,
       createdAt: neo4jData.createdAt,
-      updatedAt: neo4jData.updatedAt,
-    } as RFFeatureNodeData,
+      updatedAt: neo4jData.updatedAt
+    } as RFFeatureNodeData
   };
 }
 
