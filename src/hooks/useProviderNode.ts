@@ -1,3 +1,5 @@
+"use client";
+
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { useReactFlow } from "@xyflow/react";
 import { toast } from "sonner";
@@ -19,6 +21,7 @@ import {
 import { useTeamAllocation } from "@/hooks/useTeamAllocation";
 import { useNodeStatus } from "@/hooks/useNodeStatus";
 import { useDurationInput } from "@/hooks/useDurationInput";
+import { useResourceAllocation } from "@/hooks/useResourceAllocation";
 import { NodeStatus } from "@/services/graph/shared/shared.types";
 import { v4 as uuidv4 } from 'uuid';
 
@@ -27,7 +30,7 @@ import { v4 as uuidv4 } from 'uuid';
  * Separates domain logic from React Flow component state
  */
 export function useProviderNode(id: string, data: RFProviderNodeData) {
-  const { updateNodeData, setNodes, setEdges } = useReactFlow();
+  const { updateNodeData, setNodes, setEdges, getNodes } = useReactFlow();
   
   // Refs for debounce timers
   const titleDebounceRef = useRef<NodeJS.Timeout | null>(null);
@@ -87,15 +90,38 @@ export function useProviderNode(id: string, data: RFProviderNodeData) {
     return [];
   }, [data.ddItems]);
   
+  // Save team allocations to backend
+  const saveTeamAllocationsToBackend = useCallback(async (allocations: TeamAllocation[]) => {
+    try {
+      // Log the team allocations before sending to backend
+      console.log('Team allocations being sent to backend:', JSON.stringify(allocations, null, 2));
+      
+      await GraphApiClient.updateNode('provider' as NodeType, id, {
+        teamAllocations: allocations
+      });
+      console.log('✅ Successfully saved team allocations to backend');
+    } catch (error) {
+      console.error('❌ Failed to save team allocations to backend:', error);
+    }
+  }, [id]);
+  
   // Use the team allocation hook for team-related operations
-  const {
-    connectedTeams,
-    requestTeamAllocation,
-    removeMemberAllocation,
-    updateMemberAllocation,
-    costs,
-    CostSummary
-  } = useTeamAllocation(id, data);
+  const teamAllocationHook = useTeamAllocation(id, data);
+  
+  // Add the saveTeamAllocationsToBackend function to the teamAllocationHook
+  (teamAllocationHook as any).saveTeamAllocationsToBackend = saveTeamAllocationsToBackend;
+  
+  // Extract the processed team allocations from the hook
+  const teamAllocationsFromHook = teamAllocationHook.teamAllocations;
+  
+  // Get connected teams from the team allocation hook
+  const connectedTeams = teamAllocationHook.connectedTeams;
+  
+  // Get costs from the team allocation hook
+  const costs = teamAllocationHook.costs;
+  
+  // Use the resource allocation hook to manage resource allocations
+  const resourceAllocation = useResourceAllocation(data, teamAllocationHook, getNodes);
 
   // Use the node status hook for status-related operations
   const { status, getStatusColor, cycleStatus } = useNodeStatus(id, data, updateNodeData, {
@@ -166,34 +192,6 @@ export function useProviderNode(id: string, data: RFProviderNodeData) {
     }, 1000);
   }, [id]);
 
-  // Save team allocations to backend with debouncing
-  const saveTeamAllocationsToBackend = useCallback(async (teamAllocations: TeamAllocation[]) => {
-    if (!teamAllocationsDebounceRef.current) {
-      teamAllocationsDebounceRef.current = { timeout: null };
-    }
-    
-    if (teamAllocationsDebounceRef.current.timeout) {
-      clearTimeout(teamAllocationsDebounceRef.current.timeout);
-    }
-    
-    if (!Array.isArray(teamAllocations)) {
-      console.warn('Cannot save teamAllocations: not an array', teamAllocations);
-      return;
-    }
-    
-    teamAllocationsDebounceRef.current.timeout = setTimeout(async () => {
-      console.log('💾 Saving teamAllocations to backend:', teamAllocations);
-      
-      // Update the node data with the array version first
-      updateNodeData(id, { ...data, teamAllocations });
-      
-      // Then save to backend
-      await saveToBackend('teamAllocations', teamAllocations);
-      
-      teamAllocationsDebounceRef.current.timeout = null;
-    }, 1000);
-  }, [id, data, updateNodeData, saveToBackend]);
-
   // Handle title change
   const handleTitleChange = useCallback((newTitle: string) => {
     updateNodeData(id, { ...data, title: newTitle });
@@ -228,7 +226,7 @@ export function useProviderNode(id: string, data: RFProviderNodeData) {
       });
   }, [id, setNodes, setEdges]);
 
-  // Cost management functions
+  // Add a new cost
   const addCost = useCallback(() => {
     const newCost: ProviderCost = {
       id: uuidv4(),
@@ -246,6 +244,7 @@ export function useProviderNode(id: string, data: RFProviderNodeData) {
     saveCostsToBackend(updatedCosts);
   }, [id, data, processedCosts, updateNodeData, saveCostsToBackend]);
 
+  // Update an existing cost
   const updateCost = useCallback((costId: string, updates: Partial<ProviderCost>) => {
     const updatedCosts = processedCosts.map(cost => 
       cost.id === costId ? { ...cost, ...updates } : cost
@@ -255,17 +254,18 @@ export function useProviderNode(id: string, data: RFProviderNodeData) {
     saveCostsToBackend(updatedCosts);
   }, [id, data, processedCosts, updateNodeData, saveCostsToBackend]);
 
+  // Remove a cost
   const removeCost = useCallback((costId: string) => {
     const updatedCosts = processedCosts.filter(cost => cost.id !== costId);
     updateNodeData(id, { ...data, costs: updatedCosts });
     saveCostsToBackend(updatedCosts);
   }, [id, data, processedCosts, updateNodeData, saveCostsToBackend]);
 
-  // DD Items management functions
+  // Add a new due diligence item
   const addDDItem = useCallback(() => {
     const newItem: DDItem = {
       id: uuidv4(),
-      name: 'New Item',
+      name: '',
       status: 'pending'
     };
     
@@ -274,70 +274,23 @@ export function useProviderNode(id: string, data: RFProviderNodeData) {
     saveDDItemsToBackend(updatedItems);
   }, [id, data, processedDDItems, updateNodeData, saveDDItemsToBackend]);
 
+  // Update an existing due diligence item
   const updateDDItem = useCallback((item: DDItem) => {
     const updatedItems = processedDDItems.map(i => 
-      i.id === item.id ? item : i
+      i.id === item.id ? { ...i, ...item } : i
     );
     
     updateNodeData(id, { ...data, ddItems: updatedItems });
     saveDDItemsToBackend(updatedItems);
   }, [id, data, processedDDItems, updateNodeData, saveDDItemsToBackend]);
 
+  // Remove a due diligence item
   const removeDDItem = useCallback((itemId: string) => {
     const updatedItems = processedDDItems.filter(item => item.id !== itemId);
     updateNodeData(id, { ...data, ddItems: updatedItems });
     saveDDItemsToBackend(updatedItems);
   }, [id, data, processedDDItems, updateNodeData, saveDDItemsToBackend]);
 
-  // Ensure data structures are always arrays
-  useEffect(() => {
-    const updates: Partial<RFProviderNodeData> = {};
-    let needsUpdate = false;
-    
-    // Check if costs is not an array
-    if (data.costs !== undefined && !Array.isArray(data.costs)) {
-      updates.costs = [];
-      needsUpdate = true;
-    }
-    
-    // Check if ddItems is not an array
-    if (data.ddItems !== undefined && !Array.isArray(data.ddItems)) {
-      updates.ddItems = [];
-      needsUpdate = true;
-    }
-    
-    // Check if teamAllocations is not an array
-    if (data.teamAllocations !== undefined && !Array.isArray(data.teamAllocations)) {
-      if (typeof data.teamAllocations === 'string') {
-        try {
-          const parsed = JSON.parse(data.teamAllocations);
-          if (Array.isArray(parsed)) {
-            updates.teamAllocations = parsed;
-          } else {
-            updates.teamAllocations = [];
-          }
-        } catch (e) {
-          updates.teamAllocations = [];
-        }
-      } else {
-        updates.teamAllocations = [];
-      }
-      needsUpdate = true;
-    }
-    
-    // Update the node data if needed
-    if (needsUpdate) {
-      updateNodeData(id, { ...data, ...updates });
-    }
-  }, [id, data, updateNodeData]);
-
-  // Save duration to backend when it changes
-  useEffect(() => {
-    if (data.duration !== undefined) {
-      saveToBackend('duration', data.duration);
-    }
-  }, [data.duration, saveToBackend]);
-  
   // Clean up timers on unmount
   useEffect(() => {
     return () => {
@@ -349,79 +302,46 @@ export function useProviderNode(id: string, data: RFProviderNodeData) {
     };
   }, []);
 
-  // Calculate team allocations for UI
-  const teamAllocations = useMemo(() => {
-    return connectedTeams.map(team => {
-      const allocation = processedTeamAllocations.find(a => a.teamId === team.teamId);
-      return {
-        ...team,
-        requestedHours: allocation?.requestedHours || 0,
-        allocatedMembers: allocation?.allocatedMembers || []
-      };
-    });
-  }, [connectedTeams, processedTeamAllocations]);
-
-  // Memoize the entire return object to prevent unnecessary re-renders
-  return useMemo(() => ({
-    // Data
-    title: data.title,
+  // Return the hook API
+  return {
+    // State
+    title: data.title || '',
     description: data.description || '',
-    duration,
     status,
-    getStatusColor,
-    cycleStatus,
-    teamAllocations,
-    connectedTeams,
-    processedTeamAllocations,
     processedCosts,
     processedDDItems,
+    processedTeamAllocations: teamAllocationsFromHook,
+    connectedTeams,
     costs,
-    CostSummary,
     
-    // Actions
+    // Handlers
     handleTitleChange,
     handleDescriptionChange,
     handleDelete,
+    
+    // Cost handlers
     addCost,
     updateCost,
     removeCost,
+    
+    // Due diligence handlers
     addDDItem,
     updateDDItem,
     removeDDItem,
-    requestTeamAllocation,
-    removeMemberAllocation,
-    updateMemberAllocation,
+    
+    // Resource allocation handlers
+    handleAllocationChangeLocal: resourceAllocation.handleAllocationChangeLocal,
+    handleAllocationCommit: resourceAllocation.handleAllocationCommit,
+    calculateMemberAllocations: resourceAllocation.calculateMemberAllocations,
+    calculateCostSummary: resourceAllocation.calculateCostSummary,
+    requestTeamAllocation: teamAllocationHook.requestTeamAllocation,
     saveTeamAllocationsToBackend,
-    saveCostsToBackend,
-    saveDDItemsToBackend
-  }), [
-    data.title,
-    data.description,
-    duration,
-    status,
+    
+    // Status
     getStatusColor,
     cycleStatus,
-    teamAllocations,
-    connectedTeams,
-    processedTeamAllocations,
-    processedCosts,
-    processedDDItems,
-    costs,
-    CostSummary,
-    handleTitleChange,
-    handleDescriptionChange,
-    handleDelete,
-    addCost,
-    updateCost,
-    removeCost,
-    addDDItem,
-    updateDDItem,
-    removeDDItem,
-    requestTeamAllocation,
-    removeMemberAllocation,
-    updateMemberAllocation,
-    saveTeamAllocationsToBackend,
-    saveCostsToBackend,
-    saveDDItemsToBackend
-  ]);
+    
+    // Duration
+    duration,
+  };
 } 
