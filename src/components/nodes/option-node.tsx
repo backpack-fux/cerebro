@@ -23,29 +23,8 @@ import { useOptionNode } from '@/hooks/useOptionNode';
 import { useResourceAllocation } from '@/hooks/useResourceAllocation';
 import { CostReceipt } from '@/components/shared/CostReceipt';
 import { TeamAllocation } from '@/components/shared/TeamAllocation';
-
-/**
- * Format a number with appropriate precision
- */
-const formatNumber = (value: number | string | undefined): string => {
-  if (value === undefined || value === null || value === '') return '0';
-  const num = typeof value === 'string' ? parseFloat(value) : value;
-  if (isNaN(num)) return '0';
-  return num.toLocaleString('en-US', { 
-    minimumFractionDigits: 2, 
-    maximumFractionDigits: 2 
-  });
-};
-
-/**
- * Format hours for display
- */
-const formatHours = (hours: number): string => {
-  if (hours < 1) {
-    return `${Math.round(hours * 60)} min`;
-  }
-  return `${Math.round(hours * 10) / 10} hrs`;
-};
+import { formatNumber, formatHours, formatCurrency, formatPercentage } from '@/utils/format-utils';
+import { formatMemberName } from '@/utils/node-utils';
 
 /**
  * Option Node component for displaying and editing option data
@@ -99,29 +78,6 @@ export const OptionNode = memo(function OptionNode({ id, data, selected }: NodeP
     if (!isNaN(numValue)) {
       option.handleMonthlyVolumeChange(numValue);
     }
-  };
-  
-  /**
-   * Format a member name from various data sources
-   * @param memberId The member ID
-   * @param memberData Optional member data object
-   * @returns Formatted member name
-   */
-  const formatMemberName = (memberId: string, memberData?: any): string => {
-    // Try to get the name from the member data first
-    if (memberData?.name) return memberData.name;
-    
-    // Otherwise, try to find the node in the graph
-    const nodes = getNodes();
-    const memberNode = nodes.find(n => n.id === memberId);
-    
-    // If we found the node, use its title
-    if (memberNode?.data?.title) {
-      return String(memberNode.data.title);
-    }
-    
-    // Last resort: use the first part of the ID
-    return memberId.split('-')[0];
   };
   
   // Calculate project duration in days for allocation calculations

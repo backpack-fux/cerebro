@@ -34,38 +34,14 @@ import { useProviderNode } from '@/hooks/useProviderNode';
 import { useReactFlow } from "@xyflow/react";
 import { CostReceipt } from '@/components/shared/CostReceipt';
 import { TeamAllocation } from '@/components/shared/TeamAllocation';
-
-// Format hours for display
-const formatHours = (hours: number): string => {
-  if (hours < 1) {
-    return `${Math.round(hours * 60)} min`;
-  }
-  return `${Math.round(hours * 10) / 10} hrs`;
-};
+import { formatHours, formatCurrency, formatNumber } from '@/utils/format-utils';
+import { formatMemberName } from '@/utils/node-utils';
 
 // Use React.memo to prevent unnecessary re-renders
 export const ProviderNode = memo(function ProviderNode({ id, data, selected }: NodeProps) {
   // Use our custom hook for provider node logic
   const provider = useProviderNode(id, data as RFProviderNodeData);
   const { getNodes } = useReactFlow();
-  
-  // Format member name for display
-  const formatMemberName = (memberId: string, memberData?: any): string => {
-    // Try to get the name from the member data first
-    if (memberData?.name) return memberData.name;
-    
-    // Otherwise, try to find the node in the graph
-    const nodes = getNodes();
-    const memberNode = nodes.find(n => n.id === memberId);
-    
-    // If we found the node, use its title
-    if (memberNode?.data?.title) {
-      return String(memberNode.data.title);
-    }
-    
-    // Last resort: use the first part of the ID
-    return memberId.split('-')[0];
-  };
   
   // Calculate project duration in days
   const projectDurationDays = Number(data.duration) || 1;

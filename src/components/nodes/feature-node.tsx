@@ -22,37 +22,8 @@ import { useReactFlow } from "@xyflow/react";
 import { RefreshCw } from "lucide-react";
 import { CostReceipt } from '@/components/shared/CostReceipt';
 import { TeamAllocation } from '@/components/shared/TeamAllocation';
-
-/**
- * Utility function to format numbers in a user-friendly way
- * @param value The number to format
- * @returns Formatted string with at most 1 decimal place
- */
-const formatNumber = (value: number | string | undefined): string => {
-  if (value === undefined || value === null || value === '') return '0';
-  
-  const num = typeof value === 'string' ? parseFloat(value) : value;
-  
-  if (isNaN(num)) return '0';
-  
-  // Format with commas and no decimal places
-  return num.toLocaleString('en-US', {
-    maximumFractionDigits: 0,
-    minimumFractionDigits: 0
-  });
-};
-
-/**
- * Format hours for display
- * @param hours The number of hours to format
- * @returns Formatted string representing the hours in a user-friendly format
- */
-const formatHours = (hours: number): string => {
-  if (hours < 1) {
-    return `${Math.round(hours * 60)} min`;
-  }
-  return `${Math.round(hours * 10) / 10} hrs`;
-};
+import { formatNumber, formatHours } from '@/utils/format-utils';
+import { formatMemberName } from '@/utils/node-utils';
 
 /**
  * Interface for team member data
@@ -107,24 +78,6 @@ export const FeatureNode = memo(function FeatureNode({ id, data, selected }: Nod
   // Use the feature node hook to manage state and operations
   const feature = useFeatureNode(id, data as RFFeatureNodeData);
   
-  // Format member name for display
-  const formatMemberName = (memberId: string, memberData?: any): string => {
-    // Try to get the name from the member data first
-    if (memberData?.name) return memberData.name;
-    
-    // Otherwise, try to find the node in the graph
-    const nodes = getNodes();
-    const memberNode = nodes.find(n => n.id === memberId);
-    
-    // If we found the node, use its title
-    if (memberNode?.data?.title) {
-      return String(memberNode.data.title);
-    }
-    
-    // Last resort: use the first part of the ID
-    return memberId.split('-')[0];
-  };
-  
   // Calculate project duration in days
   const projectDurationDays = Number(data.duration) || 1;
   
@@ -156,6 +109,10 @@ export const FeatureNode = memo(function FeatureNode({ id, data, selected }: Nod
       memberAllocations
     );
   }, [memberAllocations, feature.calculateCostSummary]);
+  
+  const getMemberName = (memberId: string, memberData?: any): string => {
+    return formatMemberName(memberId, getNodes(), memberData);
+  };
   
   return (
     <BaseNode selected={selected} className="w-[400px]">
@@ -259,7 +216,7 @@ export const FeatureNode = memo(function FeatureNode({ id, data, selected }: Nod
               teamAllocation={feature.processedTeamAllocations.find(a => a.teamId === team.teamId)}
               memberAllocations={memberAllocations}
               projectDurationDays={projectDurationDays}
-              formatMemberName={formatMemberName}
+              formatMemberName={getMemberName}
               onMemberValueChange={feature.handleAllocationChangeLocal}
               onMemberValueCommit={feature.handleAllocationCommit}
             />
