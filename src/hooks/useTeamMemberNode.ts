@@ -13,6 +13,7 @@ import {
 import { RFTeamNodeData, RosterMember } from '@/services/graph/team/team.types';
 import { ValidationError } from '@/types/validation';
 import { prepareDataForBackend, parseDataFromBackend } from "@/lib/utils";
+import { useNodeStatus } from "@/hooks/useNodeStatus";
 
 /**
  * Type guard for team nodes
@@ -46,6 +47,16 @@ export function useTeamMemberNode(
     return parseDataFromBackend(data, jsonFields) as RFTeamMemberNodeData;
   }, [data, jsonFields]);
   
+  // Use the node status hook to manage status
+  const { status, getStatusColor, cycleStatus } = useNodeStatus(
+    id, 
+    parsedData, 
+    updateNodeData, 
+    {
+      defaultStatus: 'planning'
+    }
+  );
+  
   // Refs for debounce timers
   const titleDebounceRef = useRef<NodeJS.Timeout | null>(null);
   const bioDebounceRef = useRef<NodeJS.Timeout | null>(null);
@@ -56,6 +67,41 @@ export function useTeamMemberNode(
   const rolesDebounceRef = useRef<NodeJS.Timeout | null>(null);
   const timezoneDebounceRef = useRef<NodeJS.Timeout | null>(null);
   const allocationDebounceRef = useRef<NodeJS.Timeout | null>(null);
+  
+  // Track loading state and initial fetch
+  const [isLoading, setIsLoading] = useState(false);
+  const initialFetchCompletedRef = useRef(false);
+  
+  // Function to refresh data from the backend
+  const refreshData = useCallback(async () => {
+    try {
+      setIsLoading(true);
+      
+      if (GraphApiClient.isNodeBlacklisted(id)) {
+        toast.error("This node is blacklisted and cannot be refreshed");
+        return;
+      }
+      
+      const serverData = await GraphApiClient.getNode('teamMember' as NodeType, id);
+      
+      if (serverData && serverData.data) {
+        // Process data from the server
+        const processedData = parseDataFromBackend(serverData.data, jsonFields) as RFTeamMemberNodeData;
+        
+        // Update node data in ReactFlow
+        updateNodeData(id, {
+          ...processedData
+        });
+        
+        toast.success("Team member data refreshed");
+      }
+    } catch (error) {
+      console.error(`Error refreshing team member data for ${id}:`, error);
+      toast.error(`Failed to refresh team member: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [id, updateNodeData, jsonFields]);
   
   // Save to backend function
   const saveToBackend = useCallback(async (updates: Partial<RFTeamMemberNodeData>) => {
@@ -459,6 +505,7 @@ export function useTeamMemberNode(
     startDate: data.startDate || DEFAULT_START_DATE,
     allocation: data.allocation || 0,
     memberSummary,
+    status,
     
     // Validation
     validateHoursPerDay,
@@ -477,6 +524,9 @@ export function useTeamMemberNode(
     handleTimezoneChange,
     handleAllocationChange,
     handleDelete,
+    refreshData,
+    getStatusColor,
+    cycleStatus,
     
     // Constants
     TIMEZONES,
@@ -494,6 +544,7 @@ export function useTeamMemberNode(
     data.startDate,
     data.allocation,
     memberSummary,
+    status,
     validateHoursPerDay,
     validateDaysPerWeek,
     validateDailyRate,
@@ -507,6 +558,9 @@ export function useTeamMemberNode(
     handleRolesChange,
     handleTimezoneChange,
     handleAllocationChange,
-    handleDelete
+    handleDelete,
+    refreshData,
+    getStatusColor,
+    cycleStatus
   ]);
 } 

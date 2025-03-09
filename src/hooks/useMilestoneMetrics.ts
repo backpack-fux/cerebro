@@ -1,4 +1,4 @@
-import { useMemo, useEffect } from 'react';
+import { useMemo, useEffect, useState, useCallback, useRef } from 'react';
 import { useNodeConnections, useReactFlow, Node } from '@xyflow/react';
 import { NodeStatus } from '@/hooks/useNodeStatus';
 import { GraphApiClient } from '@/services/graph/neo4j/api-client';
@@ -81,15 +81,42 @@ interface NodeData extends Record<string, unknown> {
 export function useMilestoneMetrics(nodeId: string) {
   const { getNodes } = useReactFlow();
   const connections = useNodeConnections({ id: nodeId });
+  const [updateCounter, setUpdateCounter] = useState(0);
+  const lastNodesDataRef = useRef('');
 
-  // Calculate metrics
-  const metrics = useMemo(() => {
-    const connectedNodes = connections
+  const getConnectedNodes = useCallback(() => {
+    return connections
       .map(conn => getNodes().find(n => n.id === conn.source))
       .filter((node): node is Node => node !== undefined)
       .filter((node): node is Node<NodeData> => 
         'data' in node && node.data !== null
       );
+  }, [connections, getNodes]);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const connectedNodes = getConnectedNodes();
+      const nodesDataString = JSON.stringify(connectedNodes.map(node => ({
+        id: node.id,
+        teamAllocations: node.data.teamAllocations,
+        costs: node.data.costs,
+        monthlyVolume: node.data.monthlyVolume,
+        transactionFeeRate: node.data.transactionFeeRate
+      })));
+      
+      if (nodesDataString !== lastNodesDataRef.current) {
+        lastNodesDataRef.current = nodesDataString;
+        setUpdateCounter(prev => prev + 1);
+        console.log('[MilestoneMetrics] Detected changes in connected nodes, updating metrics');
+      }
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [getConnectedNodes]);
+
+  const metrics = useMemo(() => {
+    console.log('[MilestoneMetrics] Recalculating metrics, update counter:', updateCounter);
+    const connectedNodes = getConnectedNodes();
 
     const metrics: MilestoneMetrics = {
       totalCost: 0,
@@ -142,11 +169,9 @@ export function useMilestoneMetrics(nodeId: string) {
       const nodeTitle = String(node.data.title || node.id);
 
       if (node.type === 'provider') {
-        // Process provider costs
         if (node.data.costs) {
           let costs = node.data.costs;
           
-          // Parse costs if it's a string
           if (typeof costs === 'string') {
             try {
               costs = JSON.parse(costs);
@@ -166,9 +191,8 @@ export function useMilestoneMetrics(nodeId: string) {
               if (cost.costType === 'fixed' && cost.details.amount) {
                 amount = Number(cost.details.amount) || 0;
                 
-                // Adjust for frequency
                 if (cost.details.frequency === 'annual') {
-                  amount = amount / 12; // Convert to monthly
+                  amount = amount / 12;
                 }
               }
               
@@ -195,7 +219,6 @@ export function useMilestoneMetrics(nodeId: string) {
         }
       }
 
-      // Process option revenue
       if (node.type === 'option') {
         const monthlyVolume = Number(node.data.monthlyVolume) || 0;
         
@@ -232,7 +255,6 @@ export function useMilestoneMetrics(nodeId: string) {
       if (node.data.teamAllocations) {
         let teamAllocations = node.data.teamAllocations;
         
-        // Parse teamAllocations if it's a string
         if (typeof teamAllocations === 'string') {
           try {
             teamAllocations = JSON.parse(teamAllocations);
@@ -385,9 +407,8 @@ export function useMilestoneMetrics(nodeId: string) {
     });
 
     return metrics;
-  }, [connections, getNodes]);
+  }, [connections, getNodes, updateCounter, getConnectedNodes]);
 
-  // Save metrics to backend when they change
   useEffect(() => {
     const saveMetricsToBackend = async () => {
       try {
@@ -398,7 +419,6 @@ export function useMilestoneMetrics(nodeId: string) {
           providerDetails: metrics.providerDetails
         });
 
-        // Prepare the data for backend save
         const featureAllocations = metrics.featureAllocations.map(feature => ({
           featureId: feature.featureId,
           name: feature.name,
@@ -419,7 +439,6 @@ export function useMilestoneMetrics(nodeId: string) {
           type: provider.type
         }));
 
-        // Update the milestone node data
         await GraphApiClient.updateNode('milestone' as NodeType, nodeId, {
           totalCost: metrics.totalCost,
           monthlyValue: metrics.monthlyValue,
@@ -434,10 +453,8 @@ export function useMilestoneMetrics(nodeId: string) {
       }
     };
 
-    // Only save if we have connected nodes and metrics have changed
     if (connections.length > 0 && 
         (metrics.totalCost > 0 || metrics.providerCosts > 0 || metrics.teamCosts > 0)) {
-      // Debounce the save to avoid excessive API calls
       const debounceTimeout = setTimeout(() => {
         saveMetricsToBackend();
       }, 2000);

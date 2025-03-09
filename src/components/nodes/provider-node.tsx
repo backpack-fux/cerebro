@@ -13,7 +13,7 @@ import { useMemo, memo } from "react";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
-import { Plus, Trash } from "lucide-react";
+import { Plus, Trash, RefreshCw } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -97,6 +97,13 @@ export const ProviderNode = memo(function ProviderNode({ id, data, selected }: N
           </div>
         </NodeHeaderTitle>
         <NodeHeaderActions>
+          <button 
+            onClick={provider.refreshData}
+            className="p-1 rounded-md hover:bg-muted"
+            title="Refresh data"
+          >
+            <RefreshCw className="h-4 w-4" />
+          </button>
           <NodeHeaderMenuAction label="Provider Actions">
             <DropdownMenuItem 
               className="text-destructive focus:text-destructive"

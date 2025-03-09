@@ -189,6 +189,10 @@ export function useOptionNode(id: string, data: RFOptionNodeData) {
 
   // Handle title change
   const handleTitleChange = useCallback((newTitle: string) => {
+    // First update the local state
+    setTitle(newTitle);
+    
+    // Then update the node data in ReactFlow
     updateNodeData(id, { ...safeOptionData, title: newTitle });
     
     if (titleDebounceRef.current) clearTimeout(titleDebounceRef.current);

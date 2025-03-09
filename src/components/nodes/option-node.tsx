@@ -128,14 +128,14 @@ export const OptionNode = memo(function OptionNode({ id, data, selected }: NodeP
           </div>
         </NodeHeaderTitle>
         <NodeHeaderActions>
-          <button
+          <button 
             onClick={option.refreshData}
             className="p-1 rounded-md hover:bg-muted"
             title="Refresh data"
           >
             <RefreshCw className="h-4 w-4" />
           </button>
-          <NodeHeaderMenuAction label="Option Actions">
+          <NodeHeaderMenuAction label="Provider Actions">
             <DropdownMenuItem 
               className="text-destructive focus:text-destructive"
               onClick={option.handleDelete}

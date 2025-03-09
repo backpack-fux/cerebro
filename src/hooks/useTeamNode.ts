@@ -61,6 +61,11 @@ export function useTeamNode(id: string, data: RFTeamNodeData) {
     return [];
   }, [parsedData.roster]);
   
+  // Add a state to force re-renders when roster allocations change
+  const [updateCounter, setUpdateCounter] = useState(0);
+  // Reference to store the last roster allocations for comparison
+  const lastRosterAllocationsRef = useRef('');
+  
   // Save to backend function
   const saveToBackend = useCallback(async (updates: Partial<RFTeamNodeData>) => {
     try {
@@ -115,8 +120,33 @@ export function useTeamNode(id: string, data: RFTeamNodeData) {
     };
   }, [parsedData.season]);
 
+  // Watch for changes in roster allocations from work nodes
+  useEffect(() => {
+    const interval = setInterval(() => {
+      // Get the current roster
+      const rosterArray = Array.isArray(processedRoster) ? processedRoster : [];
+      
+      // Create a stringified version of the allocations to detect changes
+      const allocationsString = JSON.stringify(rosterArray.map(member => ({
+        memberId: member.memberId,
+        allocation: member.allocation,
+        allocations: member.allocations
+      })));
+      
+      // Compare with the last known state
+      if (allocationsString !== lastRosterAllocationsRef.current) {
+        lastRosterAllocationsRef.current = allocationsString;
+        setUpdateCounter(prev => prev + 1);
+        console.log('[TeamNode] Detected changes in roster allocations, updating bandwidth');
+      }
+    }, 1000); // Check every second
+    
+    return () => clearInterval(interval);
+  }, [processedRoster]);
+
   // Calculate bandwidth
   const bandwidth = useMemo(() => {
+    console.log('[TeamNode] Recalculating bandwidth, update counter:', updateCounter);
     // Ensure roster is an array before using array methods
     const rosterArray = Array.isArray(processedRoster) ? processedRoster : [];
     
@@ -158,23 +188,29 @@ export function useTeamNode(id: string, data: RFTeamNodeData) {
       available: total - allocated,
       utilizationRate: total > 0 ? (allocated / total) * 100 : 0
     };
-  }, [processedRoster, getNodes]);
+  }, [processedRoster, getNodes, updateCounter]);
 
   // Save roster to backend with debouncing
   const saveRosterToBackend = useCallback(async (roster: RosterMember[]) => {
     if (rosterDebounceRef.current) clearTimeout(rosterDebounceRef.current);
     
     rosterDebounceRef.current = setTimeout(async () => {
-      // Ensure each roster member has the required properties
-      const validRoster = roster.map(member => ({
-        memberId: member.memberId,
-        allocation: typeof member.allocation === 'number' ? member.allocation : 80,
-        role: member.role || "Developer",
-        startDate: member.startDate || new Date().toISOString().split('T')[0],
-        allocations: member.allocations || []
-      }));
-      
-      await saveToBackend({ roster: validRoster });
+      try {
+        // Ensure each roster member has the required properties
+        const validRoster = roster.map(member => ({
+          memberId: member.memberId,
+          allocation: typeof member.allocation === 'number' ? member.allocation : 80,
+          role: member.role || "developer", // Lowercase role as per API requirements
+          startDate: member.startDate || new Date().toISOString().split('T')[0],
+          allocations: Array.isArray(member.allocations) ? member.allocations : []
+        }));
+        
+        console.log('[TeamNode] Saving roster to backend:', validRoster);
+        await saveToBackend({ roster: validRoster });
+      } catch (error) {
+        console.error('[TeamNode] Error saving roster:', error);
+        toast.error('Failed to update team roster');
+      }
       rosterDebounceRef.current = null;
     }, 1000);
   }, [saveToBackend]);

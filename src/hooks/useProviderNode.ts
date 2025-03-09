@@ -306,6 +306,54 @@ export function useProviderNode(id: string, data: RFProviderNodeData) {
     };
   }, []);
   
+  // Function to refresh data from the server
+  const refreshData = useCallback(async () => {
+    try {
+      // Check if this is a known blacklisted node
+      if (GraphApiClient.isNodeBlacklisted(id)) {
+        console.warn(`Skipping refresh for blacklisted node ${id}`);
+        return;
+      }
+      
+      // Verify that we're working with a provider node
+      const nodeFromGraph = getNodes().find(n => n.id === id);
+      if (nodeFromGraph && !isProviderNode(nodeFromGraph)) {
+        console.warn(`Node ${id} exists but is not a provider node. Found type: ${nodeFromGraph.type}`);
+        return;
+      }
+      
+      // Use the GraphApiClient to fetch node data
+      const serverData = await GraphApiClient.getNode('provider' as NodeType, id);
+      
+      // Process costs and due diligence items
+      const processedCosts = parseJsonIfString<ProviderCost[]>(serverData.data.costs, []);
+      const processedDDItems = parseJsonIfString<DDItem[]>(serverData.data.ddItems, []);
+      const processedTeamAllocations = parseJsonIfString<TeamAllocation[]>(serverData.data.teamAllocations, []);
+      
+      // Update local state
+      setTitle(serverData.data.title || '');
+      setDescription(serverData.data.description || '');
+      setCosts(processedCosts);
+      setDDItems(processedDDItems);
+      
+      // Update node data in ReactFlow
+      updateNodeData(id, {
+        ...parsedData,
+        title: serverData.data.title || parsedData.title,
+        description: serverData.data.description || parsedData.description,
+        costs: processedCosts,
+        ddItems: processedDDItems,
+        teamAllocations: processedTeamAllocations,
+        duration: serverData.data.duration || parsedData.duration
+      });
+      
+      console.log(`Successfully refreshed provider data for ${id}`);
+    } catch (error) {
+      console.error(`Error refreshing provider node data for ${id}:`, error);
+      toast.error(`Failed to refresh provider ${id}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }, [id, parsedData, updateNodeData, getNodes]);
+  
   // Return the hook API
   return useMemo(() => ({
     // State
@@ -364,6 +412,9 @@ export function useProviderNode(id: string, data: RFProviderNodeData) {
     
     // Duration
     duration,
+    
+    // New refreshData function
+    refreshData,
   }), [
     title,
     description,
@@ -396,6 +447,7 @@ export function useProviderNode(id: string, data: RFProviderNodeData) {
     saveTeamAllocationsToBackend,
     getStatusColor,
     cycleStatus,
-    duration
+    duration,
+    refreshData,
   ]);
 } 

@@ -120,12 +120,21 @@ export const FeatureNode = memo(function FeatureNode({ id, data, selected }: Nod
       
       <NodeHeader>
         <NodeHeaderTitle>
-          <input
-            value={feature.title}
-            onChange={(e) => feature.handleTitleChange(e.target.value)}
-            className="bg-transparent outline-none w-full"
-            placeholder="Feature Name"
-          />
+          <div className="flex items-center gap-2">
+            <Badge 
+              variant="secondary" 
+              className={`cursor-pointer ${feature.getStatusColor(feature.status)}`}
+              onClick={feature.cycleStatus}
+            >
+              {feature.status}
+            </Badge>
+            <input
+              value={feature.title}
+              onChange={(e) => feature.handleTitleChange(e.target.value)}
+              className="bg-transparent outline-none w-full"
+              placeholder="Feature Title"
+            />
+          </div>
         </NodeHeaderTitle>
         <NodeHeaderActions>
           <button 
@@ -135,9 +144,9 @@ export const FeatureNode = memo(function FeatureNode({ id, data, selected }: Nod
           >
             <RefreshCw className="h-4 w-4" />
           </button>
-          <NodeHeaderMenuAction label="Feature Actions">
+          <NodeHeaderMenuAction label="Provider Actions">
             <DropdownMenuItem 
-              className="text-destructive focus:text-destructive" 
+              className="text-destructive focus:text-destructive"
               onClick={feature.handleDelete}
             >
               Delete

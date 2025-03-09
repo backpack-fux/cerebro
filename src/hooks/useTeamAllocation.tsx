@@ -333,10 +333,16 @@ export function useTeamAllocation(nodeId: string, data: FeatureNodeData) {
     // Update the team node
     updateNodeData(teamId, {
       ...teamNode.data,
-      roster: updatedRoster
+      roster: updatedRoster,
+      _lastUpdate: Date.now()
     });
 
-    // Update the feature node
+    // Log the update for debugging
+    console.log(`[TeamAllocation] Removed allocation for team ${teamId}, member ${memberId}:`, {
+      nodeId,
+      updatedRoster
+    });
+
     // Use the utility function to ensure teamAllocations is an array
     const teamAllocationsArray = processedTeamAllocations;
 
@@ -454,7 +460,16 @@ export function useTeamAllocation(nodeId: string, data: FeatureNodeData) {
     // Update the team node
     updateNodeData(teamId, {
       ...teamNode.data,
-      roster: updatedRoster
+      roster: updatedRoster,
+      _lastUpdate: Date.now()
+    });
+
+    // Log the update for debugging
+    console.log(`[TeamAllocation] Updated team ${teamId} roster for member ${memberId}:`, {
+      nodeId,
+      hours,
+      percentage: allocationDetails.percentage,
+      updatedRoster
     });
 
     // Get the current team allocations array

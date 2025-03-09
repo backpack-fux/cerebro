@@ -12,7 +12,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { RFTeamMemberNodeData, Role } from '@/services/graph/team-member/team-member.types';
 import { useValidation } from '@/contexts/validation-context';
 import { useTeamMemberNode } from '@/hooks/useTeamMemberNode';
-import { cn } from '@/lib/utils';
 import { BaseNode } from '@/components/nodes/base-node';
 import { 
   NodeHeader,
@@ -21,6 +20,8 @@ import {
   NodeHeaderMenuAction,
 } from '@/components/nodes/node-header';
 import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
+import { RefreshCw } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
 
 // Common roles for team members
 const COMMON_ROLES: Role[] = [
@@ -38,51 +39,15 @@ const COMMON_ROLES: Role[] = [
 const TeamMemberNode = memo(({ id, data, selected }: NodeProps) => {
   const { addError, clearErrors, getErrors } = useValidation();
   
-  // Use the hook to manage state and operations
-  const {
-    // Data
-    title,
-    bio,
-    roles,
-    timezone,
-    dailyRate,
-    hoursPerDay,
-    daysPerWeek,
-    weeklyCapacity,
-    startDate,
-    allocation,
-    
-    // Validation
-    validateHoursPerDay,
-    validateDaysPerWeek,
-    validateDailyRate,
-    validateStartDate,
-    
-    // Actions
-    handleTitleChange,
-    handleBioChange,
-    handleHoursPerDayChange,
-    handleDaysPerWeekChange,
-    handleDailyRateChange,
-    handleStartDateChange,
-    handleRolesChange,
-    handleTimezoneChange,
-    handleAllocationChange,
-    handleDelete,
-    
-    // Constants
-    TIMEZONES,
-    DEFAULT_START_DATE,
-    EARLIEST_START_DATE,
-  } = useTeamMemberNode(id, data as RFTeamMemberNodeData, addError, clearErrors, getErrors);
-
+  // Use the team member node hook to manage state and operations
+  const teamMember = useTeamMemberNode(id, data as RFTeamMemberNodeData, addError, clearErrors, getErrors);
+  
   // State for custom role input
   const [customRole, setCustomRole] = React.useState('');
 
-  // Handle adding a custom role
   const handleAddCustomRole = () => {
-    if (customRole && !roles.includes(customRole)) {
-      handleRolesChange(customRole, true);
+    if (customRole && !teamMember.roles.includes(customRole)) {
+      teamMember.handleRolesChange(customRole, true);
       setCustomRole('');
     }
   };
@@ -96,19 +61,41 @@ const TeamMemberNode = memo(({ id, data, selected }: NodeProps) => {
 
   return (
     <BaseNode selected={selected} className="w-[350px] min-h-[200px]">
+      <Handle type="source" position={Position.Top} id="source" />
+      <Handle type="target" position={Position.Bottom} id="target" />
+      
       <NodeHeader>
         <NodeHeaderTitle>
-          <Input
-            placeholder="Team Member Name"
-            value={title}
-            onChange={(e) => handleTitleChange(e.target.value)}
-            className="text-lg font-semibold bg-transparent border-none p-0 h-auto focus-visible:ring-0 focus-visible:ring-offset-0"
-          />
+          <div className="flex items-center gap-2">
+            <Badge 
+              variant="secondary" 
+              className={`cursor-pointer ${teamMember.getStatusColor(teamMember.status)}`}
+              onClick={teamMember.cycleStatus}
+            >
+              {teamMember.status}
+            </Badge>
+            <input
+              value={teamMember.title}
+              onChange={(e) => teamMember.handleTitleChange(e.target.value)}
+              className="bg-transparent outline-none w-full"
+              placeholder="Team Member Name"
+            />
+          </div>
         </NodeHeaderTitle>
         <NodeHeaderActions>
-          <NodeHeaderMenuAction label="Team Member options">
-            <DropdownMenuItem onSelect={handleDelete} className="cursor-pointer text-red-600">
-              Delete Team Member
+          <button 
+            onClick={teamMember.refreshData}
+            className="p-1 rounded-md hover:bg-muted"
+            title="Refresh data"
+          >
+            <RefreshCw className="h-4 w-4" />
+          </button>
+          <NodeHeaderMenuAction label="Provider Actions">
+            <DropdownMenuItem 
+              className="text-destructive focus:text-destructive"
+              onClick={teamMember.handleDelete}
+            >
+              Delete
             </DropdownMenuItem>
           </NodeHeaderMenuAction>
         </NodeHeaderActions>
@@ -124,11 +111,11 @@ const TeamMemberNode = memo(({ id, data, selected }: NodeProps) => {
               type="number"
               min={0}
               max={24}
-              value={hoursPerDay}
+              value={teamMember.hoursPerDay}
               onChange={(e) => {
                 const value = parseFloat(e.target.value);
-                handleHoursPerDayChange(value);
-                validateHoursPerDay(value);
+                teamMember.handleHoursPerDayChange(value);
+                teamMember.validateHoursPerDay(value);
               }}
               className={getErrorMessage('hoursPerDay') ? 'border-red-500' : ''}
             />
@@ -143,11 +130,11 @@ const TeamMemberNode = memo(({ id, data, selected }: NodeProps) => {
               type="number"
               min={0}
               max={7}
-              value={daysPerWeek}
+              value={teamMember.daysPerWeek}
               onChange={(e) => {
                 const value = parseFloat(e.target.value);
-                handleDaysPerWeekChange(value);
-                validateDaysPerWeek(value);
+                teamMember.handleDaysPerWeekChange(value);
+                teamMember.validateDaysPerWeek(value);
               }}
               className={getErrorMessage('daysPerWeek') ? 'border-red-500' : ''}
             />
@@ -161,11 +148,11 @@ const TeamMemberNode = memo(({ id, data, selected }: NodeProps) => {
               id={`rate-${id}`}
               type="number"
               min={0}
-              value={dailyRate}
+              value={teamMember.dailyRate}
               onChange={(e) => {
                 const value = parseFloat(e.target.value);
-                handleDailyRateChange(value);
-                validateDailyRate(value);
+                teamMember.handleDailyRateChange(value);
+                teamMember.validateDailyRate(value);
               }}
               className={getErrorMessage('dailyRate') ? 'border-red-500' : ''}
             />
@@ -179,12 +166,12 @@ const TeamMemberNode = memo(({ id, data, selected }: NodeProps) => {
         <div>
           <div className="flex justify-between">
             <Label>Weekly Capacity</Label>
-            <span className="text-sm">{weeklyCapacity} hours</span>
+            <span className="text-sm">{teamMember.weeklyCapacity} hours</span>
           </div>
           <div className="h-2 w-full bg-gray-200 rounded-full mt-1">
             <div
               className="h-2 bg-primary rounded-full"
-              style={{ width: `${(weeklyCapacity / 40) * 100}%` }}
+              style={{ width: `${(teamMember.weeklyCapacity / 40) * 100}%` }}
             ></div>
           </div>
         </div>
@@ -193,14 +180,14 @@ const TeamMemberNode = memo(({ id, data, selected }: NodeProps) => {
         <div>
           <div className="flex justify-between">
             <Label>Team Allocation</Label>
-            <span className="text-sm">{allocation}%</span>
+            <span className="text-sm">{teamMember.allocation}%</span>
           </div>
           <Slider
-            value={[allocation]}
+            value={[teamMember.allocation]}
             min={0}
             max={100}
             step={5}
-            onValueChange={(values) => handleAllocationChange(values[0])}
+            onValueChange={(values) => teamMember.handleAllocationChange(values[0])}
             className="mt-2"
           />
         </div>
@@ -213,8 +200,8 @@ const TeamMemberNode = memo(({ id, data, selected }: NodeProps) => {
               <div key={role} className="flex items-center space-x-2">
                 <Checkbox
                   id={`role-${role}-${id}`}
-                  checked={roles.includes(role)}
-                  onCheckedChange={(checked) => handleRolesChange(role, checked === true)}
+                  checked={teamMember.roles.includes(role)}
+                  onCheckedChange={(checked) => teamMember.handleRolesChange(role, checked === true)}
                 />
                 <Label htmlFor={`role-${role}-${id}`} className="text-sm">
                   {role}
@@ -238,16 +225,16 @@ const TeamMemberNode = memo(({ id, data, selected }: NodeProps) => {
               Add
             </Button>
           </div>
-          {roles.filter(r => !COMMON_ROLES.includes(r)).length > 0 && (
+          {teamMember.roles.filter(r => !COMMON_ROLES.includes(r)).length > 0 && (
             <div className="mt-2">
               <Label className="text-sm">Custom Roles:</Label>
               <div className="flex flex-wrap gap-1 mt-1">
-                {roles.filter(r => !COMMON_ROLES.includes(r)).map(role => (
+                {teamMember.roles.filter(r => !COMMON_ROLES.includes(r)).map(role => (
                   <div key={role} className="bg-muted text-xs px-2 py-1 rounded-md flex items-center">
                     {role}
                     <button
                       className="ml-1 text-muted-foreground hover:text-foreground"
-                      onClick={() => handleRolesChange(role, false)}
+                      onClick={() => teamMember.handleRolesChange(role, false)}
                     >
                       ×
                     </button>
@@ -262,14 +249,14 @@ const TeamMemberNode = memo(({ id, data, selected }: NodeProps) => {
         <div>
           <Label htmlFor={`timezone-${id}`}>Timezone</Label>
           <Select
-            value={timezone}
-            onValueChange={handleTimezoneChange}
+            value={teamMember.timezone}
+            onValueChange={teamMember.handleTimezoneChange}
           >
             <SelectTrigger id={`timezone-${id}`}>
               <SelectValue placeholder="Select timezone" />
             </SelectTrigger>
             <SelectContent>
-              {TIMEZONES.map((tz) => (
+              {teamMember.TIMEZONES.map((tz) => (
                 <SelectItem key={tz} value={tz}>
                   {tz}
                 </SelectItem>
@@ -284,11 +271,11 @@ const TeamMemberNode = memo(({ id, data, selected }: NodeProps) => {
           <Input
             id={`start-date-${id}`}
             type="date"
-            value={startDate}
-            min={EARLIEST_START_DATE}
+            value={teamMember.startDate}
+            min={teamMember.EARLIEST_START_DATE}
             onChange={(e) => {
-              handleStartDateChange(e.target.value);
-              validateStartDate(e.target.value);
+              teamMember.handleStartDateChange(e.target.value);
+              teamMember.validateStartDate(e.target.value);
             }}
             className={getErrorMessage('startDate') ? 'border-red-500' : ''}
           />
@@ -303,26 +290,12 @@ const TeamMemberNode = memo(({ id, data, selected }: NodeProps) => {
           <Textarea
             id={`bio-${id}`}
             placeholder="Team member bio"
-            value={bio}
-            onChange={(e) => handleBioChange(e.target.value)}
+            value={teamMember.bio}
+            onChange={(e) => teamMember.handleBioChange(e.target.value)}
             rows={3}
           />
         </div>
       </div>
-
-      {/* Handles for connections */}
-      <Handle
-        type="source"
-        position={Position.Top}
-        id="source"
-        className="w-3 h-3 bg-primary"
-      />
-      <Handle
-        type="target"
-        position={Position.Bottom}
-        id="target"
-        className="w-3 h-3 bg-primary"
-      />
     </BaseNode>
   );
 });
