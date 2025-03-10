@@ -10,6 +10,7 @@ import {
 } from '@/services/graph/team/team.types';
 import { RFTeamMemberNodeData } from "@/services/graph/team-member/team-member.types";
 import { prepareDataForBackend, parseDataFromBackend } from "@/lib/utils";
+import { getCurrentDate } from "@/utils/date-utils";
 
 /**
  * Type guard for team member nodes
@@ -33,11 +34,22 @@ export function useTeamNode(id: string, data: RFTeamNodeData) {
   const edges = useEdges();
   
   // Define JSON fields that need special handling
-  const jsonFields = ['roster', 'seasons'];
+  const jsonFields = ['roster', 'seasons', 'season'];
   
   // Parse complex objects if they are strings
   const parsedData = useMemo(() => {
-    return parseDataFromBackend(data, jsonFields) as RFTeamNodeData;
+    const result = parseDataFromBackend(data, jsonFields) as RFTeamNodeData;
+    console.log('[useTeamNode] Raw data:', data);
+    console.log('[useTeamNode] Parsed data:', result);
+    console.log('[useTeamNode] Season data:', {
+      raw: data.season,
+      parsed: result.season,
+      type: typeof result.season,
+      isObject: typeof result.season === 'object',
+      startDate: result.season?.startDate,
+      endDate: result.season?.endDate
+    });
+    return result;
   }, [data, jsonFields]);
   
   // Local state for title and description to avoid excessive API calls
@@ -91,34 +103,125 @@ export function useTeamNode(id: string, data: RFTeamNodeData) {
 
   // Calculate season progress
   const seasonProgress = useMemo(() => {
+    // Debug the season data
+    const now = getCurrentDate();
+    
+    console.log('[TeamNode] Season data:', {
+      season: parsedData.season,
+      startDate: parsedData.season?.startDate,
+      endDate: parsedData.season?.endDate,
+      now: now.toISOString(),
+      currentYear: now.getFullYear(),
+      currentMonth: now.getMonth() + 1,
+      currentDay: now.getDate()
+    });
+
+    // Validate date inputs to ensure they are proper date strings
     if (!parsedData.season?.startDate || !parsedData.season?.endDate) {
+      console.log('[TeamNode] Missing season dates');
       return {
         progress: 0,
         daysRemaining: 0,
         isActive: false,
         hasStarted: false,
-        hasEnded: false
+        hasEnded: false,
+        isFuture: false
       };
     }
 
-    const start = new Date(parsedData.season.startDate);
-    const end = new Date(parsedData.season.endDate);
-    const now = new Date();
-    
-    const total = end.getTime() - start.getTime();
-    const elapsed = now.getTime() - start.getTime();
-    const progress = Math.max(0, Math.min(100, (elapsed / total) * 100));
-    
-    const daysRemaining = Math.ceil((end.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
-    
-    return {
-      progress,
-      daysRemaining,
-      isActive: now >= start && now <= end,
-      hasStarted: now >= start,
-      hasEnded: now > end
-    };
+    try {
+      // Simple direct comparison of dates
+      const start = new Date(parsedData.season.startDate);
+      const end = new Date(parsedData.season.endDate);
+      
+      // Ensure dates are valid
+      if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+        console.error('[TeamNode] Invalid date in season calculation', { start, end });
+        return {
+          progress: 0,
+          daysRemaining: 0,
+          isActive: false,
+          hasStarted: false,
+          hasEnded: false,
+          isFuture: false
+        };
+      }
+      
+      // Simple status determination
+      const isBeforeStart = now < start;
+      const isAfterEnd = now > end;
+      const isActive = !isBeforeStart && !isAfterEnd;
+      
+      console.log('[TeamNode] Simple date comparison:', {
+        now: now.toISOString(),
+        start: start.toISOString(),
+        end: end.toISOString(),
+        isBeforeStart,
+        isAfterEnd,
+        isActive
+      });
+      
+      // Calculate progress
+      const total = end.getTime() - start.getTime();
+      const elapsed = now.getTime() - start.getTime();
+      let progress = 0;
+      
+      if (isBeforeStart) {
+        progress = 0;
+      } else if (isAfterEnd) {
+        progress = 100;
+      } else {
+        progress = Math.max(0, Math.min(100, (elapsed / total) * 100));
+      }
+      
+      // Calculate days remaining
+      let daysRemaining = 0;
+      if (isBeforeStart) {
+        daysRemaining = Math.ceil((start.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+      } else if (isActive) {
+        daysRemaining = Math.ceil((end.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+      }
+      
+      const result = {
+        progress,
+        daysRemaining,
+        isActive,
+        hasStarted: !isBeforeStart,
+        hasEnded: isAfterEnd,
+        isFuture: isBeforeStart
+      };
+      
+      console.log('[TeamNode] Final season status:', result);
+      
+      return result;
+    } catch (error) {
+      console.error('[TeamNode] Error calculating season progress:', error);
+      return {
+        progress: 0,
+        daysRemaining: 0,
+        isActive: false,
+        hasStarted: false,
+        hasEnded: false,
+        isFuture: false
+      };
+    }
   }, [parsedData.season]);
+  
+  // Helper function to validate date strings
+  function isValidDateString(dateString: string): boolean {
+    if (!dateString) return false;
+    
+    try {
+      // Try to create a date and check if it's valid
+      const date = new Date(dateString);
+      const valid = !isNaN(date.getTime());
+      console.log(`[TeamNode] Date validation: "${dateString}" is ${valid ? 'valid' : 'invalid'}`);
+      return valid;
+    } catch (error) {
+      console.error(`[TeamNode] Date validation error for "${dateString}":`, error);
+      return false;
+    }
+  }
 
   // Watch for changes in roster allocations from work nodes
   useEffect(() => {
@@ -196,16 +299,44 @@ export function useTeamNode(id: string, data: RFTeamNodeData) {
     
     rosterDebounceRef.current = setTimeout(async () => {
       try {
-        // Ensure each roster member has the required properties
-        const validRoster = roster.map(member => ({
-          memberId: member.memberId,
-          allocation: typeof member.allocation === 'number' ? member.allocation : 80,
-          role: member.role || "developer", // Lowercase role as per API requirements
-          startDate: member.startDate || new Date().toISOString().split('T')[0],
-          allocations: Array.isArray(member.allocations) ? member.allocations : []
-        }));
+        // Ensure roster is an array
+        if (!Array.isArray(roster)) {
+          console.error('[TeamNode] Invalid roster format, expected array:', roster);
+          toast.error('Invalid roster format');
+          return;
+        }
+        
+        console.log('[TeamNode] Original roster:', JSON.stringify(roster));
+        
+        // Validate and clean each roster member to ensure it has the required properties
+        const validRoster = roster.map(member => {
+          // Ensure role is a string (lowercase for consistency)
+          let role = "developer"; // Default role
+          if (member.role) {
+            role = typeof member.role === 'string' ? member.role.toLowerCase() : "developer";
+          }
+          
+          // Ensure required fields are present and have correct types
+          const cleanedMember = {
+            memberId: member.memberId,
+            allocation: typeof member.allocation === 'number' ? member.allocation : 80,
+            role: role, // Always use the cleaned role
+            // Optional fields
+            ...(member.startDate ? { startDate: member.startDate } : {}),
+            ...(member.endDate ? { endDate: member.endDate } : {}),
+            // Only include allocations if it's a valid array
+            ...(Array.isArray(member.allocations) ? { allocations: member.allocations } : {})
+          };
+          
+          console.log('[TeamNode] Cleaned member:', JSON.stringify(cleanedMember));
+          return cleanedMember;
+        });
         
         console.log('[TeamNode] Saving roster to backend:', validRoster);
+        console.log('[TeamNode] Stringified roster:', JSON.stringify(validRoster));
+        
+        // Ensure we're sending an array, not a string
+        // The prepareDataForBackend function will handle the stringification
         await saveToBackend({ roster: validRoster });
       } catch (error) {
         console.error('[TeamNode] Error saving roster:', error);
@@ -301,31 +432,56 @@ export function useTeamNode(id: string, data: RFTeamNodeData) {
   const handleAllocationChange = useCallback((memberId: string, allocation: number) => {
     // Ensure roster is an array before using array methods
     const rosterArray = Array.isArray(processedRoster) ? processedRoster : [];
+    
+    // Check if the allocation has actually changed to avoid unnecessary updates
+    const currentMember = rosterArray.find((member: RosterMember) => member.memberId === memberId);
+    if (currentMember && currentMember.allocation === allocation) {
+      return; // No change, exit early
+    }
+    
     const updatedRoster = rosterArray.map((member: RosterMember) => {
       if (member.memberId === memberId) {
-        return { ...member, allocation };
+        // Ensure role is a string
+        const role = typeof member.role === 'string' ? member.role : 'developer';
+        return { 
+          ...member, 
+          allocation,
+          role // Ensure role is included and is a string
+        };
       }
       return member;
     });
     
+    console.log('[TeamNode] Updated roster after allocation change:', JSON.stringify(updatedRoster));
+    
+    // Update the UI immediately
     updateNodeData(id, {
       ...parsedData,
       roster: updatedRoster
     });
     
-    saveRosterToBackend(updatedRoster);
+    // Debounce the backend update
+    if (rosterDebounceRef.current) clearTimeout(rosterDebounceRef.current);
     
-    // Also update the team member node
-    const teamMember = getNodes().find(n => n.id === memberId);
-    if (teamMember) {
-      GraphApiClient.updateNode('teamMember' as NodeType, memberId, { allocation })
-        .catch(error => {
-          console.error(`Failed to update team member allocation:`, error);
-          toast.error("Failed to update allocation", {
-            description: "The team member allocation could not be updated."
+    rosterDebounceRef.current = setTimeout(async () => {
+      try {
+        // Save to backend
+        await saveRosterToBackend(updatedRoster);
+        
+        // Also update the team member node if it exists
+        const teamMember = getNodes().find(n => n.id === memberId);
+        if (teamMember) {
+          await GraphApiClient.updateNode('teamMember' as NodeType, memberId, { 
+            allocation: allocation 
           });
+        }
+      } catch (error) {
+        console.error(`Failed to update team member allocation:`, error);
+        toast.error("Failed to update allocation", {
+          description: "The team member allocation could not be updated."
         });
-    }
+      }
+    }, 300); // Shorter debounce for better responsiveness
   }, [id, parsedData, updateNodeData, getNodes, processedRoster, saveRosterToBackend]);
 
   // Handle node deletion

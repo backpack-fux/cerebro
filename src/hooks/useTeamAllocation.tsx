@@ -159,7 +159,8 @@ export function useTeamAllocation(nodeId: string, data: FeatureNodeData) {
   const requestTeamAllocation = useCallback((
     teamId: string, 
     requestedHours: number, 
-    memberData: string[] | Array<{ memberId: string; name?: string; hours?: number }> = []
+    memberData: string[] | Array<{ memberId: string; name?: string; hours?: number }> = [],
+    saveToBackend: boolean = true
   ) => {
     if (!teamId) {
       return;
@@ -295,9 +296,60 @@ export function useTeamAllocation(nodeId: string, data: FeatureNodeData) {
       teamAllocations: newAllocations
     });
     
+    // Save to backend if requested
+    if (saveToBackend) {
+      saveTeamAllocationsToBackend(newAllocations);
+    }
+    
     // Return the updated allocations
     return newAllocations;
   }, [data, getNodes, nodeId, updateNodeData, processedTeamAllocations]);
+
+  // Save team allocations to backend
+  const saveTeamAllocationsToBackend = useCallback((allocations: TeamAllocation[]) => {
+    // Import the GraphApiClient
+    import('@/services/graph/neo4j/api-client').then(({ GraphApiClient }) => {
+      try {
+        // Ensure each allocation has the required properties
+        const validAllocations = allocations.map(allocation => {
+          // Ensure requestedHours is a number
+          const requestedHours = typeof allocation.requestedHours === 'number' 
+            ? allocation.requestedHours 
+            : 0;
+          
+          // Ensure allocatedMembers is an array
+          const allocatedMembers = Array.isArray(allocation.allocatedMembers)
+            ? allocation.allocatedMembers
+            : [];
+          
+          // Return a valid allocation object
+          return {
+            teamId: allocation.teamId,
+            requestedHours: requestedHours,
+            allocatedMembers: allocatedMembers
+          };
+        });
+        
+        console.log('[TeamAllocation] Saving team allocations to backend:', validAllocations);
+        
+        // Prepare the data for the backend
+        const apiData = {
+          teamAllocations: JSON.stringify(validAllocations)
+        };
+        
+        // Send to backend
+        GraphApiClient.updateNode('feature', nodeId, apiData)
+          .then(() => {
+            console.log('[TeamAllocation] Successfully saved team allocations');
+          })
+          .catch((error) => {
+            console.error(`Failed to update team allocations for node ${nodeId}:`, error);
+          });
+      } catch (error) {
+        console.error(`Error preparing team allocations for node ${nodeId}:`, error);
+      }
+    });
+  }, [nodeId]);
 
   // Remove member allocation
   const removeMemberAllocation = useCallback((
@@ -582,10 +634,12 @@ export function useTeamAllocation(nodeId: string, data: FeatureNodeData) {
     return costSummary;
   }, [processedTeamAllocations, connectedTeams]);
 
+  // Return the hook API
   return {
     connectedTeams,
-    teamAllocations: processedTeamAllocations,
+    processedTeamAllocations,
     requestTeamAllocation,
+    saveTeamAllocationsToBackend,
     removeMemberAllocation,
     updateMemberAllocation,
     costs,

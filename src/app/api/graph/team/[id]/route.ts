@@ -25,12 +25,30 @@ function isValidSeason(season: any): season is Season {
  * @returns True if valid, false otherwise
  */
 function isValidRosterMember(member: any): member is RosterMember {
+  console.log('[API] Validating roster member:', member);
+  console.log('[API] Member properties:', {
+    isMember: !!member,
+    isObject: typeof member === 'object',
+    hasMemberId: typeof member?.memberId === 'string',
+    hasAllocation: typeof member?.allocation === 'number',
+    hasRole: typeof member?.role === 'string',
+    roleValue: member?.role
+  });
+  
+  // Ensure role is a string (case-insensitive)
+  const role = member?.role;
+  const isValidRole = typeof role === 'string';
+  
   return (
     member &&
     typeof member === 'object' &&
     typeof member.memberId === 'string' &&
     typeof member.allocation === 'number' &&
-    typeof member.role === 'string'
+    isValidRole &&
+    // Optional fields should be of the correct type if present
+    (member.startDate === undefined || typeof member.startDate === 'string') &&
+    (member.endDate === undefined || typeof member.endDate === 'string') &&
+    (member.allocations === undefined || Array.isArray(member.allocations))
   );
 }
 
@@ -40,7 +58,35 @@ function isValidRosterMember(member: any): member is RosterMember {
  * @returns True if valid, false otherwise
  */
 function isValidRoster(roster: any): roster is RosterMember[] {
-  return Array.isArray(roster) && roster.every(isValidRosterMember);
+  console.log('[API] Validating roster:', roster);
+  
+  // If roster is a string, try to parse it as JSON
+  let rosterArray = roster;
+  if (typeof roster === 'string') {
+    try {
+      rosterArray = JSON.parse(roster);
+      console.log('[API] Parsed roster string into array:', rosterArray);
+    } catch (error) {
+      console.error('[API] Error parsing roster string:', error);
+      return false;
+    }
+  }
+  
+  console.log('[API] Roster properties:', {
+    isArray: Array.isArray(rosterArray),
+    length: Array.isArray(rosterArray) ? rosterArray.length : 'not an array'
+  });
+  
+  if (!Array.isArray(rosterArray)) {
+    console.log('[API] Roster is not an array');
+    return false;
+  }
+  
+  // Check each member
+  const validMembers = rosterArray.map(isValidRosterMember);
+  console.log('[API] Valid members:', validMembers);
+  
+  return validMembers.every(Boolean);
 }
 
 // GET /api/graph/team/[id] - Get a team node by ID
@@ -130,6 +176,7 @@ export async function PATCH(request: NextRequest) {
 
     // Parse the request body
     const updateData: UpdateTeamNodeParams = await request.json();
+    console.log('[API] Received update data:', JSON.stringify(updateData));
     
     // Ensure the ID is included in the update params
     updateData.id = id;
@@ -144,12 +191,40 @@ export async function PATCH(request: NextRequest) {
     }
 
     // Validate roster if provided
-    if (updateData.roster !== undefined && !isValidRoster(updateData.roster)) {
-      console.warn('[API] Invalid TeamNode update request: Invalid roster array');
-      return NextResponse.json(
-        { error: 'Invalid roster array. Each roster member must have memberId, allocation, and role properties.' },
-        { status: 400 }
-      );
+    if (updateData.roster !== undefined) {
+      console.log('[API] Roster provided for validation:', JSON.stringify(updateData.roster));
+      
+      // If roster is a string, try to parse it
+      if (typeof updateData.roster === 'string') {
+        try {
+          updateData.roster = JSON.parse(updateData.roster);
+          console.log('[API] Parsed roster string into array:', updateData.roster);
+        } catch (error) {
+          console.error('[API] Error parsing roster string:', error);
+          return NextResponse.json(
+            { error: 'Invalid roster format. Roster must be a valid JSON array.' },
+            { status: 400 }
+          );
+        }
+      }
+      
+      // Ensure roster is an array
+      if (!Array.isArray(updateData.roster)) {
+        console.warn('[API] Invalid roster format, expected array');
+        return NextResponse.json(
+          { error: 'Invalid roster format. Roster must be an array.' },
+          { status: 400 }
+        );
+      }
+      
+      // Validate each roster member
+      if (!isValidRoster(updateData.roster)) {
+        console.warn('[API] Invalid TeamNode update request: Invalid roster array');
+        return NextResponse.json(
+          { error: 'Invalid roster array. Each roster member must have memberId, allocation, and role properties.' },
+          { status: 400 }
+        );
+      }
     }
     
     // Check if the node exists first
@@ -169,7 +244,7 @@ export async function PATCH(request: NextRequest) {
       title: updateData.title,
       description: updateData.description,
       season: updateData.season ? 'provided' : 'not provided',
-      roster: updateData.roster ? `${updateData.roster.length} members` : 'not provided'
+      roster: updateData.roster ? `${Array.isArray(updateData.roster) ? updateData.roster.length : 'unknown'} members` : 'not provided'
     });
 
     // Use the teamService to update the node
@@ -202,8 +277,8 @@ export async function PATCH(request: NextRequest) {
         roster: updatedNode.data.roster
       }
     });
-
-    // Return the updated node
+    
+    // Return the transformed node
     return NextResponse.json(updatedNode);
   } catch (error) {
     console.error('[API] Error updating TeamNode:', {

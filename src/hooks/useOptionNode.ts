@@ -105,7 +105,7 @@ export function useOptionNode(id: string, data: RFOptionNodeData) {
   (teamAllocationHook as any).saveTeamAllocationsToBackend = saveTeamAllocationsToBackend;
   
   // Extract the processed team allocations from the hook
-  const teamAllocationsFromHook = teamAllocationHook.teamAllocations;
+  const teamAllocationsFromHook = teamAllocationHook.processedTeamAllocations;
   
   // Get connected teams from the team allocation hook
   const connectedTeams = teamAllocationHook.connectedTeams;

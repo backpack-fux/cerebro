@@ -139,32 +139,100 @@ export function useTeamMemberNode(
     }
   }, [id, data, updateNodeData]);
 
+  // Function to update the connected team's roster with new capacity or allocation
+  const updateConnectedTeam = useCallback((newWeeklyCapacity?: number, newAllocation?: number) => {
+    // Find the connected team
+    const teamConnection = connections.find(conn => {
+      const node = getNodes().find(n => n.id === (conn.source === id ? conn.target : conn.source));
+      return node?.type === 'team';
+    });
+    
+    if (teamConnection) {
+      const teamId = teamConnection.source === id ? teamConnection.target : teamConnection.source;
+      const teamNode = getNodes().find(n => n.id === teamId);
+      
+      if (isTeamNode(teamNode)) {
+        // Parse the roster
+        let roster = [];
+        try {
+          roster = typeof teamNode.data.roster === 'string' 
+            ? JSON.parse(teamNode.data.roster) 
+            : (teamNode.data.roster || []);
+        } catch (e) {
+          console.warn('Failed to parse team roster:', e);
+          roster = [];
+        }
+        
+        // Find and update this member in the roster
+        const updatedRoster = roster.map((member: any) => {
+          if (member.memberId === id) {
+            // Create updated member object
+            const updatedMember = { ...member };
+            
+            // Update weeklyCapacity if provided
+            if (newWeeklyCapacity !== undefined) {
+              updatedMember.weeklyCapacity = newWeeklyCapacity;
+            }
+            
+            // Update allocation if provided
+            if (newAllocation !== undefined) {
+              updatedMember.allocation = newAllocation;
+            }
+            
+            return updatedMember;
+          }
+          return member;
+        });
+        
+        // Update the team node
+        updateNodeData(teamId, {
+          ...teamNode.data,
+          roster: updatedRoster
+        });
+        
+        // Save to backend
+        GraphApiClient.updateNode('team', teamId, { 
+          roster: JSON.stringify(updatedRoster) 
+        })
+        .then(() => {
+          if (newWeeklyCapacity !== undefined) {
+            console.log(`[TeamMemberNode] Updated team ${teamId} with new capacity: ${newWeeklyCapacity}h`);
+          }
+          if (newAllocation !== undefined) {
+            console.log(`[TeamMemberNode] Updated team ${teamId} with new allocation: ${newAllocation}%`);
+          }
+        })
+        .catch(error => {
+          console.error('Failed to update team roster:', error);
+        });
+      }
+    }
+  }, [id, connections, getNodes, updateNodeData]);
+
   // Calculate weekly capacity
   const updateWeeklyCapacity = useCallback((hoursPerDay: number, daysPerWeek: number) => {
+    const newWeeklyCapacity = hoursPerDay * daysPerWeek;
     const updatedData: Partial<RFTeamMemberNodeData> = {
       hoursPerDay,
       daysPerWeek,
-      weeklyCapacity: hoursPerDay * daysPerWeek
+      weeklyCapacity: newWeeklyCapacity
     };
+    
+    // Update the node data
     updateNodeData(id, { ...data, ...updatedData });
     
-    // Clear any existing debounce timer
-    if (hoursDebounceRef.current) {
-      clearTimeout(hoursDebounceRef.current);
-    }
-    if (daysDebounceRef.current) {
-      clearTimeout(daysDebounceRef.current);
-    }
+    // Save to backend
+    saveToBackend(updatedData);
     
-    // Set a new debounce timer
-    const debounceTimer = setTimeout(async () => {
-      await saveToBackend(updatedData);
-    }, 1000); // 1 second debounce
+    // Update connected team's roster with new capacity
+    updateConnectedTeam(newWeeklyCapacity);
     
-    // Store the timer reference
-    hoursDebounceRef.current = debounceTimer;
-    daysDebounceRef.current = debounceTimer;
-  }, [id, data, updateNodeData, saveToBackend]);
+  }, [id, data, updateNodeData, saveToBackend, updateConnectedTeam]);
+
+  // Calculate effective capacity (weekly capacity adjusted for team allocation)
+  const calculateEffectiveCapacity = useCallback((weeklyCapacity: number, allocation: number) => {
+    return (weeklyCapacity * allocation) / 100;
+  }, []);
 
   // Validation handlers
   const validateHoursPerDay = useCallback((hours: number) => {
@@ -382,52 +450,25 @@ export function useTeamMemberNode(
     }, 1000); // 1 second debounce
   }, [id, data, updateNodeData, saveToBackend]);
 
-  // Add this after the timezone handler
-  const handleAllocationChange = useCallback((allocation: number) => {
-    const updatedData: Partial<RFTeamMemberNodeData> = { allocation };
-    updateNodeData(id, { ...data, ...updatedData });
+  // Handle allocation change
+  const handleAllocationChange = useCallback((allocationValue: number) => {
+    // Validate allocation within range
+    const boundedAllocation = Math.max(0, Math.min(100, allocationValue));
     
-    // Clear any existing debounce timer
-    if (allocationDebounceRef.current) {
-      clearTimeout(allocationDebounceRef.current);
-    }
+    // Update node data
+    updateNodeData(id, { ...data, allocation: boundedAllocation });
     
-    // Set a new debounce timer
-    allocationDebounceRef.current = setTimeout(async () => {
-      await saveToBackend(updatedData);
-      allocationDebounceRef.current = null;
-    }, 1000); // 1 second debounce
-
-    // Also update the team node if connected
-    const teamConnection = connections.find(conn => {
-      return (conn.source === id && isTeamNode(getNode(conn.target))) || 
-             (conn.target === id && isTeamNode(getNode(conn.source)));
-    });
-
-    if (teamConnection) {
-      const teamNodeId = teamConnection.source === id ? teamConnection.target : teamConnection.source;
-      const teamNode = getNode(teamNodeId);
-      
-      if (isTeamNode(teamNode)) {
-        // Ensure roster is an array before using array methods
-        const rosterArray = Array.isArray(teamNode.data.roster) ? teamNode.data.roster : [];
-        const updatedRoster = rosterArray.map((member: RosterMember) => {
-          if (member.memberId === id) {
-            return { ...member, allocation };
-          }
-          return member;
-        });
-        
-        updateNodeData(teamNodeId, {
-          ...teamNode.data,
-          roster: updatedRoster
-        });
-        
-        // Save the updated roster to the backend using GraphApiClient
-        GraphApiClient.updateNode('team', teamNodeId, { roster: updatedRoster });
-      }
-    }
-  }, [id, data, updateNodeData, saveToBackend, connections, getNode]);
+    // Calculate effective capacity based on new allocation
+    const weeklyCapacity = data.weeklyCapacity || (data.hoursPerDay || 8) * (data.daysPerWeek || 5);
+    const effectiveCapacity = calculateEffectiveCapacity(weeklyCapacity, boundedAllocation);
+    console.log(`[TeamMemberNode] Effective capacity updated: ${effectiveCapacity}h (${boundedAllocation}% of ${weeklyCapacity}h)`);
+    
+    // Save to backend
+    saveToBackend({ allocation: boundedAllocation });
+    
+    // Update connected team with new allocation
+    updateConnectedTeam(undefined, boundedAllocation);
+  }, [id, data, updateNodeData, saveToBackend, calculateEffectiveCapacity, updateConnectedTeam]);
 
   // Update connection handling to pass summary data
   useEffect(() => {

@@ -171,7 +171,11 @@ const TeamMemberNode = memo(({ id, data, selected }: NodeProps) => {
           <div className="h-2 w-full bg-gray-200 rounded-full mt-1">
             <div
               className="h-2 bg-primary rounded-full"
-              style={{ width: `${(teamMember.weeklyCapacity / 40) * 100}%` }}
+              style={{ 
+                width: `${Math.min(100, (teamMember.weeklyCapacity / (8 * 5)) * 100)}%`,
+                maxWidth: '100%'
+              }}
+              title={`${teamMember.weeklyCapacity} hours (${teamMember.hoursPerDay} hours × ${teamMember.daysPerWeek} days)`}
             ></div>
           </div>
         </div>
@@ -180,16 +184,42 @@ const TeamMemberNode = memo(({ id, data, selected }: NodeProps) => {
         <div>
           <div className="flex justify-between">
             <Label>Team Allocation</Label>
-            <span className="text-sm">{teamMember.allocation}%</span>
+            <span className="text-sm font-medium">{teamMember.allocation}%</span>
           </div>
-          <Slider
-            value={[teamMember.allocation]}
-            min={0}
-            max={100}
-            step={5}
-            onValueChange={(values) => teamMember.handleAllocationChange(values[0])}
-            className="mt-2"
-          />
+          <div className="relative mt-2">
+            <Slider
+              value={[teamMember.allocation]}
+              min={0}
+              max={100}
+              step={5}
+              onValueChange={(values) => teamMember.handleAllocationChange(values[0])}
+              className="mt-2"
+              aria-label="Team allocation percentage"
+            />
+            <div className="flex justify-between text-xs text-muted-foreground mt-1">
+              <span>0%</span>
+              <span>50%</span>
+              <span>100%</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Effective Capacity (after allocation) */}
+        <div className="mt-3">
+          <div className="flex justify-between">
+            <Label>Effective Capacity</Label>
+            <span className="text-sm">{(teamMember.weeklyCapacity * teamMember.allocation / 100).toFixed(1)} hours</span>
+          </div>
+          <div className="h-2 w-full bg-gray-200 rounded-full mt-1">
+            <div
+              className="h-2 bg-secondary rounded-full"
+              style={{ 
+                width: `${Math.min(100, ((teamMember.weeklyCapacity * teamMember.allocation / 100) / (8 * 5)) * 100)}%`,
+                maxWidth: '100%'
+              }}
+              title={`${(teamMember.weeklyCapacity * teamMember.allocation / 100).toFixed(1)} effective hours (${teamMember.allocation}% of ${teamMember.weeklyCapacity} hours)`}
+            ></div>
+          </div>
         </div>
 
         {/* Roles */}

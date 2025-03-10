@@ -2,6 +2,17 @@
  * Utility functions for handling date and duration calculations
  */
 
+// Use a consistent date for the application
+// This allows us to test with future dates
+export function getCurrentDate(): Date {
+  // For testing purposes, we're using a date in 2025
+  // This should match what's shown in the UI
+  return new Date('2025-03-09');
+  
+  // When ready to use real date, uncomment this:
+  // return new Date();
+}
+
 /**
  * Calculate the number of working days between two dates based on days per week
  * @param startDate ISO Date string (YYYY-MM-DD)

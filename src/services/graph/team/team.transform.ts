@@ -25,24 +25,43 @@ export function reactFlowToNeo4j(teamNode: RFTeamNode): Neo4jTeamNodeData {
     }
   }
   
-  // Check if roster is already a string to prevent double serialization
+  // Handle roster data - ensure it's properly formatted before stringifying
   let rosterValue = undefined;
   if (data.roster) {
+    // First, ensure we have the roster as an array
+    let rosterArray: any[] = [];
+    
     if (typeof data.roster === 'string') {
-      // If it's already a string, check if it's valid JSON
       try {
-        // Try to parse it to validate it's proper JSON
-        JSON.parse(data.roster);
-        // If it parses successfully, use it as is
-        rosterValue = data.roster;
+        // Try to parse it if it's a string
+        rosterArray = JSON.parse(data.roster);
+        console.log('[Transform] Parsed roster string into array:', rosterArray);
       } catch (e) {
-        // If it's not valid JSON, stringify it
-        rosterValue = JSON.stringify(data.roster);
+        console.error('[Transform] Error parsing roster string:', e);
+        // If parsing fails, assume it's not valid JSON and use empty array
+        rosterArray = [];
       }
-    } else {
-      // If it's an array, stringify it
-      rosterValue = JSON.stringify(data.roster);
+    } else if (Array.isArray(data.roster)) {
+      // If it's already an array, use it directly
+      rosterArray = data.roster;
     }
+    
+    // Now clean and validate each member
+    const validRoster = rosterArray.map(member => {
+      // Ensure required fields are present and have correct types
+      return {
+        memberId: member.memberId,
+        allocation: typeof member.allocation === 'number' ? member.allocation : 80,
+        role: typeof member.role === 'string' ? member.role : "developer",
+        // Only include optional fields if they exist
+        ...(member.startDate ? { startDate: member.startDate } : {}),
+        ...(member.endDate ? { endDate: member.endDate } : {}),
+        ...(Array.isArray(member.allocations) ? { allocations: member.allocations } : {})
+      };
+    });
+    
+    console.log('[Transform] Cleaned roster:', validRoster);
+    rosterValue = JSON.stringify(validRoster);
   }
   
   return {
@@ -67,11 +86,31 @@ export function neo4jToReactFlow(neo4jData: Neo4jTeamNodeData): RFTeamNode {
       : neo4jData.season
     : undefined;
 
-  const roster: RosterMember[] = neo4jData.roster
-    ? typeof neo4jData.roster === 'string'
-      ? JSON.parse(neo4jData.roster)
-      : neo4jData.roster
-    : [];
+  // Parse roster and ensure it's always an array
+  let roster: RosterMember[] = [];
+  if (neo4jData.roster) {
+    try {
+      if (typeof neo4jData.roster === 'string') {
+        roster = JSON.parse(neo4jData.roster);
+      } else if (Array.isArray(neo4jData.roster)) {
+        roster = neo4jData.roster;
+      }
+      
+      // Validate each roster member
+      roster = roster.map(member => ({
+        memberId: member.memberId,
+        allocation: typeof member.allocation === 'number' ? member.allocation : 80,
+        role: typeof member.role === 'string' ? member.role : "developer",
+        // Only include optional fields if they exist
+        ...(member.startDate ? { startDate: member.startDate } : {}),
+        ...(member.endDate ? { endDate: member.endDate } : {}),
+        ...(Array.isArray(member.allocations) ? { allocations: member.allocations } : {})
+      }));
+    } catch (error) {
+      console.error('[Transform] Error parsing roster:', error);
+      roster = [];
+    }
+  }
 
   return {
     id: neo4jData.id,

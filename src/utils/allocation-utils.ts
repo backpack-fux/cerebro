@@ -32,6 +32,13 @@ export interface WorkAllocation {
   startDate?: string;
   endDate?: string;
   totalHours?: number;
+  weeklyHours?: number;
+}
+
+export interface TimeframeWorkAllocation extends WorkAllocation {
+  startDate: string;
+  endDate: string;
+  weeklyHours: number;
 }
 
 export interface AvailableMember {
@@ -64,6 +71,13 @@ export interface CostSummary {
     endDate?: string;
     cost: number;
   }>;
+}
+
+export interface TimeframeTeamAllocation extends TeamAllocation {
+  timeframe: {
+    startDate: string;
+    endDate: string;
+  };
 }
 
 /**

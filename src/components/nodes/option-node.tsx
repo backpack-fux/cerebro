@@ -293,12 +293,16 @@ export const OptionNode = memo(function OptionNode({ id, data, selected }: NodeP
             <TeamAllocation
               key={team.teamId}
               team={team}
-              teamAllocation={option.processedTeamAllocations.find(a => a.teamId === team.teamId)}
+              teamAllocation={option.processedTeamAllocations.find((a: TeamAllocation) => a.teamId === team.teamId)}
               memberAllocations={memberAllocations}
               projectDurationDays={projectDurationDays}
               formatMemberName={formatMemberName}
-              onMemberValueChange={resourceAllocation.handleAllocationChangeLocal}
-              onMemberValueCommit={resourceAllocation.handleAllocationCommit}
+              onMemberValueChange={(teamId, memberId, hours) => {
+                resourceAllocation.handleAllocationChangeLocal(memberId, hours);
+              }}
+              onMemberValueCommit={(teamId, memberId, hours) => {
+                resourceAllocation.handleAllocationCommit(memberId, hours);
+              }}
             />
           ))}
         </div>

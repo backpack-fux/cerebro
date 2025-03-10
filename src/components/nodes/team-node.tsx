@@ -9,7 +9,7 @@ import {
   NodeHeaderMenuAction,
 } from '@/components/nodes/node-header';
 import { DropdownMenuItem } from "@radix-ui/react-dropdown-menu";
-import { memo } from "react";
+import { memo, useEffect } from "react";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
@@ -19,12 +19,21 @@ import { Trash } from "lucide-react";
 import { Slider } from "@/components/ui/slider";
 import { RFTeamNodeData } from '@/services/graph/team/team.types';
 import { useTeamNode } from '@/hooks/useTeamNode';
+import { getCurrentDate } from "@/utils/date-utils";
 
 // Use React.memo to prevent unnecessary re-renders
 const TeamNode = memo(function TeamNode({ id, data, selected }: NodeProps) {
   // Use our custom hook for team node logic
   const team = useTeamNode(id, data as RFTeamNodeData);
   
+  // Direct check of dates
+  useEffect(() => {
+    const now = getCurrentDate();
+    const start = team.season?.startDate ? new Date(team.season.startDate) : null;
+    const end = team.season?.endDate ? new Date(team.season.endDate) : null;
+
+  }, [team.season, team.seasonProgress.isActive]);
+
   return (
     <BaseNode selected={selected}>
       <NodeHeader>
@@ -102,11 +111,24 @@ const TeamNode = memo(function TeamNode({ id, data, selected }: NodeProps) {
               <div className="w-full bg-muted/30 h-2 rounded-full overflow-hidden">
                 <div 
                   className="h-full bg-primary transition-all duration-300"
-                  style={{ width: `${team.seasonProgress.progress}%` }}
+                  style={{ 
+                    width: `${Math.max(0, Math.min(100, team.seasonProgress.progress))}%`,
+                    minWidth: team.seasonProgress.progress > 0 ? '4px' : '0px' 
+                  }}
                 />
               </div>
-              <div className="text-xs text-muted-foreground text-right">
-                {team.seasonProgress.daysRemaining} days remaining
+              <div className="flex justify-between text-xs text-muted-foreground">
+                <span>Today: {getCurrentDate().toLocaleDateString()}</span>
+                <span>
+                  {team.seasonProgress.hasEnded 
+                    ? "Season has ended" 
+                    : team.seasonProgress.hasStarted
+                      ? `${team.seasonProgress.daysRemaining} days remaining`
+                      : (team.seasonProgress as any).isFuture && team.seasonProgress.daysRemaining > 0
+                        ? `Starts in ${team.seasonProgress.daysRemaining} days`
+                        : "Please check season dates"
+                  }
+                </span>
               </div>
             </div>
           )}

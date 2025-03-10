@@ -215,12 +215,16 @@ export const ProviderNode = memo(function ProviderNode({ id, data, selected }: N
             <TeamAllocation
               key={team.teamId}
               team={team}
-              teamAllocation={provider.processedTeamAllocations.find(a => a.teamId === team.teamId)}
+              teamAllocation={provider.processedTeamAllocations.find((a: TeamAllocation) => a.teamId === team.teamId)}
               memberAllocations={memberAllocations}
               projectDurationDays={projectDurationDays}
               formatMemberName={formatMemberName}
-              onMemberValueChange={provider.handleAllocationChangeLocal}
-              onMemberValueCommit={provider.handleAllocationCommit}
+              onMemberValueChange={(teamId, memberId, hours) => {
+                provider.handleAllocationChangeLocal(memberId, hours);
+              }}
+              onMemberValueCommit={(teamId, memberId, hours) => {
+                provider.handleAllocationCommit(memberId, hours);
+              }}
             />
           ))}
         </div>

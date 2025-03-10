@@ -98,7 +98,7 @@ export function useProviderNode(id: string, data: RFProviderNodeData) {
   (teamAllocationHook as any).saveTeamAllocationsToBackend = saveTeamAllocationsToBackend;
   
   // Extract the processed team allocations from the hook
-  const teamAllocationsFromHook = teamAllocationHook.teamAllocations;
+  const teamAllocationsFromHook = teamAllocationHook.processedTeamAllocations;
   
   // Get connected teams from the team allocation hook
   const connectedTeams = teamAllocationHook.connectedTeams;

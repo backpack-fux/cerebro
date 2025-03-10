@@ -262,20 +262,40 @@ export function prepareDataForBackend<T extends Record<string, any>>(
   // Create a copy of the data
   const apiData: Record<string, any> = { ...data };
   
+  console.log(`[prepareDataForBackend] Original data:`, JSON.stringify(data));
+  console.log(`[prepareDataForBackend] JSON fields:`, jsonFields);
+  
   // Process each JSON field
   for (const field of jsonFields) {
-    if (apiData[field] !== undefined && typeof apiData[field] !== 'string') {
-      try {
-        // Only stringify if it's not already a string
-        apiData[field] = JSON.stringify(apiData[field]);
-        console.log(`[prepareDataForBackend] Stringified ${field}:`, apiData[field]);
-      } catch (error) {
-        console.error(`[prepareDataForBackend] Error stringifying ${field}:`, error);
-        // Keep the original value if stringification fails
+    if (apiData[field] !== undefined) {
+      console.log(`[prepareDataForBackend] Processing field ${field}:`, typeof apiData[field], apiData[field]);
+      
+      // If it's already a string, check if it's valid JSON
+      if (typeof apiData[field] === 'string') {
+        try {
+          // Try to parse it to validate it's proper JSON
+          JSON.parse(apiData[field]);
+          // If it parses successfully, it's already a JSON string, so keep it as is
+          console.log(`[prepareDataForBackend] Field ${field} is already a valid JSON string, keeping as is`);
+        } catch (error) {
+          // If it's not valid JSON, stringify it
+          console.log(`[prepareDataForBackend] Field ${field} is a string but not valid JSON, stringifying`);
+          apiData[field] = JSON.stringify(apiData[field]);
+        }
+      } else {
+        // If it's not a string, stringify it
+        try {
+          apiData[field] = JSON.stringify(apiData[field]);
+          console.log(`[prepareDataForBackend] Stringified ${field}:`, apiData[field]);
+        } catch (error) {
+          console.error(`[prepareDataForBackend] Error stringifying ${field}:`, error);
+          // Keep the original value if stringification fails
+        }
       }
     }
   }
   
+  console.log(`[prepareDataForBackend] Final data:`, JSON.stringify(apiData));
   return apiData;
 }
 
@@ -292,20 +312,36 @@ export function parseDataFromBackend<T extends Record<string, any>>(
   // Create a copy of the data
   const parsedData: Record<string, any> = { ...data };
   
+  console.log(`[parseDataFromBackend] Original data:`, JSON.stringify(data));
+  console.log(`[parseDataFromBackend] JSON fields:`, jsonFields);
+  
   // Process each JSON field
   for (const field of jsonFields) {
     if (typeof parsedData[field] === 'string') {
       try {
-        parsedData[field] = JSON.parse(parsedData[field] as string);
-        console.log(`[parseDataFromBackend] Parsed ${field}:`, parsedData[field]);
+        // Try to parse the string as JSON
+        const parsed = JSON.parse(parsedData[field] as string);
+        parsedData[field] = parsed;
+        console.log(`[parseDataFromBackend] Parsed ${field}:`, parsed);
       } catch (error) {
         console.error(`[parseDataFromBackend] Error parsing ${field}:`, error);
-        // Set to empty array if parsing fails
+        // If parsing fails, set to a sensible default based on field name
+        if (field.includes('roster') || field.includes('Allocations') || field.includes('Members')) {
+          parsedData[field] = [];
+        } else if (field.includes('season')) {
+          parsedData[field] = undefined;
+        }
+        // For other fields, keep the original string value
+      }
+    } else if (parsedData[field] === undefined) {
+      // Set sensible defaults for undefined fields
+      if (field.includes('roster') || field.includes('Allocations') || field.includes('Members')) {
         parsedData[field] = [];
       }
     }
   }
   
+  console.log(`[parseDataFromBackend] Final parsed data:`, JSON.stringify(parsedData));
   return parsedData;
 }
 

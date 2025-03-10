@@ -1,6 +1,6 @@
 "use client";
 
-import { Handle, Position, type NodeProps, useEdges } from "@xyflow/react";
+import { Handle, Position, type NodeProps } from "@xyflow/react";
 import { BaseNode } from '@/components/nodes/base-node';
 import { 
   NodeHeader,
@@ -25,19 +25,9 @@ import { formatHours } from '@/utils/format-utils';
 import { formatMemberName } from '@/utils/node-utils';
 
 /**
- * Interface for team member data
- */
-interface TeamMember {
-  memberId: string;
-  name?: string;
-  allocation?: number;
-  role?: string;
-}
-
-/**
  * Interface for member cost data used in the cost receipt
  */
-interface MemberCost {
+export interface MemberCost {
   memberId: string;
   name: string;
   hours: number;
@@ -45,34 +35,9 @@ interface MemberCost {
   cost: number;
 }
 
-/**
- * Props for the CostReceipt component
- */
-interface CostSummaryProps {
-  allocations: MemberCost[];
-  totalCost: number;
-  totalHours: number;
-  totalDays: number;
-}
-
-/**
- * Simple progress bar component
- */
-const Progress: React.FC<{ value: number; className?: string }> = ({ value = 0, className = "" }) => {
-  return (
-    <div className={`w-full bg-muted rounded-full overflow-hidden ${className}`}>
-      <div 
-        className="bg-primary h-full transition-all duration-300 ease-in-out"
-        style={{ width: `${Math.min(100, Math.max(0, value))}%` }}
-      />
-    </div>
-  );
-};
-
 // Use React.memo to prevent unnecessary re-renders
 export const FeatureNode = memo(function FeatureNode({ id, data, selected }: NodeProps) {
   const { getNodes } = useReactFlow();
-  const edges = useEdges();
   
   // Use the feature node hook to manage state and operations
   const feature = useFeatureNode(id, data as RFFeatureNodeData);
@@ -90,13 +55,7 @@ export const FeatureNode = memo(function FeatureNode({ id, data, selected }: Nod
       projectDurationDays,
       formatMemberName
     );
-  }, [
-    feature.connectedTeams, 
-    feature.processedTeamAllocations, 
-    projectDurationDays, 
-    formatMemberName,
-    feature.calculateMemberAllocations
-  ]);
+  }, [feature, projectDurationDays]);
   
   // Calculate cost summary
   const costSummary = useMemo(() => {
@@ -107,9 +66,9 @@ export const FeatureNode = memo(function FeatureNode({ id, data, selected }: Nod
     return feature.calculateCostSummary(
       memberAllocations
     );
-  }, [memberAllocations, feature.calculateCostSummary]);
+  }, [feature, memberAllocations]);
   
-  const getMemberName = (memberId: string, memberData?: any): string => {
+  const getMemberName = (memberId: string, memberData?: Record<string, unknown>): string => {
     return formatMemberName(memberId, getNodes(), memberData);
   };
   
@@ -203,6 +162,33 @@ export const FeatureNode = memo(function FeatureNode({ id, data, selected }: Nod
           />
         </div>
         
+        <div className="grid grid-cols-2 gap-2 mb-4">
+          <div className="space-y-1">
+            <Label>Start Date</Label>
+            <Input
+              type="date"
+              value={feature.startDate || ''}
+              onChange={(e) => {
+                if (e.target.value) {
+                  feature.handleStartDateChange(e.target.value);
+                }
+              }}
+            />
+          </div>
+          <div className="space-y-1">
+            <Label>End Date</Label>
+            <Input
+              type="date"
+              value={feature.endDate || ''}
+              onChange={(e) => {
+                if (e.target.value) {
+                  feature.handleEndDateChange(e.target.value);
+                }
+              }}
+            />
+          </div>
+        </div>
+        
         <div className="space-y-2">
           <Label className="flex items-center gap-2">
             <span>Resource Allocation</span>
@@ -221,12 +207,20 @@ export const FeatureNode = memo(function FeatureNode({ id, data, selected }: Nod
             <TeamAllocation
               key={team.teamId}
               team={team}
-              teamAllocation={feature.processedTeamAllocations.find(a => a.teamId === team.teamId)}
+              teamAllocation={feature.processedTeamAllocations.find((a: TeamAllocation) => a.teamId === team.teamId)}
               memberAllocations={memberAllocations}
               projectDurationDays={projectDurationDays}
               formatMemberName={getMemberName}
-              onMemberValueChange={feature.handleAllocationChangeLocal}
-              onMemberValueCommit={feature.handleAllocationCommit}
+              onMemberValueChange={(teamId, memberId, hours) => {
+                feature.handleAllocationChangeLocal(memberId, hours);
+              }}
+              onMemberValueCommit={(teamId, memberId, hours) => {
+                feature.handleAllocationCommit(memberId, hours);
+              }}
+              timeframe={feature.startDate && feature.endDate ? {
+                startDate: feature.startDate,
+                endDate: feature.endDate
+              } : undefined}
             />
           ))}
         </div>

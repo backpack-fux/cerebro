@@ -22,11 +22,11 @@ export function useResourceAllocation(
   getNodes: () => any[]
 ) {
   /**
-   * Handle allocation percentage change - local state only (no backend save)
+   * Handle allocation change - local state only (no backend save)
    * @param memberId The ID of the member to update
-   * @param percentage The allocation percentage (0-100)
+   * @param hours The allocation hours
    */
-  const handleAllocationChangeLocal = useCallback((memberId: string, percentage: number) => {
+  const handleAllocationChangeLocal = useCallback((memberId: string, hours: number) => {
     // Find the team for this member
     const team = teamAllocationHook.connectedTeams.find((team: any) => 
       team.availableBandwidth.some((m: any) => m.memberId === memberId)
@@ -46,28 +46,6 @@ export function useResourceAllocation(
       return;
     }
     
-    // Create a MemberCapacity object from the available data
-    const memberCapacity: MemberCapacity = {
-      // Use the actual values from the team member if available
-      hoursPerDay: teamMember.hoursPerDay || 8,
-      daysPerWeek: teamMember.daysPerWeek || 5,
-      allocation: 100 // We're calculating for 100% of their capacity
-    };
-    
-    // Calculate the project duration in days
-    const duration = Number(data.duration) || 1;
-    const timeUnit = data.timeUnit || 'days';
-    const durationDays = timeUnit === 'weeks' ? duration * 5 : duration;
-    
-    // Calculate weekly capacity - use the actual weeklyCapacity if available
-    const weeklyCapacity = teamMember.weeklyCapacity || calculateWeeklyCapacity(memberCapacity);
-    
-    // Ensure the weekly capacity is reasonable (cap at 100 hours per week)
-    const normalizedWeeklyCapacity = Math.min(weeklyCapacity, 100);
-    
-    // Calculate hours based on percentage of capacity
-    const totalHours = percentageToHours(percentage, normalizedWeeklyCapacity * (durationDays / 5));
-    
     // Get the actual team member node to get the correct name
     const nodes = getNodes();
     const memberNode = nodes.find(n => n.id === memberId);
@@ -75,26 +53,35 @@ export function useResourceAllocation(
       ? String(memberNode.data.title) 
       : (teamMember.name || memberId.split('-')[0]);
     
-    // Use the teamAllocationHook to update the allocation
-    // This ensures that all allocations are properly preserved
+    // Round hours to one decimal place for better display
+    const roundedHours = roundToOneDecimal(hours);
+    
+    console.log(`[ResourceAllocation] Local allocation change for member ${memberId}:`, {
+      hours: roundedHours,
+      teamId,
+      memberName
+    });
+    
+    // Use the teamAllocationHook to update the allocation in the UI only
     teamAllocationHook.requestTeamAllocation(
       teamId, 
-      totalHours, 
+      roundedHours, 
       [{
         memberId,
         name: memberName,
-        hours: roundToOneDecimal(totalHours)
-      }]
+        hours: roundedHours
+      }],
+      false // Don't save to backend yet
     );
     
-  }, [data.duration, data.timeUnit, getNodes, teamAllocationHook]);
+  }, [getNodes, teamAllocationHook]);
 
   /**
    * Handle allocation commit - save to backend when the user finishes dragging
    * @param memberId The ID of the member to update
-   * @param percentage The allocation percentage (0-100)
+   * @param hours The allocation hours
    */
-  const handleAllocationCommit = useCallback((memberId: string, percentage: number) => {
+  const handleAllocationCommit = useCallback((memberId: string, hours: number) => {
     // Find the team for this member
     const team = teamAllocationHook.connectedTeams.find((team: any) => 
       team.availableBandwidth.some((m: any) => m.memberId === memberId)
@@ -114,36 +101,6 @@ export function useResourceAllocation(
       return;
     }
     
-    // Create a MemberCapacity object from the available data
-    const memberCapacity: MemberCapacity = {
-      // Use the actual values from the team member if available
-      hoursPerDay: teamMember.hoursPerDay || 8,
-      daysPerWeek: teamMember.daysPerWeek || 5,
-      allocation: 100 // We're calculating for 100% of their capacity
-    };
-    
-    // Calculate the project duration in days
-    const duration = Number(data.duration) || 1;
-    const timeUnit = data.timeUnit || 'days';
-    const durationDays = timeUnit === 'weeks' ? duration * 5 : duration;
-    
-    // Calculate weekly capacity - use the actual weeklyCapacity if available
-    const weeklyCapacity = teamMember.weeklyCapacity || calculateWeeklyCapacity(memberCapacity);
-    
-    // Ensure the weekly capacity is reasonable (cap at 100 hours per week)
-    const normalizedWeeklyCapacity = Math.min(weeklyCapacity, 100);
-    
-    // Calculate hours based on percentage of capacity
-    const totalHours = percentageToHours(percentage, normalizedWeeklyCapacity * (durationDays / 5));
-    
-    console.log(`🔄 Committing allocation for member ${memberId} in team ${teamId}:`, {
-      percentage,
-      memberCapacity,
-      weeklyCapacity: normalizedWeeklyCapacity,
-      durationDays,
-      totalHours
-    });
-    
     // Get the actual team member node to get the correct name
     const nodes = getNodes();
     const memberNode = nodes.find(n => n.id === memberId);
@@ -151,16 +108,24 @@ export function useResourceAllocation(
       ? String(memberNode.data.title) 
       : (teamMember.name || memberId.split('-')[0]);
     
+    // Round hours to one decimal place for better display
+    const roundedHours = roundToOneDecimal(hours);
+    
+    console.log(`🔄 Committing allocation for member ${memberId} in team ${teamId}:`, {
+      hours: roundedHours,
+      memberName
+    });
+    
     // Use the teamAllocationHook to update the allocation and save to backend
-    // This ensures that all allocations are properly preserved
     const updatedAllocations = teamAllocationHook.requestTeamAllocation(
       teamId, 
-      totalHours, 
+      roundedHours, 
       [{
         memberId,
         name: memberName,
-        hours: roundToOneDecimal(totalHours)
-      }]
+        hours: roundedHours
+      }],
+      true // Save to backend
     );
     
     // Save the updated allocations to backend if available
@@ -168,7 +133,7 @@ export function useResourceAllocation(
       teamAllocationHook.saveTeamAllocationsToBackend(updatedAllocations);
     }
     
-  }, [data.duration, data.timeUnit, getNodes, teamAllocationHook]);
+  }, [getNodes, teamAllocationHook]);
 
   /**
    * Calculate member allocations for display and cost calculation
@@ -202,7 +167,8 @@ export function useResourceAllocation(
           // Use the actual values from the team member if available
           hoursPerDay: teamMember?.hoursPerDay || 8,
           daysPerWeek: teamMember?.daysPerWeek || 5,
-          allocation: 100 // We're calculating for 100% of their capacity
+          // Use the member's allocation from the team's roster data
+          allocation: typeof teamMember?.allocation === 'number' ? teamMember.allocation : 100
         };
         
         // Calculate weekly capacity - use the actual weeklyCapacity if available
@@ -211,12 +177,17 @@ export function useResourceAllocation(
         // Ensure the weekly capacity is reasonable (cap at 100 hours per week)
         const normalizedWeeklyCapacity = Math.min(weeklyCapacity, 100);
         
+        // Adjust weekly capacity based on team allocation percentage
+        const teamAllocationPercent = memberCapacity.allocation || 100;
+        const effectiveWeeklyCapacity = normalizedWeeklyCapacity * (teamAllocationPercent / 100);
+        
         // Get the allocated hours for this member
         const memberHours = typeof member.hours === 'number' ? member.hours : 0;
         
         // Calculate percentage of their capacity being used
         // Total capacity = weekly capacity * (duration in days / days per week)
-        const totalCapacity = normalizedWeeklyCapacity * (projectDurationDays / memberCapacity.daysPerWeek);
+        // Factor in the team allocation percentage
+        const totalCapacity = effectiveWeeklyCapacity * (projectDurationDays / memberCapacity.daysPerWeek);
         const percentage = totalCapacity > 0 
           ? (memberHours / totalCapacity) * 100 
           : 0;
@@ -235,6 +206,7 @@ export function useResourceAllocation(
             hours: currentHours + memberHours,
             percentage: percentage,
             weeklyCapacity: normalizedWeeklyCapacity,
+            effectiveCapacity: effectiveWeeklyCapacity,
             memberCapacity,
             name: memberName, // Ensure we store the name
             hourlyRate,
@@ -246,6 +218,7 @@ export function useResourceAllocation(
             hours: memberHours,
             percentage: percentage,
             weeklyCapacity: normalizedWeeklyCapacity,
+            effectiveCapacity: effectiveWeeklyCapacity,
             memberCapacity,
             name: memberName, // Store the name
             hourlyRate,
