@@ -1,11 +1,8 @@
 import { useMemo, useCallback, useState } from 'react';
 import { useReactFlow } from '@xyflow/react';
-import { 
-  getWeeklyBuckets, 
-  calculateWeeklyHours,
-  getDefaultTimeframe,
-  WeeklyAvailability
-} from '@/utils/allocation-calendar-utils';
+import { getWeeklyBuckets } from '@/utils/allocation/weekly';
+import { calculateEffectiveCapacity, calculateWeeklyHours } from '@/utils/allocation/capacity';
+import { calculateCalendarDuration, doTimePeriodsOverlap, getDefaultTimeframe } from '@/utils/time/calendar';
 import { parseJsonIfString } from '@/lib/utils';
 import { format } from 'date-fns';
 
@@ -18,6 +15,7 @@ export interface MemberAllocationData {
   weeklyCapacity: number;
   teamAllocation: number;
   effectiveCapacity: number;
+  daysPerWeek: number;
   allocations: {
     nodeId: string;
     nodeName: string;
@@ -27,50 +25,6 @@ export interface MemberAllocationData {
     totalHours: number;
   }[];
   isOverAllocated: boolean;
-}
-
-/**
- * Calculate the duration between two dates in calendar days
- * @param startDate Start date in YYYY-MM-DD format
- * @param endDate End date in YYYY-MM-DD format
- * @returns Duration in days
- */
-function calculateCalendarDuration(startDate: string, endDate: string): number {
-  const start = new Date(startDate);
-  const end = new Date(endDate);
-  
-  // Calculate the difference in milliseconds
-  const diffTime = Math.abs(end.getTime() - start.getTime());
-  
-  // Convert to days and add 1 to include both start and end dates
-  return Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1;
-}
-
-/**
- * Check if two time periods overlap
- * @param startDate1 Start date of first period in YYYY-MM-DD format
- * @param endDate1 End date of first period in YYYY-MM-DD format
- * @param startDate2 Start date of second period in YYYY-MM-DD format
- * @param endDate2 End date of second period in YYYY-MM-DD format
- * @returns True if the periods overlap, false otherwise
- */
-function doTimePeriodsOverlap(
-  startDate1: string, 
-  endDate1: string, 
-  startDate2: string, 
-  endDate2: string
-): boolean {
-  const start1 = new Date(startDate1);
-  const end1 = new Date(endDate1);
-  const start2 = new Date(startDate2);
-  const end2 = new Date(endDate2);
-  
-  // Check if one period starts after the other ends
-  if (start1 > end2 || start2 > end1) {
-    return false;
-  }
-  
-  return true;
 }
 
 /**
@@ -219,6 +173,7 @@ export function useAllocationEngine() {
         weeklyCapacity: member.weeklyCapacity,
         teamAllocation: member.teamAllocation,
         effectiveCapacity: member.effectiveCapacity,
+        daysPerWeek: member.daysPerWeek || 5,
         allocations: [],
         isOverAllocated: false
       };
@@ -299,17 +254,19 @@ export function useAllocationEngine() {
     // Get the team allocation percentage (0-100)
     const teamAllocation = memberData.teamAllocation || 100;
     
-    // Calculate effective capacity (weekly capacity adjusted for team allocation)
-    const effectiveCapacity = weeklyCapacity * (teamAllocation / 100);
-    
     // Calculate the duration of the time period in days
     const durationDays = calculateCalendarDuration(startDate, endDate);
     
-    // Calculate the duration in weeks (assuming 5 working days per week)
-    const durationWeeks = durationDays / 5;
+    // Calculate total capacity for the duration
+    const effectiveCapacity = (teamAllocation / 100) * weeklyCapacity;
     
-    // Calculate total capacity for the time period
-    const totalCapacity = effectiveCapacity * durationWeeks;
+    // Calculate total capacity using the utility function
+    const totalCapacity = calculateEffectiveCapacity(
+      weeklyCapacity,
+      teamAllocation,
+      durationDays,
+      memberData.daysPerWeek || 5
+    );
     
     // Calculate total allocated hours for this time period
     let totalAllocatedHours = 0;
@@ -341,18 +298,16 @@ export function useAllocationEngine() {
     // Calculate over-allocation
     const overAllocatedBy = Math.max(0, totalAllocatedHours - totalCapacity);
     
-    // Check if the member is available
-    const available = totalAllocatedHours <= totalCapacity;
+    // Member is available if they have capacity and aren't over-allocated
+    const available = availableHours > 0 && overAllocatedBy === 0;
     
-    console.log(`[AllocationEngine] Member ${memberId} availability check:`, {
+    console.log('[AllocationEngine] Member', memberId, 'availability check:', {
       memberId,
       weeklyCapacity,
       teamAllocation,
       effectiveCapacity,
       durationDays,
-      durationWeeks,
       totalCapacity,
-      totalAllocatedHours,
       excludeHours,
       availableHours,
       overAllocatedBy,

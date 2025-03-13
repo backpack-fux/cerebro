@@ -267,6 +267,12 @@ export function prepareDataForBackend<T extends Record<string, any>>(
   
   // Process each JSON field
   for (const field of jsonFields) {
+    // Skip teamAllocations field - it needs special handling
+    if (field === 'teamAllocations') {
+      console.log(`[prepareDataForBackend] Skipping teamAllocations field for special handling`);
+      continue;
+    }
+    
     if (apiData[field] !== undefined) {
       console.log(`[prepareDataForBackend] Processing field ${field}:`, typeof apiData[field], apiData[field]);
       
@@ -312,9 +318,6 @@ export function parseDataFromBackend<T extends Record<string, any>>(
   // Create a copy of the data
   const parsedData: Record<string, any> = { ...data };
   
-  console.log(`[parseDataFromBackend] Original data:`, JSON.stringify(data));
-  console.log(`[parseDataFromBackend] JSON fields:`, jsonFields);
-  
   // Process each JSON field
   for (const field of jsonFields) {
     if (typeof parsedData[field] === 'string') {
@@ -322,9 +325,7 @@ export function parseDataFromBackend<T extends Record<string, any>>(
         // Try to parse the string as JSON
         const parsed = JSON.parse(parsedData[field] as string);
         parsedData[field] = parsed;
-        console.log(`[parseDataFromBackend] Parsed ${field}:`, parsed);
       } catch (error) {
-        console.error(`[parseDataFromBackend] Error parsing ${field}:`, error);
         // If parsing fails, set to a sensible default based on field name
         if (field.includes('roster') || field.includes('Allocations') || field.includes('Members')) {
           parsedData[field] = [];
@@ -340,8 +341,7 @@ export function parseDataFromBackend<T extends Record<string, any>>(
       }
     }
   }
-  
-  console.log(`[parseDataFromBackend] Final parsed data:`, JSON.stringify(parsedData));
+
   return parsedData;
 }
 

@@ -6,6 +6,9 @@ import {
   percentageToHours,
   MemberCapacity
 } from '@/lib/utils';
+import { calculateEffectiveCapacity } from '@/utils/allocation/capacity';
+import { ConnectedTeam } from '@/hooks/useTeamAllocation';
+import { AvailableMember } from '@/utils/types/allocation';
 
 // Utility function to round numbers to 1 decimal place for better display
 const roundToOneDecimal = (num: number): number => {
@@ -23,24 +26,19 @@ export function useResourceAllocation(
 ) {
   /**
    * Handle allocation change - local state only (no backend save)
+   * @param teamId The ID of the team
    * @param memberId The ID of the member to update
    * @param hours The allocation hours
    */
-  const handleAllocationChangeLocal = useCallback((memberId: string, hours: number) => {
-    // Find the team for this member
-    const team = teamAllocationHook.connectedTeams.find((team: any) => 
-      team.availableBandwidth.some((m: any) => m.memberId === memberId)
-    );
-    
+  const handleAllocationChangeLocal = useCallback((teamId: string, memberId: string, hours: number) => {
+    // Find the team member in the team allocation
+    const team = teamAllocationHook.connectedTeams.find((t: ConnectedTeam) => t.teamId === teamId);
     if (!team) {
-      console.warn(`⚠️ Could not find team for member ${memberId}`);
+      console.warn(`⚠️ Could not find team ${teamId}`);
       return;
     }
     
-    const teamId = team.teamId;
-    
-    // Find the team member to get their capacity details
-    const teamMember = team.availableBandwidth.find((m: any) => m.memberId === memberId);
+    const teamMember = team.availableBandwidth.find((m: AvailableMember) => m.memberId === memberId);
     if (!teamMember) {
       console.warn(`⚠️ Could not find team member ${memberId} in team ${teamId}`);
       return;
@@ -81,21 +79,15 @@ export function useResourceAllocation(
    * @param memberId The ID of the member to update
    * @param hours The allocation hours
    */
-  const handleAllocationCommit = useCallback((memberId: string, hours: number) => {
-    // Find the team for this member
-    const team = teamAllocationHook.connectedTeams.find((team: any) => 
-      team.availableBandwidth.some((m: any) => m.memberId === memberId)
-    );
-    
+  const handleAllocationCommit = useCallback((teamId: string, memberId: string, hours: number) => {
+    // Find the team member in the team allocation
+    const team = teamAllocationHook.connectedTeams.find((t: ConnectedTeam) => t.teamId === teamId);
     if (!team) {
-      console.warn(`⚠️ Could not find team for member ${memberId}`);
+      console.warn(`⚠️ Could not find team ${teamId}`);
       return;
     }
     
-    const teamId = team.teamId;
-    
-    // Find the team member to get their capacity details
-    const teamMember = team.availableBandwidth.find((m: any) => m.memberId === memberId);
+    const teamMember = team.availableBandwidth.find((m: AvailableMember) => m.memberId === memberId);
     if (!teamMember) {
       console.warn(`⚠️ Could not find team member ${memberId} in team ${teamId}`);
       return;
@@ -117,7 +109,7 @@ export function useResourceAllocation(
     });
     
     // Use the teamAllocationHook to update the allocation and save to backend
-    const updatedAllocations = teamAllocationHook.requestTeamAllocation(
+    teamAllocationHook.requestTeamAllocation(
       teamId, 
       roundedHours, 
       [{
@@ -127,11 +119,6 @@ export function useResourceAllocation(
       }],
       true // Save to backend
     );
-    
-    // Save the updated allocations to backend if available
-    if (updatedAllocations && teamAllocationHook.saveTeamAllocationsToBackend) {
-      teamAllocationHook.saveTeamAllocationsToBackend(updatedAllocations);
-    }
     
   }, [getNodes, teamAllocationHook]);
 
@@ -177,17 +164,24 @@ export function useResourceAllocation(
         // Ensure the weekly capacity is reasonable (cap at 100 hours per week)
         const normalizedWeeklyCapacity = Math.min(weeklyCapacity, 100);
         
-        // Adjust weekly capacity based on team allocation percentage
+        // Get the team allocation percentage
         const teamAllocationPercent = memberCapacity.allocation || 100;
-        const effectiveWeeklyCapacity = normalizedWeeklyCapacity * (teamAllocationPercent / 100);
+        
+        // Use the utility function to calculate effective capacity
+        const effectiveWeeklyCapacity = calculateEffectiveCapacity(normalizedWeeklyCapacity, teamAllocationPercent);
+        
+        // Calculate total capacity for the project duration
+        const totalCapacity = calculateEffectiveCapacity(
+          normalizedWeeklyCapacity, 
+          teamAllocationPercent, 
+          projectDurationDays, 
+          memberCapacity.daysPerWeek
+        );
         
         // Get the allocated hours for this member
         const memberHours = typeof member.hours === 'number' ? member.hours : 0;
         
         // Calculate percentage of their capacity being used
-        // Total capacity = weekly capacity * (duration in days / days per week)
-        // Factor in the team allocation percentage
-        const totalCapacity = effectiveWeeklyCapacity * (projectDurationDays / memberCapacity.daysPerWeek);
         const percentage = totalCapacity > 0 
           ? (memberHours / totalCapacity) * 100 
           : 0;

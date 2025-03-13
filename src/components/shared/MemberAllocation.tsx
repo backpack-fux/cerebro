@@ -6,52 +6,23 @@ import { Slider } from "@/components/ui/slider";
 import { 
   formatHours, 
   formatPercentage, 
-  calculateWeeklyCapacity, 
   percentageToHours,
-  MemberCapacity
 } from "@/lib/utils";
 import { Label } from "@/components/ui/label";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { AlertCircle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { calculateEffectiveCapacity } from "@/utils/allocation/capacity";
+import { AvailableMember, MemberAllocationData as IMemberAllocationData, MemberCapacity } from "@/utils/types/allocation";
 
-/**
- * Interface for available member data
- */
-export interface AvailableMember {
-  memberId: string;
-  name: string;
-  availableHours?: number;
-  dailyRate: number;
-  hoursPerDay?: number;
-  daysPerWeek?: number;
-  weeklyCapacity?: number;
-  allocation?: number; // Team allocation percentage (0-100)
-}
-
-/**
- * Interface for member allocation data
- */
-export interface MemberAllocationData {
-  memberId: string;
-  name?: string;
-  hours: number;
-  percentage?: number;
-  weeklyCapacity?: number;
-  memberCapacity?: MemberCapacity;
-  cost: number;
-  isOverAllocated?: boolean;
-  availableHours?: number;
-  effectiveCapacity?: number;
-  overAllocatedBy?: number;
-}
+export type { IMemberAllocationData as MemberAllocationData };
 
 /**
  * Props for the MemberAllocation component
  */
 export interface MemberAllocationProps {
   member: AvailableMember;
-  allocation?: MemberAllocationData;
+  allocation?: IMemberAllocationData;
   isAllocated?: boolean;
   projectDurationDays: number;
   onValueChange: (memberId: string, value: number) => void;
@@ -94,14 +65,35 @@ export const MemberAllocation: React.FC<MemberAllocationProps> = ({
                              
   // Apply team allocation percentage (default to 100% if not specified)
   const teamAllocationPercent = typeof member.allocation === 'number' ? member.allocation : 100;
-  const effectiveWeeklyCapacity = memberWeeklyCapacity * (teamAllocationPercent / 100);
+  
+  // Use the utility function to calculate effective capacity
+  const effectiveWeeklyCapacity = calculateEffectiveCapacity(memberWeeklyCapacity, teamAllocationPercent);
+  const effectiveProjectCapacity = calculateEffectiveCapacity(
+    memberWeeklyCapacity, 
+    teamAllocationPercent, 
+    projectDurationDays, 
+    member.daysPerWeek || 5
+  );
+  
+  // DEBUG: Log values to understand calculation
+  console.log('MemberAllocation Debug:', {
+    memberId: member.memberId,
+    name: member.name,
+    memberWeeklyCapacity,
+    teamAllocationPercent,
+    effectiveWeeklyCapacity,
+    effectiveProjectCapacity,
+    projectDurationDays,
+    providedAvailableHours: availableHours,
+    hours
+  });
   
   // Calculate max hours for the slider based on available hours
   // If availableHours is explicitly provided, use that plus current allocation
-  // Otherwise, calculate based on the member's effective capacity over the project duration
+  // Otherwise, use the calculated effective capacity for the project duration
   const maxHours = availableHours !== undefined 
-    ? (hours + availableHours) // Current hours + available hours
-    : effectiveWeeklyCapacity * (projectDurationDays / 5); // Convert to project duration
+    ? (hours + availableHours)
+    : effectiveProjectCapacity;
   
   // Handle slider value change
   const handleValueChange = (value: number[]) => {
@@ -126,7 +118,7 @@ export const MemberAllocation: React.FC<MemberAllocationProps> = ({
     ? safeFormatHours(availableHours) 
     : member.availableHours !== undefined 
       ? safeFormatHours(member.availableHours) 
-      : safeFormatHours(effectiveWeeklyCapacity * (projectDurationDays / 5));
+      : safeFormatHours(effectiveProjectCapacity);
   
   // Create a MemberCapacity object if we don't have allocation data
   if (!allocation) {
@@ -138,10 +130,7 @@ export const MemberAllocation: React.FC<MemberAllocationProps> = ({
     };
     
     // Calculate weekly capacity - use the actual weeklyCapacity if available
-    const weeklyCapacity = member.weeklyCapacity || calculateWeeklyCapacity(memberCapacity);
-    
-    // Ensure the weekly capacity is reasonable (cap at 100 hours per week)
-    const normalizedWeeklyCapacity = Math.min(weeklyCapacity, 100);
+    const normalizedWeeklyCapacity = Math.min(memberWeeklyCapacity, 100);
     
     // Create a default allocation object
     const defaultAllocation = {

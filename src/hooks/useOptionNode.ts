@@ -21,8 +21,8 @@ import {
   parseJsonIfString
 } from '@/lib/utils';
 import { isOptionNode } from "@/utils/type-guards";
-import { TeamAllocation } from "@/utils/allocation-utils";
-import { calculateCalendarDuration } from "@/utils/date-utils";
+import { TeamAllocation } from "@/utils/types/allocation";
+import { calculateCalendarDuration } from "@/utils/time/calendar";
 
 /**
  * Hook for managing option node state and operations

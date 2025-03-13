@@ -15,20 +15,20 @@ import { useDurationInput } from "@/hooks/useDurationInput";
 import { useResourceAllocation } from "@/hooks/useResourceAllocation";
 import { prepareDataForBackend, parseDataFromBackend, parseJsonIfString } from "@/lib/utils";
 import { isFeatureNode } from "@/utils/type-guards";
-import { TeamAllocation } from "@/utils/allocation-utils";
+import { TeamAllocation } from "@/utils/types/allocation";
 import { format } from 'date-fns';
-import { getDefaultTimeframe } from '@/utils/allocation-calendar-utils';
-import React from 'react';
-
-// Define TimeUnit type
-type TimeUnit = 'days' | 'weeks' | 'months';
+import { convertToDays, calculateEndDate } from '@/utils/time/duration';
+import { TimeUnit } from '@/types/common';
+import { isMemberNode } from '@/utils/node-utils';
 
 /**
  * Hook for managing feature node state and operations
  * Separates domain logic from React Flow component state
  */
 export function useFeatureNode(id: string, data: RFFeatureNodeData) {
-  const { getNodes, setNodes, setEdges } = useReactFlow();
+  const { getNodes, setNodes, setEdges, updateNodeData } = useReactFlow();
+  const teamAllocationHook = useTeamAllocation(id, data);
+  const { processedTeamAllocations, connectedTeams, costs } = teamAllocationHook;
   
   // Track if we've loaded data from the server
   const initialFetchCompletedRef = useRef(false);
@@ -61,21 +61,6 @@ export function useFeatureNode(id: string, data: RFFeatureNodeData) {
     return (type && validTypes.includes(type as BuildType)) ? (type as BuildType) : 'internal';
   };
 
-  // Update node function - centralizes node state updates
-  const updateNodeData = useCallback((nodeId: string, newData: Partial<RFFeatureNodeData>) => {
-    setNodes((nodes) => 
-      nodes.map((node) => {
-        if (node.id === nodeId) {
-          return {
-            ...node,
-            data: { ...node.data, ...newData }
-          };
-        }
-        return node;
-      })
-    );
-  }, [setNodes]);
-  
   // Save to backend function
   const saveToBackend = useCallback(async (updates: Partial<RFFeatureNodeData>) => {
     try {
@@ -231,21 +216,6 @@ export function useFeatureNode(id: string, data: RFFeatureNodeData) {
     }
   }, [id]);
 
-  // Use the team allocation hook to manage team allocations
-  const teamAllocationHook = useTeamAllocation(id, parsedData);
-  
-  // Add the saveTeamAllocationsToBackend function to the teamAllocationHook
-  (teamAllocationHook as any).saveTeamAllocationsToBackend = saveTeamAllocationsToBackend;
-  
-  // Extract the processed team allocations from the hook
-  const teamAllocationsFromHook = teamAllocationHook.processedTeamAllocations;
-  
-  // Get connected teams from the team allocation hook
-  const connectedTeams = teamAllocationHook.connectedTeams;
-  
-  // Get costs from the team allocation hook
-  const costs = teamAllocationHook.costs;
-  
   // Use the resource allocation hook to manage resource allocations
   const resourceAllocation = useResourceAllocation(parsedData, teamAllocationHook, getNodes);
   
@@ -438,19 +408,15 @@ export function useFeatureNode(id: string, data: RFFeatureNodeData) {
     if (parsedData.endDate) return parsedData.endDate as string;
     
     // Calculate end date based on duration and timeUnit
-    const currentTimeUnit = parsedData.timeUnit as string || 'days';
+    const currentTimeUnit = (parsedData.timeUnit as TimeUnit) || 'days';
     const durationValue = Number(duration.value) || 30;
     
     // Convert to days based on time unit
-    let durationDays = durationValue;
-    if (currentTimeUnit === 'weeks') {
-      durationDays = durationValue * 5;
-    } else if (currentTimeUnit === 'months') {
-      durationDays = durationValue * 21;
-    }
+    const durationDays = convertToDays(durationValue, currentTimeUnit);
     
-    const endDateObj = new Date();
-    endDateObj.setDate(endDateObj.getDate() + durationDays);
+    // Calculate end date
+    const startDateObj = new Date();
+    const endDateObj = calculateEndDate(startDateObj, durationDays);
     return format(endDateObj, 'yyyy-MM-dd');
   }, [parsedData.endDate, duration.value, parsedData.timeUnit]);
 
@@ -463,6 +429,43 @@ export function useFeatureNode(id: string, data: RFFeatureNodeData) {
     saveToBackend({ endDate: date });
   }, [saveToBackend]);
 
+  // Update member names in team allocations when member nodes change
+  useEffect(() => {
+    const nodes = getNodes();
+    let hasUpdates = false;
+    
+    // Create updated team allocations
+    const updatedTeamAllocations = processedTeamAllocations.map((teamAllocation: TeamAllocation) => {
+      const updatedMembers = teamAllocation.allocatedMembers.map(member => {
+        // Find the member node
+        const memberNode = nodes.find(n => n.id === member.memberId && isMemberNode(n));
+        if (!memberNode || memberNode.data.title === member.name) {
+          return member;
+        }
+        
+        // Update member name if it has changed
+        hasUpdates = true;
+        return {
+          ...member,
+          name: memberNode.data.title
+        };
+      });
+      
+      return {
+        ...teamAllocation,
+        allocatedMembers: updatedMembers
+      };
+    });
+    
+    // Only update if names have changed
+    if (hasUpdates) {
+      updateNodeData(id, {
+        ...parsedData,
+        teamAllocations: updatedTeamAllocations
+      });
+    }
+  }, [id, parsedData, getNodes, updateNodeData, processedTeamAllocations]);
+
   // Return the hook API
   return useMemo(() => ({
     // State
@@ -471,7 +474,7 @@ export function useFeatureNode(id: string, data: RFFeatureNodeData) {
     buildType,
     status,
     isLoading,
-    processedTeamAllocations: teamAllocationsFromHook,
+    processedTeamAllocations,
     connectedTeams,
     costs,
     startDate,
@@ -507,10 +510,10 @@ export function useFeatureNode(id: string, data: RFFeatureNodeData) {
       handleDurationChange: duration.handleDurationChange
     }
   }), [
-    title, description, buildType, status, teamAllocationsFromHook, connectedTeams, costs,
+    title, description, buildType, status, processedTeamAllocations, isLoading, saveToBackend,
     handleTitleChange, handleDescriptionChange, handleBuildTypeChange, handleStatusChange,
-    handleDurationChange, handleTimeUnitChange, cycleStatus, handleDelete, isLoading, saveToBackend,
-    requestTeamAllocation, handleAllocationChangeLocal, handleAllocationCommit,
+    handleDurationChange, handleTimeUnitChange, cycleStatus, handleDelete, requestTeamAllocation,
+    handleAllocationChangeLocal, handleAllocationCommit,
     duration, timeUnit, startDate, endDate, handleStartDateChange, handleEndDateChange,
     refreshData, getStatusColor, calculateMemberAllocations, calculateCostSummary
   ]);

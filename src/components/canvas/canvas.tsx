@@ -207,6 +207,12 @@ export default function Canvas() {
         const fetchGraphData = async () => {
             try {
                 setIsLoading(true);
+                
+                // Only attempt cleanup if there are blacklisted nodes
+                if (GraphApiClient.hasBlacklistedNodes()) {
+                    await GraphApiClient.cleanupBlacklistedNodes();
+                }
+                
                 const response = await fetch('/api/graph');
                 
                 if (!response.ok) {

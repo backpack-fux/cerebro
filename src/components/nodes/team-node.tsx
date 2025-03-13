@@ -19,7 +19,8 @@ import { Trash } from "lucide-react";
 import { Slider } from "@/components/ui/slider";
 import { RFTeamNodeData } from '@/services/graph/team/team.types';
 import { useTeamNode } from '@/hooks/useTeamNode';
-import { getCurrentDate } from "@/utils/date-utils";
+import { getCurrentDate } from "@/utils/time/calendar";
+import { calculateEffectiveCapacity } from "@/utils/allocation/capacity";
 
 // Use React.memo to prevent unnecessary re-renders
 const TeamNode = memo(function TeamNode({ id, data, selected }: NodeProps) {
@@ -201,7 +202,7 @@ const TeamNode = memo(function TeamNode({ id, data, selected }: NodeProps) {
                       className="w-full"
                     />
                     <div className="text-xs text-muted-foreground">
-                      {Math.round((teamMember.data.weeklyCapacity * member.allocation) / 100)} hours per week
+                      {Math.round(calculateEffectiveCapacity(teamMember.data.weeklyCapacity, member.allocation))} hours per week
                     </div>
                   </div>
                 </div>

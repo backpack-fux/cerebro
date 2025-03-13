@@ -17,8 +17,8 @@ import { useResourceAllocation } from "@/hooks/useResourceAllocation";
 import { v4 as uuidv4 } from 'uuid';
 import { prepareDataForBackend, parseDataFromBackend, parseJsonIfString } from "@/lib/utils";
 import { isProviderNode } from "@/utils/type-guards";
-import { TeamAllocation } from "@/utils/allocation-utils";
-import { calculateCalendarDuration } from "@/utils/date-utils";
+import { TeamAllocation } from "@/utils/types/allocation";
+import { calculateCalendarDuration } from "@/utils/time/calendar";
 
 /**
  * Hook for managing provider node state and operations

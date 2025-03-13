@@ -9,11 +9,17 @@ import { Node } from '@xyflow/react';
  */
 export function formatMemberName(
   memberId: string, 
-  nodes: Node[], 
+  nodes?: Node[] | null, 
   memberData?: any
 ): string {
   // Try to get the name from the member data first
   if (memberData?.name) return memberData.name;
+  
+  // Check if we have valid nodes array
+  if (!nodes || !Array.isArray(nodes)) {
+    // If no nodes available, just return the first part of the ID
+    return memberId.split('-')[0];
+  }
   
   // Otherwise, try to find the node in the graph
   const memberNode = nodes.find(n => n.id === memberId);
@@ -68,4 +74,13 @@ export function getTeamMembers(teamId: string, nodes: Node[]): Array<{
       allocation: member.allocation
     };
   });
+}
+
+/**
+ * Type guard for member nodes
+ * @param node The node to check
+ * @returns True if the node is a member node
+ */
+export function isMemberNode(node: any): boolean {
+  return node?.type === 'member';
 } 

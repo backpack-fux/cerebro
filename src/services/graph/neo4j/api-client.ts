@@ -3,10 +3,7 @@ import { API_URLS, NodeType } from '@/services/graph/neo4j/api-urls';
 
 // Maintain a set of blacklisted node IDs that consistently return 404
 // This helps prevent infinite API request loops
-const blacklistedNodeIds: Set<string> = new Set([
-  // Known problematic node ID that's causing infinite requests
-  '95c72037-da89-4bfe-af8f-ea847cbdbe87'
-]);
+const blacklistedNodeIds: Set<string> = new Set();
 
 // Track failed request counts to auto-blacklist after multiple failures
 const failedRequestCounts: Map<string, number> = new Map();
@@ -22,6 +19,54 @@ export class GraphApiClient {
   static blacklistNode(id: string): void {
     console.warn(`🚫 Blacklisting node ID ${id} due to repeated failures`);
     blacklistedNodeIds.add(id);
+  }
+
+  // Add method to check if there are any blacklisted nodes
+  static hasBlacklistedNodes(): boolean {
+    return blacklistedNodeIds.size > 0;
+  }
+
+  // Clean up blacklisted nodes from the database
+  static async cleanupBlacklistedNodes(): Promise<void> {
+    // Skip if no blacklisted nodes
+    if (!this.hasBlacklistedNodes()) {
+      return;
+    }
+    
+    console.log('🧹 Starting cleanup of blacklisted nodes...');
+    
+    const nodesToRemove = new Set<string>();
+    
+    for (const nodeId of blacklistedNodeIds) {
+      try {
+        // Try to delete the node from the database
+        await this.deleteNode('feature' as NodeType, nodeId);
+        console.log(`✅ Successfully cleaned up blacklisted node: ${nodeId}`);
+        nodesToRemove.add(nodeId);
+      } catch (error) {
+        if (error instanceof Error && error.message.includes('404')) {
+          // If the node doesn't exist, we can remove it from the blacklist
+          console.log(`Node ${nodeId} not found in database, removing from blacklist`);
+          nodesToRemove.add(nodeId);
+        } else {
+          // If deletion fails for other reasons, just log it - the node stays blacklisted
+          console.warn(`⚠️ Failed to clean up blacklisted node ${nodeId}:`, error);
+        }
+      }
+    }
+
+    // Remove successfully cleaned up nodes from the blacklist
+    nodesToRemove.forEach(nodeId => {
+      blacklistedNodeIds.delete(nodeId);
+      failedRequestCounts.delete(nodeId);
+      console.log(`🗑️ Removed node ${nodeId} from blacklist`);
+    });
+  }
+
+  // Remove a node from the blacklist
+  static removeFromBlacklist(id: string): void {
+    blacklistedNodeIds.delete(id);
+    failedRequestCounts.delete(id);
   }
   
   // Helper to track and potentially blacklist failing nodes
@@ -58,6 +103,34 @@ export class GraphApiClient {
     }
     
     try {
+      // Special handling for teamAllocations to ensure it's properly formatted
+      if (params.teamAllocations) {
+        console.log('[GraphApiClient] teamAllocations before processing:', params.teamAllocations);
+        
+        // If teamAllocations is already a string, leave it as is
+        if (typeof params.teamAllocations === 'string') {
+          console.log('[GraphApiClient] teamAllocations is already a string');
+        } 
+        // If it's an array, we need to ensure it's properly formatted
+        else if (Array.isArray(params.teamAllocations)) {
+          // Validate that each allocation has the required fields
+          const isValid = params.teamAllocations.every((allocation: any) => 
+            allocation && 
+            typeof allocation === 'object' && 
+            typeof allocation.teamId === 'string' && 
+            typeof allocation.requestedHours === 'number' && 
+            Array.isArray(allocation.allocatedMembers)
+          );
+          
+          if (!isValid) {
+            console.error('[GraphApiClient] Invalid teamAllocations array:', params.teamAllocations);
+            throw new Error('Invalid teamAllocations array. Each allocation must have teamId, requestedHours, and allocatedMembers properties.');
+          }
+          
+          console.log('[GraphApiClient] teamAllocations is valid');
+        }
+      }
+      
       const response = await fetch(`${API_URLS[nodeType]}/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },

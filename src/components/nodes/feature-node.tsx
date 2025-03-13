@@ -23,7 +23,7 @@ import { CostReceipt } from '@/components/shared/CostReceipt';
 import { TeamAllocation } from '@/components/shared/TeamAllocation';
 import { formatHours } from '@/utils/format-utils';
 import { formatMemberName } from '@/utils/node-utils';
-
+import type { TeamAllocation as ITeamAllocation } from '@/utils/types/allocation';
 /**
  * Interface for member cost data used in the cost receipt
  */
@@ -45,16 +45,34 @@ export const FeatureNode = memo(function FeatureNode({ id, data, selected }: Nod
   // Calculate project duration in days
   const projectDurationDays = Number(data.duration) || 1;
   
+  // DEBUG: Log project duration days
+  console.log('[FeatureNode] Project Duration Days:', {
+    id,
+    duration: data.duration,
+    projectDurationDays,
+    startDate: data.startDate,
+    endDate: data.endDate
+  });
+  
   // Pre-calculate member allocations for display and cost calculation
   const memberAllocations = useMemo(() => {
-    if (!feature.calculateMemberAllocations) return new Map();
+    console.group('🎯 Team Roster Calculations');
     
-    return feature.calculateMemberAllocations(
+    console.log('Connected Teams:', feature.connectedTeams);
+    console.log('Processed Team Allocations:', feature.processedTeamAllocations);
+    console.log('Project Duration Days:', projectDurationDays);
+
+    const allocations = feature.calculateMemberAllocations(
       feature.connectedTeams,
       feature.processedTeamAllocations,
       projectDurationDays,
       formatMemberName
     );
+
+    console.log('Calculated Member Allocations:', allocations);
+    console.groupEnd();
+    
+    return allocations;
   }, [feature, projectDurationDays]);
   
   // Calculate cost summary
@@ -207,15 +225,15 @@ export const FeatureNode = memo(function FeatureNode({ id, data, selected }: Nod
             <TeamAllocation
               key={team.teamId}
               team={team}
-              teamAllocation={feature.processedTeamAllocations.find((a: TeamAllocation) => a.teamId === team.teamId)}
+              teamAllocation={feature.processedTeamAllocations.find((a: ITeamAllocation) => a.teamId === team.teamId)}
               memberAllocations={memberAllocations}
               projectDurationDays={projectDurationDays}
               formatMemberName={getMemberName}
               onMemberValueChange={(teamId, memberId, hours) => {
-                feature.handleAllocationChangeLocal(memberId, hours);
+                feature.handleAllocationChangeLocal(teamId, memberId, hours);
               }}
               onMemberValueCommit={(teamId, memberId, hours) => {
-                feature.handleAllocationCommit(memberId, hours);
+                feature.handleAllocationCommit(teamId, memberId, hours);
               }}
               timeframe={feature.startDate && feature.endDate ? {
                 startDate: feature.startDate,

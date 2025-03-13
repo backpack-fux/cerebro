@@ -10,7 +10,8 @@ import {
 } from '@/services/graph/team/team.types';
 import { RFTeamMemberNodeData } from "@/services/graph/team-member/team-member.types";
 import { prepareDataForBackend, parseDataFromBackend } from "@/lib/utils";
-import { getCurrentDate } from "@/utils/date-utils";
+import { getCurrentDate } from "@/utils/time/calendar";
+import { calculateEffectiveCapacity } from "@/utils/allocation/capacity";
 
 /**
  * Type guard for team member nodes
@@ -39,16 +40,6 @@ export function useTeamNode(id: string, data: RFTeamNodeData) {
   // Parse complex objects if they are strings
   const parsedData = useMemo(() => {
     const result = parseDataFromBackend(data, jsonFields) as RFTeamNodeData;
-    console.log('[useTeamNode] Raw data:', data);
-    console.log('[useTeamNode] Parsed data:', result);
-    console.log('[useTeamNode] Season data:', {
-      raw: data.season,
-      parsed: result.season,
-      type: typeof result.season,
-      isObject: typeof result.season === 'object',
-      startDate: result.season?.startDate,
-      endDate: result.season?.endDate
-    });
     return result;
   }, [data, jsonFields]);
   
@@ -105,20 +96,9 @@ export function useTeamNode(id: string, data: RFTeamNodeData) {
   const seasonProgress = useMemo(() => {
     // Debug the season data
     const now = getCurrentDate();
-    
-    console.log('[TeamNode] Season data:', {
-      season: parsedData.season,
-      startDate: parsedData.season?.startDate,
-      endDate: parsedData.season?.endDate,
-      now: now.toISOString(),
-      currentYear: now.getFullYear(),
-      currentMonth: now.getMonth() + 1,
-      currentDay: now.getDate()
-    });
 
     // Validate date inputs to ensure they are proper date strings
     if (!parsedData.season?.startDate || !parsedData.season?.endDate) {
-      console.log('[TeamNode] Missing season dates');
       return {
         progress: 0,
         daysRemaining: 0,
@@ -136,7 +116,6 @@ export function useTeamNode(id: string, data: RFTeamNodeData) {
       
       // Ensure dates are valid
       if (isNaN(start.getTime()) || isNaN(end.getTime())) {
-        console.error('[TeamNode] Invalid date in season calculation', { start, end });
         return {
           progress: 0,
           daysRemaining: 0,
@@ -151,15 +130,6 @@ export function useTeamNode(id: string, data: RFTeamNodeData) {
       const isBeforeStart = now < start;
       const isAfterEnd = now > end;
       const isActive = !isBeforeStart && !isAfterEnd;
-      
-      console.log('[TeamNode] Simple date comparison:', {
-        now: now.toISOString(),
-        start: start.toISOString(),
-        end: end.toISOString(),
-        isBeforeStart,
-        isAfterEnd,
-        isActive
-      });
       
       // Calculate progress
       const total = end.getTime() - start.getTime();
@@ -190,8 +160,6 @@ export function useTeamNode(id: string, data: RFTeamNodeData) {
         hasEnded: isAfterEnd,
         isFuture: isBeforeStart
       };
-      
-      console.log('[TeamNode] Final season status:', result);
       
       return result;
     } catch (error) {
@@ -265,7 +233,8 @@ export function useTeamNode(id: string, data: RFTeamNodeData) {
       const teamMember = teamMembers.find(tm => tm.id === member.memberId);
       if (teamMember) {
         const weeklyCapacity = Number(teamMember.data.weeklyCapacity);
-        return sum + (weeklyCapacity * (member.allocation / 100));
+        // Use our utility function to calculate effective capacity
+        return sum + calculateEffectiveCapacity(weeklyCapacity, member.allocation);
       }
       return sum;
     }, 0);
@@ -278,8 +247,10 @@ export function useTeamNode(id: string, data: RFTeamNodeData) {
 
       const memberTotal = memberAllocations.reduce((memberSum: number, allocation: any) => {
         const weeklyCapacity = Number(teamMember.data.weeklyCapacity);
-        return memberSum + (allocation.percentage / 100) * 
-          (weeklyCapacity * (member.allocation / 100));
+        // Calculate the effective capacity for this team member
+        const effectiveCapacity = calculateEffectiveCapacity(weeklyCapacity, member.allocation);
+        // Calculate the allocation to this specific work node
+        return memberSum + (allocation.percentage / 100) * effectiveCapacity;
       }, 0);
 
       return sum + memberTotal;
