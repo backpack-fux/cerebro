@@ -68,32 +68,29 @@ export const MemberAllocation: React.FC<MemberAllocationProps> = ({
   
   // Use the utility function to calculate effective capacity
   const effectiveWeeklyCapacity = calculateEffectiveCapacity(memberWeeklyCapacity, teamAllocationPercent);
-  const effectiveProjectCapacity = calculateEffectiveCapacity(
-    memberWeeklyCapacity, 
-    teamAllocationPercent, 
-    projectDurationDays, 
-    member.daysPerWeek || 5
-  );
   
-  // DEBUG: Log values to understand calculation
+  // Enhanced DEBUG: Log values to understand calculation in more detail
   console.log('MemberAllocation Debug:', {
     memberId: member.memberId,
     name: member.name,
     memberWeeklyCapacity,
     teamAllocationPercent,
     effectiveWeeklyCapacity,
-    effectiveProjectCapacity,
     projectDurationDays,
+    daysPerWeek: member.daysPerWeek || 5,
+    dailyHours: memberWeeklyCapacity / (member.daysPerWeek || 5),
+    effectiveDailyHours: (teamAllocationPercent / 100) * (memberWeeklyCapacity / (member.daysPerWeek || 5)),
+    calculationCheck: (teamAllocationPercent / 100) * (memberWeeklyCapacity / (member.daysPerWeek || 5)) * projectDurationDays,
     providedAvailableHours: availableHours,
     hours
   });
   
   // Calculate max hours for the slider based on available hours
   // If availableHours is explicitly provided, use that plus current allocation
-  // Otherwise, use the calculated effective capacity for the project duration
+  // Otherwise, use the calculated effective weekly capacity
   const maxHours = availableHours !== undefined 
     ? (hours + availableHours)
-    : effectiveProjectCapacity;
+    : effectiveWeeklyCapacity;
   
   // Handle slider value change
   const handleValueChange = (value: number[]) => {
@@ -118,7 +115,7 @@ export const MemberAllocation: React.FC<MemberAllocationProps> = ({
     ? safeFormatHours(availableHours) 
     : member.availableHours !== undefined 
       ? safeFormatHours(member.availableHours) 
-      : safeFormatHours(effectiveProjectCapacity);
+      : safeFormatHours(effectiveWeeklyCapacity);
   
   // Create a MemberCapacity object if we don't have allocation data
   if (!allocation) {

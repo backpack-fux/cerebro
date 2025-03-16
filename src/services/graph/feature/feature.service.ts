@@ -1,6 +1,7 @@
 import { IGraphStorage } from '@/services/graph/neo4j/graph.interface';
 import { RFFeatureNode, RFFeatureNodeData, CreateFeatureNodeParams, UpdateFeatureNodeParams, RFFeatureEdge, MemberAllocation, TeamAllocation, Neo4jFeatureNodeData, BuildType, TimeUnit } from '@/services/graph/feature/feature.types';
 import { reactFlowToNeo4jEdge, neo4jToReactFlowEdge, reactFlowToNeo4j, neo4jToReactFlow } from '@/services/graph/feature/feature.transform';
+import { connectFeatureToTeam, disconnectFeatureFromTeam, updateFeatureResourceAllocation, getFeatureMemberAvailableHours } from './feature-resource-integration';
 
 export class FeatureService {
   constructor(private storage: IGraphStorage<RFFeatureNodeData>) {}
@@ -88,6 +89,29 @@ export class FeatureService {
   async delete(id: string): Promise<void> {
     console.log('[FeatureService] Deleting feature node:', id);
     try {
+      // Get the feature node to find its team connections
+      const featureNode = await this.storage.getNode(id) as RFFeatureNode;
+      if (featureNode) {
+        // Get team allocations
+        let teamAllocations: TeamAllocation[] = [];
+        try {
+          if (typeof featureNode.data.teamAllocations === 'string') {
+            teamAllocations = JSON.parse(featureNode.data.teamAllocations);
+          } else if (Array.isArray(featureNode.data.teamAllocations)) {
+            teamAllocations = featureNode.data.teamAllocations;
+          }
+        } catch (error) {
+          console.error('[FeatureService] Error parsing team allocations:', error);
+        }
+        
+        // Disconnect from all teams
+        for (const allocation of teamAllocations) {
+          console.log(`[FeatureService] Cleaning up resources for team ${allocation.teamId} in feature ${id}`);
+          disconnectFeatureFromTeam(id, allocation.teamId);
+        }
+      }
+      
+      // Delete the node from storage
       await this.storage.deleteNode(id);
       console.log('[FeatureService] Deleted feature node successfully');
     } catch (error) {
@@ -275,80 +299,87 @@ export class FeatureService {
   }
 
   async addTeam(featureId: string, teamId: string, requestedHours: number = 0): Promise<RFFeatureEdge> {
-    console.log(`[FeatureService] Adding team ${teamId} to feature ${featureId} with ${requestedHours} hours`);
+    console.log(`[FeatureService] Adding team ${teamId} to feature ${featureId}`);
+    
     try {
-      // Create an edge between feature and team
+      // Get the feature node
+      const featureNode = await this.storage.getNode(featureId) as RFFeatureNode;
+      if (!featureNode) {
+        throw new Error(`Feature node with ID ${featureId} not found`);
+      }
+      
+      // Get the team node
+      const teamNode = await this.storage.getNode(teamId);
+      if (!teamNode) {
+        throw new Error(`Team node with ID ${teamId} not found`);
+      }
+      
+      // Create the edge
       const edge: RFFeatureEdge = {
-        id: `edge-${crypto.randomUUID()}`,
+        id: crypto.randomUUID(),
         source: featureId,
         target: teamId,
-        type: 'FEATURE_TEAM',
+        type: 'feature-team',
         data: {
-          label: 'Feature Team',
-          allocation: requestedHours,
+          requestedHours,
+          allocatedMembers: [],
         },
       };
       
-      // Also update the feature's team allocations
-      const feature = await this.storage.getNode(featureId);
-      if (!feature) {
-        throw new Error(`Feature with ID ${featureId} not found`);
-      }
+      // Create the edge in Neo4j
+      const result = await this.createEdge(edge);
       
-      const featureNode = feature as RFFeatureNode;
-      
-      // Parse teamAllocations if it's a string
-      let teamAllocations: Array<{
-        teamId: string;
-        requestedHours: number;
-        allocatedMembers: Array<{ memberId: string; hours: number }>;
-      }> = [];
-      if (typeof featureNode.data.teamAllocations === 'string') {
-        try {
+      // Update the feature node with the team allocation
+      let teamAllocations: TeamAllocation[] = [];
+      try {
+        if (typeof featureNode.data.teamAllocations === 'string') {
           teamAllocations = JSON.parse(featureNode.data.teamAllocations);
-        } catch (e) {
-          console.error('[FeatureService] Error parsing teamAllocations:', e);
-          teamAllocations = [];
+        } else if (Array.isArray(featureNode.data.teamAllocations)) {
+          teamAllocations = featureNode.data.teamAllocations;
         }
-      } else if (Array.isArray(featureNode.data.teamAllocations)) {
-        teamAllocations = [...featureNode.data.teamAllocations];
+      } catch (error) {
+        console.error('Error parsing team allocations:', error);
       }
       
-      console.log(`[FeatureService] Current teamAllocations:`, teamAllocations);
-      
-      // Check if team already exists in allocations
+      // Check if the team is already in the allocations
       const existingTeamIndex = teamAllocations.findIndex(t => t.teamId === teamId);
-      
       if (existingTeamIndex >= 0) {
-        // Update existing team
         teamAllocations[existingTeamIndex] = {
           ...teamAllocations[existingTeamIndex],
           requestedHours,
         };
       } else {
-        // Add new team
+        // Get team name from the team node
+        const teamName = teamNode.data.title || teamNode.data.name || 'Unknown Team';
+        
+        // Add the team to the allocations
         teamAllocations.push({
           teamId,
+          teamName,
           requestedHours,
           allocatedMembers: [],
+          teamBandwidth: 0,
+          availableBandwidth: 0,
         });
       }
       
-      console.log(`[FeatureService] Updated teamAllocations:`, teamAllocations);
-      
       // Update the feature node
-      const updateResult = await this.update({
+      await this.update({
         id: featureId,
-        teamAllocations,
+        teamAllocations: teamAllocations,
       });
       
-      console.log(`[FeatureService] Feature node updated:`, updateResult);
+      // Connect the feature to the team's resources
+      connectFeatureToTeam(
+        featureNode,
+        teamId,
+        (data) => {
+          // Handle resource updates
+          this.handleTeamResourceUpdate(featureId, teamId, data);
+        }
+      );
       
-      // Create the edge
-      const createdEdge = await this.createEdge(edge);
-      console.log(`[FeatureService] Edge created:`, createdEdge);
-      
-      return createdEdge;
+      return result;
     } catch (error) {
       console.error(`[FeatureService] Error adding team ${teamId} to feature ${featureId}:`, error);
       throw error;
@@ -357,111 +388,219 @@ export class FeatureService {
 
   async removeTeam(featureId: string, teamId: string): Promise<void> {
     console.log(`[FeatureService] Removing team ${teamId} from feature ${featureId}`);
+    
     try {
-      // Find the edge between feature and team
-      const edges = await this.getEdges(featureId, 'FEATURE_TEAM');
-      const edge = edges.find(e => e.target === teamId);
-      
-      if (edge) {
-        await this.deleteEdge(edge.id);
-        console.log(`[FeatureService] Deleted edge ${edge.id} between feature ${featureId} and team ${teamId}`);
-      } else {
-        console.log(`[FeatureService] No edge found between feature ${featureId} and team ${teamId}`);
+      // Get the feature node
+      const featureNode = await this.storage.getNode(featureId) as RFFeatureNode;
+      if (!featureNode) {
+        throw new Error(`Feature node with ID ${featureId} not found`);
       }
       
-      // Also update the feature's team allocations
-      const feature = await this.storage.getNode(featureId);
-      if (!feature) {
-        throw new Error(`Feature with ID ${featureId} not found`);
+      // Get the edges connecting the feature to the team
+      const edges = await this.getEdges(featureId);
+      const teamEdge = edges.find(edge => edge.target === teamId && edge.type === 'feature-team');
+      
+      if (teamEdge) {
+        // Delete the edge
+        await this.deleteEdge(teamEdge.id);
       }
       
-      const featureNode = feature as RFFeatureNode;
-      
-      // Parse teamAllocations if it's a string
-      let teamAllocations: Array<{
-        teamId: string;
-        requestedHours: number;
-        allocatedMembers: Array<{ memberId: string; hours: number }>;
-      }> = [];
-      
-      if (typeof featureNode.data.teamAllocations === 'string') {
-        try {
+      // Update the feature node to remove the team allocation
+      let teamAllocations: TeamAllocation[] = [];
+      try {
+        if (typeof featureNode.data.teamAllocations === 'string') {
           teamAllocations = JSON.parse(featureNode.data.teamAllocations);
-        } catch (e) {
-          console.error('[FeatureService] Error parsing teamAllocations:', e);
-          teamAllocations = [];
+        } else if (Array.isArray(featureNode.data.teamAllocations)) {
+          teamAllocations = featureNode.data.teamAllocations;
         }
-      } else if (Array.isArray(featureNode.data.teamAllocations)) {
-        teamAllocations = [...featureNode.data.teamAllocations];
+      } catch (error) {
+        console.error('Error parsing team allocations:', error);
       }
       
-      console.log(`[FeatureService] Current teamAllocations:`, teamAllocations);
-      
-      // Filter out the team to remove
-      const updatedTeamAllocations = teamAllocations.filter(t => t.teamId !== teamId);
-      
-      console.log(`[FeatureService] Updated teamAllocations:`, updatedTeamAllocations);
+      // Remove the team from the allocations
+      teamAllocations = teamAllocations.filter(t => t.teamId !== teamId);
       
       // Update the feature node
-      const updateResult = await this.update({
+      await this.update({
         id: featureId,
-        teamAllocations: updatedTeamAllocations,
+        teamAllocations: teamAllocations,
       });
       
-      console.log(`[FeatureService] Feature node updated:`, updateResult);
+      // Disconnect the feature from the team's resources
+      disconnectFeatureFromTeam(featureId, teamId);
+      
     } catch (error) {
       console.error(`[FeatureService] Error removing team ${teamId} from feature ${featureId}:`, error);
       throw error;
     }
   }
 
-  async updateTeamAllocation(featureId: string, teamId: string, requestedHours: number, allocatedMembers: { memberId: string; name?: string; hours: number; hoursPerDay?: number }[] = []): Promise<void> {
-    console.log(`[FeatureService] Updating allocation for team ${teamId} in feature ${featureId}`);
-    console.log(`[FeatureService] Allocated members:`, JSON.stringify(allocatedMembers, null, 2));
+  async updateTeamAllocation(
+    featureId: string, 
+    teamId: string, 
+    requestedHours: number, 
+    allocatedMembers: { memberId: string; name?: string; hours: number; hoursPerDay?: number }[] = []
+  ): Promise<void> {
+    console.log(`[FeatureService] Updating team allocation for team ${teamId} in feature ${featureId}`);
     
     try {
-      // Find the edge between feature and team
-      const edges = await this.getEdges(featureId, 'FEATURE_TEAM');
-      const edge = edges.find(e => e.target === teamId);
-      
-      if (edge) {
-        // Update the edge allocation
-        await this.updateEdge(edge.id, { allocation: requestedHours });
+      // Get the feature node
+      const featureNode = await this.storage.getNode(featureId) as RFFeatureNode;
+      if (!featureNode) {
+        throw new Error(`Feature node with ID ${featureId} not found`);
       }
       
-      // Also update the feature's team allocations
-      const feature = await this.storage.getNode(featureId);
-      if (!feature) {
-        throw new Error(`Feature with ID ${featureId} not found`);
+      // Get the team node
+      const teamNode = await this.storage.getNode(teamId);
+      if (!teamNode) {
+        throw new Error(`Team node with ID ${teamId} not found`);
       }
       
-      const featureNode = feature as RFFeatureNode;
-      const teamAllocations = [...(featureNode.data.teamAllocations || [])];
-      const teamIndex = teamAllocations.findIndex(t => t.teamId === teamId);
+      // Update the feature node with the team allocation
+      let teamAllocations: TeamAllocation[] = [];
+      try {
+        if (typeof featureNode.data.teamAllocations === 'string') {
+          teamAllocations = JSON.parse(featureNode.data.teamAllocations);
+        } else if (Array.isArray(featureNode.data.teamAllocations)) {
+          teamAllocations = featureNode.data.teamAllocations;
+        }
+      } catch (error) {
+        console.error('Error parsing team allocations:', error);
+      }
       
-      if (teamIndex >= 0) {
-        teamAllocations[teamIndex] = {
-          ...teamAllocations[teamIndex],
+      // Format the allocated members to ensure they have names
+      const formattedAllocatedMembers = allocatedMembers.map(member => {
+        return {
+          memberId: member.memberId,
+          name: member.name || 'Unknown Member',
+          hours: member.hours,
+        };
+      });
+      
+      // Check if the team is already in the allocations
+      const existingTeamIndex = teamAllocations.findIndex(t => t.teamId === teamId);
+      if (existingTeamIndex >= 0) {
+        // Update the existing allocation
+        teamAllocations[existingTeamIndex] = {
+          ...teamAllocations[existingTeamIndex],
           requestedHours,
-          allocatedMembers,
+          allocatedMembers: formattedAllocatedMembers,
         };
       } else {
-        // Add new team allocation if it doesn't exist
+        // Get team name from the team node
+        const teamName = teamNode.data.title || teamNode.data.name || 'Unknown Team';
+        
+        // Add the team to the allocations
         teamAllocations.push({
           teamId,
+          teamName,
           requestedHours,
-          allocatedMembers,
+          allocatedMembers: formattedAllocatedMembers,
+          teamBandwidth: 0,
+          availableBandwidth: 0,
         });
       }
       
       // Update the feature node
       await this.update({
         id: featureId,
-        teamAllocations,
+        teamAllocations: teamAllocations,
       });
+      
+      // Get the project duration
+      const projectDurationDays = featureNode.data.duration || 5;
+      
+      // Update resource allocation in the observer
+      updateFeatureResourceAllocation(
+        featureId,
+        teamId,
+        formattedAllocatedMembers,
+        projectDurationDays
+      );
+      
     } catch (error) {
-      console.error(`[FeatureService] Error updating allocation for team ${teamId} in feature ${featureId}:`, error);
+      console.error(`[FeatureService] Error updating team allocation for team ${teamId} in feature ${featureId}:`, error);
       throw error;
+    }
+  }
+  
+  /**
+   * Handle team resource updates from the observer
+   */
+  private async handleTeamResourceUpdate(featureId: string, teamId: string, data: any) {
+    console.log(`[FeatureService] Received resource update for feature ${featureId} from team ${teamId}`);
+    
+    try {
+      // Get the feature node
+      const featureNode = await this.storage.getNode(featureId) as RFFeatureNode;
+      if (!featureNode) {
+        console.warn(`Feature node with ID ${featureId} not found`);
+        return;
+      }
+      
+      // Update the feature node with the team allocation
+      let teamAllocations: TeamAllocation[] = [];
+      try {
+        if (typeof featureNode.data.teamAllocations === 'string') {
+          teamAllocations = JSON.parse(featureNode.data.teamAllocations);
+        } else if (Array.isArray(featureNode.data.teamAllocations)) {
+          teamAllocations = featureNode.data.teamAllocations;
+        }
+      } catch (error) {
+        console.error('Error parsing team allocations:', error);
+      }
+      
+      // Check if the team is already in the allocations
+      const existingTeamIndex = teamAllocations.findIndex(t => t.teamId === teamId);
+      if (existingTeamIndex >= 0) {
+        // Update the existing allocation with bandwidth information
+        teamAllocations[existingTeamIndex] = {
+          ...teamAllocations[existingTeamIndex],
+          teamBandwidth: data.teamBandwidth || 0,
+          availableBandwidth: data.availableBandwidth || 0,
+        };
+        
+        // Update member allocations if available
+        if (data.memberResources) {
+          const allocatedMembers = teamAllocations[existingTeamIndex].allocatedMembers || [];
+          
+          // Update each member's available hours
+          for (let i = 0; i < allocatedMembers.length; i++) {
+            const member = allocatedMembers[i];
+            const memberResource = data.memberResources.find((m: any) => m.memberId === member.memberId);
+            
+            if (memberResource) {
+              // Calculate available hours for this member
+              const projectDurationDays = featureNode.data.duration || 5;
+              const availableHours = getFeatureMemberAvailableHours(
+                featureId,
+                teamId,
+                member.memberId,
+                memberResource,
+                projectDurationDays
+              );
+              
+              // Update the member allocation
+              allocatedMembers[i] = {
+                ...member,
+                availableHours,
+              };
+            }
+          }
+          
+          // Update the team allocation with the updated members
+          teamAllocations[existingTeamIndex].allocatedMembers = allocatedMembers;
+        }
+      }
+      
+      // Update the feature node
+      await this.update({
+        id: featureId,
+        teamAllocations: teamAllocations,
+      });
+      
+    } catch (error) {
+      console.error(`[FeatureService] Error handling resource update for feature ${featureId} from team ${teamId}:`, error);
     }
   }
 } 

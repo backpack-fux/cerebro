@@ -1,6 +1,7 @@
 import { IGraphStorage } from '@/services/graph/neo4j/graph.interface';
 import { RFOptionNode, RFOptionNodeData, CreateOptionNodeParams, UpdateOptionNodeParams, RFOptionEdge, Goal, Risk, MemberAllocation, TeamAllocation } from '@/services/graph/option/option.types';
 import { reactFlowToNeo4jEdge, neo4jToReactFlowEdge } from '@/services/graph/option/option.transform';
+import { connectOptionToTeam, disconnectOptionFromTeam, updateOptionResourceAllocation, getOptionMemberAvailableHours } from './option-resource-integration';
 
 export class OptionService {
   constructor(private storage: IGraphStorage<RFOptionNodeData>) {}
@@ -35,7 +36,37 @@ export class OptionService {
   }
 
   async delete(id: string): Promise<void> {
-    return this.storage.deleteNode(id);
+    console.log('[OptionService] Deleting option node:', id);
+    try {
+      // Get the option node to find its team connections
+      const optionNode = await this.storage.getNode(id) as RFOptionNode;
+      if (optionNode) {
+        // Get team allocations
+        let teamAllocations: TeamAllocation[] = [];
+        try {
+          if (typeof optionNode.data.teamAllocations === 'string') {
+            teamAllocations = JSON.parse(optionNode.data.teamAllocations);
+          } else if (Array.isArray(optionNode.data.teamAllocations)) {
+            teamAllocations = optionNode.data.teamAllocations;
+          }
+        } catch (error) {
+          console.error('[OptionService] Error parsing team allocations:', error);
+        }
+        
+        // Disconnect from all teams
+        for (const allocation of teamAllocations) {
+          console.log(`[OptionService] Cleaning up resources for team ${allocation.teamId} in option ${id}`);
+          disconnectOptionFromTeam(id, allocation.teamId);
+        }
+      }
+      
+      // Delete the node from storage
+      await this.storage.deleteNode(id);
+      console.log('[OptionService] Deleted option node successfully');
+    } catch (error) {
+      console.error('[OptionService] Error deleting option node:', error);
+      throw error;
+    }
   }
 
   // Edge operations
@@ -351,146 +382,308 @@ export class OptionService {
   }
 
   async addTeam(optionId: string, teamId: string, requestedHours: number = 0): Promise<RFOptionEdge> {
-    // Create an edge between option and team
-    const edge: RFOptionEdge = {
-      id: `edge-${crypto.randomUUID()}`,
-      source: optionId,
-      target: teamId,
-      type: 'OPTION_TEAM',
-      data: {
-        label: 'Option Team',
-        allocation: requestedHours,
-      },
-    };
+    console.log(`[OptionService] Adding team ${teamId} to option ${optionId}`);
     
-    // Also update the option's team allocations
-    const option = await this.storage.getNode(optionId) as RFOptionNode;
-    if (option) {
-      // Ensure teamAllocations is an array
-      let teamAllocations: TeamAllocation[] = [];
-      if (Array.isArray(option.data.teamAllocations)) {
-        teamAllocations = [...option.data.teamAllocations];
-      } else if (typeof option.data.teamAllocations === 'string') {
-        try {
-          const parsedTeamAllocations = JSON.parse(option.data.teamAllocations);
-          teamAllocations = Array.isArray(parsedTeamAllocations) ? parsedTeamAllocations : [];
-        } catch (e) {
-          console.warn('Failed to parse teamAllocations string:', e);
-        }
+    try {
+      // Get the option node
+      const optionNode = await this.storage.getNode(optionId) as RFOptionNode;
+      if (!optionNode) {
+        throw new Error(`Option node with ID ${optionId} not found`);
       }
       
-      // Check if team already exists in allocations
-      const existingTeamIndex = teamAllocations.findIndex(t => t.teamId === teamId);
+      // Get the team node
+      const teamNode = await this.storage.getNode(teamId);
+      if (!teamNode) {
+        throw new Error(`Team node with ID ${teamId} not found`);
+      }
       
+      // Create the edge
+      const edge: RFOptionEdge = {
+        id: crypto.randomUUID(),
+        source: optionId,
+        target: teamId,
+        type: 'option-team',
+        data: {
+          requestedHours,
+          allocatedMembers: [],
+        },
+      };
+      
+      // Create the edge in Neo4j
+      const result = await this.createEdge(edge);
+      
+      // Update the option node with the team allocation
+      let teamAllocations: TeamAllocation[] = [];
+      try {
+        if (typeof optionNode.data.teamAllocations === 'string') {
+          teamAllocations = JSON.parse(optionNode.data.teamAllocations);
+        } else if (Array.isArray(optionNode.data.teamAllocations)) {
+          teamAllocations = optionNode.data.teamAllocations;
+        }
+      } catch (error) {
+        console.error('Error parsing team allocations:', error);
+      }
+      
+      // Check if the team is already in the allocations
+      const existingTeamIndex = teamAllocations.findIndex(t => t.teamId === teamId);
       if (existingTeamIndex >= 0) {
-        // Update existing team
         teamAllocations[existingTeamIndex] = {
           ...teamAllocations[existingTeamIndex],
           requestedHours,
         };
       } else {
-        // Add new team
+        // Get team name from the team node
+        const teamName = teamNode.data.title || teamNode.data.name || 'Unknown Team';
+        
+        // Add the team to the allocations
         teamAllocations.push({
           teamId,
+          teamName,
           requestedHours,
           allocatedMembers: [],
+          teamBandwidth: 0,
+          availableBandwidth: 0,
         });
       }
       
       // Update the option node
       await this.update({
         id: optionId,
-        teamAllocations,
+        teamAllocations: teamAllocations,
       });
+      
+      // Connect the option to the team's resources
+      connectOptionToTeam(
+        optionNode,
+        teamId,
+        (data) => {
+          // Handle resource updates
+          this.handleTeamResourceUpdate(optionId, teamId, data);
+        }
+      );
+      
+      return result;
+    } catch (error) {
+      console.error(`[OptionService] Error adding team ${teamId} to option ${optionId}:`, error);
+      throw error;
     }
-    
-    return this.createEdge(edge);
   }
 
   async removeTeam(optionId: string, teamId: string): Promise<void> {
-    // Find the edge between option and team
-    const edges = await this.getEdges(optionId, 'OPTION_TEAM');
-    const edge = edges.find(e => e.target === teamId);
+    console.log(`[OptionService] Removing team ${teamId} from option ${optionId}`);
     
-    if (edge) {
-      await this.deleteEdge(edge.id);
-    }
-    
-    // Also update the option's team allocations
-    const option = await this.storage.getNode(optionId) as RFOptionNode;
-    if (option) {
-      // Ensure teamAllocations is an array
-      let teamAllocations: TeamAllocation[] = [];
-      if (Array.isArray(option.data.teamAllocations)) {
-        teamAllocations = [...option.data.teamAllocations];
-      } else if (typeof option.data.teamAllocations === 'string') {
-        try {
-          const parsedTeamAllocations = JSON.parse(option.data.teamAllocations);
-          teamAllocations = Array.isArray(parsedTeamAllocations) ? parsedTeamAllocations : [];
-        } catch (e) {
-          console.warn('Failed to parse teamAllocations string:', e);
-        }
+    try {
+      // Get the option node
+      const optionNode = await this.storage.getNode(optionId) as RFOptionNode;
+      if (!optionNode) {
+        throw new Error(`Option node with ID ${optionId} not found`);
       }
       
-      // Filter out the team
-      const filteredTeamAllocations = teamAllocations.filter(t => t.teamId !== teamId);
+      // Get the edges connecting the option to the team
+      const edges = await this.getEdges(optionId);
+      const teamEdge = edges.find(edge => edge.target === teamId && edge.type === 'option-team');
+      
+      if (teamEdge) {
+        // Delete the edge
+        await this.deleteEdge(teamEdge.id);
+      }
+      
+      // Update the option node to remove the team allocation
+      let teamAllocations: TeamAllocation[] = [];
+      try {
+        if (typeof optionNode.data.teamAllocations === 'string') {
+          teamAllocations = JSON.parse(optionNode.data.teamAllocations);
+        } else if (Array.isArray(optionNode.data.teamAllocations)) {
+          teamAllocations = optionNode.data.teamAllocations;
+        }
+      } catch (error) {
+        console.error('Error parsing team allocations:', error);
+      }
+      
+      // Remove the team from the allocations
+      teamAllocations = teamAllocations.filter(t => t.teamId !== teamId);
       
       // Update the option node
       await this.update({
         id: optionId,
-        teamAllocations: filteredTeamAllocations,
+        teamAllocations: teamAllocations,
       });
+      
+      // Disconnect the option from the team's resources
+      disconnectOptionFromTeam(optionId, teamId);
+      
+    } catch (error) {
+      console.error(`[OptionService] Error removing team ${teamId} from option ${optionId}:`, error);
+      throw error;
     }
   }
 
-  async updateTeamAllocation(optionId: string, teamId: string, requestedHours: number, allocatedMembers: { memberId: string; hours: number }[] = []): Promise<void> {
-    // Find the edge between option and team
-    const edges = await this.getEdges(optionId, 'OPTION_TEAM');
-    const edge = edges.find(e => e.target === teamId);
+  async updateTeamAllocation(
+    optionId: string, 
+    teamId: string, 
+    requestedHours: number, 
+    allocatedMembers: { memberId: string; hours: number }[] = []
+  ): Promise<void> {
+    console.log(`[OptionService] Updating team allocation for team ${teamId} in option ${optionId}`);
     
-    if (edge) {
-      // Update the edge allocation
-      await this.updateEdge(edge.id, { allocation: requestedHours });
-    }
-    
-    // Also update the option's team allocations
-    const option = await this.storage.getNode(optionId) as RFOptionNode;
-    if (option) {
-      // Ensure teamAllocations is an array
-      let teamAllocations: TeamAllocation[] = [];
-      if (Array.isArray(option.data.teamAllocations)) {
-        teamAllocations = [...option.data.teamAllocations];
-      } else if (typeof option.data.teamAllocations === 'string') {
-        try {
-          const parsedTeamAllocations = JSON.parse(option.data.teamAllocations);
-          teamAllocations = Array.isArray(parsedTeamAllocations) ? parsedTeamAllocations : [];
-        } catch (e) {
-          console.warn('Failed to parse teamAllocations string:', e);
-        }
+    try {
+      // Get the option node
+      const optionNode = await this.storage.getNode(optionId) as RFOptionNode;
+      if (!optionNode) {
+        throw new Error(`Option node with ID ${optionId} not found`);
       }
       
-      const teamIndex = teamAllocations.findIndex(t => t.teamId === teamId);
+      // Get the team node
+      const teamNode = await this.storage.getNode(teamId);
+      if (!teamNode) {
+        throw new Error(`Team node with ID ${teamId} not found`);
+      }
       
-      if (teamIndex >= 0) {
-        teamAllocations[teamIndex] = {
-          ...teamAllocations[teamIndex],
+      // Update the option node with the team allocation
+      let teamAllocations: TeamAllocation[] = [];
+      try {
+        if (typeof optionNode.data.teamAllocations === 'string') {
+          teamAllocations = JSON.parse(optionNode.data.teamAllocations);
+        } else if (Array.isArray(optionNode.data.teamAllocations)) {
+          teamAllocations = optionNode.data.teamAllocations;
+        }
+      } catch (error) {
+        console.error('Error parsing team allocations:', error);
+      }
+      
+      // Format the allocated members to ensure they have names
+      const formattedAllocatedMembers = allocatedMembers.map(member => {
+        return {
+          memberId: member.memberId,
+          name: 'Unknown Member', // Default name
+          hours: member.hours,
+        };
+      });
+      
+      // Check if the team is already in the allocations
+      const existingTeamIndex = teamAllocations.findIndex(t => t.teamId === teamId);
+      if (existingTeamIndex >= 0) {
+        // Update the existing allocation
+        teamAllocations[existingTeamIndex] = {
+          ...teamAllocations[existingTeamIndex],
           requestedHours,
-          allocatedMembers,
+          allocatedMembers: formattedAllocatedMembers,
         };
       } else {
-        // Add new team allocation if it doesn't exist
+        // Get team name from the team node
+        const teamName = teamNode.data.title || teamNode.data.name || 'Unknown Team';
+        
+        // Add the team to the allocations
         teamAllocations.push({
           teamId,
+          teamName,
           requestedHours,
-          allocatedMembers,
+          allocatedMembers: formattedAllocatedMembers,
+          teamBandwidth: 0,
+          availableBandwidth: 0,
         });
       }
       
       // Update the option node
       await this.update({
         id: optionId,
-        teamAllocations,
+        teamAllocations: teamAllocations,
       });
+      
+      // Get the project duration
+      const projectDurationDays = optionNode.data.duration || 5;
+      
+      // Update resource allocation in the observer
+      updateOptionResourceAllocation(
+        optionId,
+        teamId,
+        formattedAllocatedMembers,
+        projectDurationDays
+      );
+      
+    } catch (error) {
+      console.error(`[OptionService] Error updating team allocation for team ${teamId} in option ${optionId}:`, error);
+      throw error;
+    }
+  }
+  
+  /**
+   * Handle team resource updates from the observer
+   */
+  private async handleTeamResourceUpdate(optionId: string, teamId: string, data: any) {
+    console.log(`[OptionService] Received resource update for option ${optionId} from team ${teamId}`);
+    
+    try {
+      // Get the option node
+      const optionNode = await this.storage.getNode(optionId) as RFOptionNode;
+      if (!optionNode) {
+        console.warn(`Option node with ID ${optionId} not found`);
+        return;
+      }
+      
+      // Update the option node with the team allocation
+      let teamAllocations: TeamAllocation[] = [];
+      try {
+        if (typeof optionNode.data.teamAllocations === 'string') {
+          teamAllocations = JSON.parse(optionNode.data.teamAllocations);
+        } else if (Array.isArray(optionNode.data.teamAllocations)) {
+          teamAllocations = optionNode.data.teamAllocations;
+        }
+      } catch (error) {
+        console.error('Error parsing team allocations:', error);
+      }
+      
+      // Check if the team is already in the allocations
+      const existingTeamIndex = teamAllocations.findIndex(t => t.teamId === teamId);
+      if (existingTeamIndex >= 0) {
+        // Update the existing allocation with bandwidth information
+        teamAllocations[existingTeamIndex] = {
+          ...teamAllocations[existingTeamIndex],
+          teamBandwidth: data.teamBandwidth || 0,
+          availableBandwidth: data.availableBandwidth || 0,
+        };
+        
+        // Update member allocations if available
+        if (data.memberResources) {
+          const allocatedMembers = teamAllocations[existingTeamIndex].allocatedMembers || [];
+          
+          // Update each member's available hours
+          for (let i = 0; i < allocatedMembers.length; i++) {
+            const member = allocatedMembers[i];
+            const memberResource = data.memberResources.find((m: any) => m.memberId === member.memberId);
+            
+            if (memberResource) {
+              // Calculate available hours for this member
+              const projectDurationDays = optionNode.data.duration || 5;
+              const availableHours = getOptionMemberAvailableHours(
+                optionId,
+                teamId,
+                member.memberId,
+                memberResource,
+                projectDurationDays
+              );
+              
+              // Update the member allocation
+              allocatedMembers[i] = {
+                ...member,
+                availableHours,
+              };
+            }
+          }
+          
+          // Update the team allocation with the updated members
+          teamAllocations[existingTeamIndex].allocatedMembers = allocatedMembers;
+        }
+      }
+      
+      // Update the option node
+      await this.update({
+        id: optionId,
+        teamAllocations: teamAllocations,
+      });
+      
+    } catch (error) {
+      console.error(`[OptionService] Error handling resource update for option ${optionId} from team ${teamId}:`, error);
     }
   }
 } 

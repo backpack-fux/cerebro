@@ -12,6 +12,8 @@ import { RFTeamMemberNodeData } from "@/services/graph/team-member/team-member.t
 import { prepareDataForBackend, parseDataFromBackend } from "@/lib/utils";
 import { getCurrentDate } from "@/utils/time/calendar";
 import { calculateEffectiveCapacity } from "@/utils/allocation/capacity";
+import { useNodeObserver } from '@/hooks/useNodeObserver';
+import { NodeUpdateType } from '@/services/graph/observer/node-observer';
 
 /**
  * Type guard for team member nodes
@@ -33,6 +35,9 @@ export function useTeamNode(id: string, data: RFTeamNodeData) {
   const { updateNodeData, setNodes, getNodes, setEdges } = useReactFlow();
   const connections = useNodeConnections({ id });
   const edges = useEdges();
+  
+  // Add the node observer hook
+  const { publishUpdate, publishManifestUpdate, subscribeBasedOnManifest } = useNodeObserver<RFTeamNodeData>(id, 'team');
   
   // Define JSON fields that need special handling
   const jsonFields = ['roster', 'seasons', 'season'];
@@ -263,6 +268,44 @@ export function useTeamNode(id: string, data: RFTeamNodeData) {
       utilizationRate: total > 0 ? (allocated / total) * 100 : 0
     };
   }, [processedRoster, getNodes, updateCounter]);
+  
+  // Publish updates when roster or bandwidth changes
+  useEffect(() => {
+    // Skip the initial render
+    if (lastRosterAllocationsRef.current === '') return;
+    
+    console.log('[TeamNode] Publishing roster and bandwidth updates to connected nodes');
+    
+    // Publish update to the observer system so connected nodes (like features) can react
+    publishUpdate({
+      ...parsedData,
+      roster: processedRoster,
+      bandwidth: bandwidth
+    }, {
+      updateType: NodeUpdateType.ALLOCATION,
+      affectedFields: ['roster', 'bandwidth'],
+      source: 'allocation-change'
+    });
+  }, [updateCounter, publishUpdate, parsedData, processedRoster, bandwidth]);
+
+  // Dispatch a drag stop event when the node is dragged
+  const handleDragStop = useCallback(() => {
+    // Dispatch a custom event that feature nodes can listen for
+    const event = new CustomEvent('nodeDragStop', { 
+      detail: { nodeId: id, nodeType: 'team' }
+    });
+    window.dispatchEvent(event);
+    
+    // Also publish an update to the observer system
+    publishUpdate({
+      ...parsedData,
+      roster: processedRoster,
+      bandwidth: bandwidth
+    }, {
+      updateType: NodeUpdateType.POSITION,
+      source: 'drag-stop'
+    });
+  }, [id, publishUpdate, parsedData, processedRoster, bandwidth]);
 
   // Save roster to backend with debouncing
   const saveRosterToBackend = useCallback(async (roster: RosterMember[]) => {
@@ -327,23 +370,43 @@ export function useTeamNode(id: string, data: RFTeamNodeData) {
     }, 1000);
   }, [saveToBackend]);
 
-  // Handle title change
+  // Update title handler with debounce and backend saving
   const handleTitleChange = useCallback((newTitle: string) => {
     setTitle(newTitle);
-    updateNodeData(id, { ...parsedData, title: newTitle });
     
-    if (titleDebounceRef.current) clearTimeout(titleDebounceRef.current);
+    // Update node data
+    updateNodeData(id, { ...data, title: newTitle });
     
+    // Ensure roster is an array before publishing
+    const safeRoster = Array.isArray(data.roster) ? data.roster : [];
+    
+    // Publish update to the observer system using the manifest
+    publishManifestUpdate({
+      ...data,
+      title: newTitle,
+      roster: safeRoster // Ensure roster is always an array
+    }, 
+    ['title'], // Specify which fields from the manifest are being updated
+    {
+      source: 'ui'
+    });
+    
+    // Clear any existing debounce timer
+    if (titleDebounceRef.current) {
+      clearTimeout(titleDebounceRef.current);
+    }
+    
+    // Set a new debounce timer
     titleDebounceRef.current = setTimeout(async () => {
       await saveToBackend({ title: newTitle });
       titleDebounceRef.current = null;
-    }, 1000);
-  }, [id, parsedData, updateNodeData, saveToBackend]);
+    }, 1000); // 1 second debounce
+  }, [id, data, updateNodeData, saveToBackend, publishManifestUpdate]);
 
   // Handle description change
   const handleDescriptionChange = useCallback((newDescription: string) => {
     setDescription(newDescription);
-    updateNodeData(id, { ...parsedData, description: newDescription });
+    updateNodeData(id, { ...data, description: newDescription });
     
     if (descriptionDebounceRef.current) clearTimeout(descriptionDebounceRef.current);
     
@@ -351,7 +414,7 @@ export function useTeamNode(id: string, data: RFTeamNodeData) {
       await saveToBackend({ description: newDescription });
       descriptionDebounceRef.current = null;
     }, 1000);
-  }, [id, parsedData, updateNodeData, saveToBackend]);
+  }, [id, data, updateNodeData, saveToBackend]);
 
   // Handle season change
   const handleSeasonChange = useCallback((updates: Partial<Season>) => {
@@ -361,15 +424,37 @@ export function useTeamNode(id: string, data: RFTeamNodeData) {
       name: 'New Season'
     };
 
-    const updatedSeason = { ...(parsedData.season || defaultSeason), ...updates };
+    const updatedSeason = { ...(data.season || defaultSeason), ...updates };
     
     updateNodeData(id, {
-      ...parsedData,
+      ...data,
       season: updatedSeason
     });
     
     saveSeasonToBackend(updatedSeason);
-  }, [id, parsedData, updateNodeData, saveSeasonToBackend]);
+  }, [id, data, updateNodeData, saveSeasonToBackend]);
+
+  // Update roster handler
+  const updateRoster = useCallback((newRoster: RosterMember[]) => {
+    // Ensure roster is an array
+    const safeRoster = Array.isArray(newRoster) ? newRoster : [];
+    
+    // Update node data
+    updateNodeData(id, { ...data, roster: safeRoster });
+    
+    // Publish update to the observer system using the manifest
+    publishManifestUpdate({
+      ...data,
+      roster: safeRoster
+    }, 
+    ['roster'], // Specify which fields from the manifest are being updated
+    {
+      source: 'ui'
+    });
+    
+    // Save to backend
+    saveToBackend({ roster: safeRoster });
+  }, [id, data, updateNodeData, saveToBackend, publishManifestUpdate]);
 
   // Remove roster member
   const removeRosterMember = useCallback((memberId: string) => {
@@ -378,7 +463,7 @@ export function useTeamNode(id: string, data: RFTeamNodeData) {
     const updatedRoster = rosterArray.filter((member: RosterMember) => member.memberId !== memberId);
     
     updateNodeData(id, {
-      ...parsedData,
+      ...data,
       roster: updatedRoster
     });
     
@@ -396,8 +481,8 @@ export function useTeamNode(id: string, data: RFTeamNodeData) {
         .catch((error) => console.error('Failed to delete edge:', error));
     }
     
-    saveRosterToBackend(updatedRoster);
-  }, [id, parsedData, updateNodeData, edges, setEdges, processedRoster, saveRosterToBackend]);
+    updateRoster(updatedRoster);
+  }, [id, data, updateNodeData, edges, setEdges, processedRoster, updateRoster]);
 
   // Handle allocation change
   const handleAllocationChange = useCallback((memberId: string, allocation: number) => {
@@ -427,8 +512,19 @@ export function useTeamNode(id: string, data: RFTeamNodeData) {
     
     // Update the UI immediately
     updateNodeData(id, {
-      ...parsedData,
+      ...data,
       roster: updatedRoster
+    });
+    
+    // Publish update immediately to connected nodes
+    publishUpdate({
+      ...data,
+      roster: updatedRoster
+    }, {
+      updateType: NodeUpdateType.ALLOCATION,
+      affectedFields: ['roster'],
+      source: 'direct-allocation-change',
+      nodeType: 'team' // Add nodeType to the metadata
     });
     
     // Debounce the backend update
@@ -437,7 +533,7 @@ export function useTeamNode(id: string, data: RFTeamNodeData) {
     rosterDebounceRef.current = setTimeout(async () => {
       try {
         // Save to backend
-        await saveRosterToBackend(updatedRoster);
+        await updateRoster(updatedRoster);
         
         // Also update the team member node if it exists
         const teamMember = getNodes().find(n => n.id === memberId);
@@ -453,7 +549,7 @@ export function useTeamNode(id: string, data: RFTeamNodeData) {
         });
       }
     }, 300); // Shorter debounce for better responsiveness
-  }, [id, parsedData, updateNodeData, getNodes, processedRoster, saveRosterToBackend]);
+  }, [id, data, updateNodeData, getNodes, processedRoster, updateRoster, publishUpdate]);
 
   // Handle node deletion
   const handleDelete = useCallback(() => {
@@ -486,7 +582,7 @@ export function useTeamNode(id: string, data: RFTeamNodeData) {
 
   // Initialize season with defaults if it doesn't exist
   useEffect(() => {
-    if (!parsedData.season) {
+    if (!data.season) {
       const defaultSeason: Season = {
         startDate: '2025-01-01',
         endDate: '2025-12-31',
@@ -494,13 +590,13 @@ export function useTeamNode(id: string, data: RFTeamNodeData) {
       };
       
       updateNodeData(id, {
-        ...parsedData,
+        ...data,
         season: defaultSeason
       });
       
       saveSeasonToBackend(defaultSeason);
     }
-  }, [id, parsedData, updateNodeData, saveSeasonToBackend]);
+  }, [id, data, updateNodeData, saveSeasonToBackend]);
 
   // Watch for member connections
   useEffect(() => {
@@ -537,14 +633,74 @@ export function useTeamNode(id: string, data: RFTeamNodeData) {
     if (newMembers.length > 0) {
       const updatedRoster = [...rosterArray, ...newMembers];
       updateNodeData(id, {
-        ...parsedData,
+        ...data,
         roster: updatedRoster
       });
       
       // Save to backend
-      saveRosterToBackend(updatedRoster);
+      updateRoster(updatedRoster);
     }
-  }, [connections, parsedData, id, updateNodeData, getNodes, processedRoster, saveRosterToBackend]);
+  }, [connections, data, id, updateNodeData, getNodes, processedRoster, updateRoster]);
+
+  // Add a function to trigger bandwidth recalculation
+  const triggerBandwidthRecalculation = useCallback(() => {
+    setUpdateCounter(prev => prev + 1);
+  }, []);
+
+  // Subscribe to updates from other nodes based on manifest
+  useEffect(() => {
+    if (!id) return;
+    
+    // Set up subscription based on manifest
+    const { unsubscribe } = subscribeBasedOnManifest();
+    
+    // Listen for node data updates
+    const handleNodeDataUpdated = (event: CustomEvent) => {
+      const { subscriberId, publisherType, publisherId, relevantFields, data: publisherData } = event.detail;
+      
+      // Only process events meant for this node
+      if (subscriberId !== id) return;
+      
+      console.log(`Team node ${id} received update from ${publisherType} ${publisherId}:`, {
+        relevantFields,
+        publisherData
+      });
+      
+      // Handle updates from team member nodes
+      if (publisherType === 'teamMember') {
+        // If a team member's capacity, roles, or daily rate changes, we may need to update our roster
+        if (relevantFields.some((field: string) => ['weeklyCapacity', 'roles', 'dailyRate', 'title'].includes(field))) {
+          // Find if this team member is in our roster
+          const roster = Array.isArray(parsedData.roster) ? parsedData.roster : [];
+          const memberIndex = roster.findIndex(member => member.memberId === publisherId);
+          
+          if (memberIndex >= 0) {
+            // Update the roster with the new information
+            console.log(`Updating team roster for member ${publisherId} with new data`);
+            
+            // Recalculate team bandwidth based on updated member data
+            triggerBandwidthRecalculation();
+          }
+        }
+      }
+      
+      // Handle updates from feature nodes
+      if (publisherType === 'feature' && relevantFields.includes('teamAllocations')) {
+        // If a feature's team allocations change, we may need to update our bandwidth calculations
+        console.log(`Team ${id} received feature allocation update`);
+        
+        // Recalculate team bandwidth based on updated feature allocations
+        triggerBandwidthRecalculation();
+      }
+    };
+    
+    window.addEventListener('nodeDataUpdated', handleNodeDataUpdated as EventListener);
+    
+    return () => {
+      unsubscribe();
+      window.removeEventListener('nodeDataUpdated', handleNodeDataUpdated as EventListener);
+    };
+  }, [id, subscribeBasedOnManifest, parsedData, triggerBandwidthRecalculation]);
 
   // Clean up timers on unmount
   useEffect(() => {
@@ -566,7 +722,7 @@ export function useTeamNode(id: string, data: RFTeamNodeData) {
     // Data
     title,
     description,
-    season: parsedData.season,
+    season: data.season,
     seasonProgress,
     bandwidth,
     processedRoster,
@@ -580,6 +736,7 @@ export function useTeamNode(id: string, data: RFTeamNodeData) {
     handleAllocationChange,
     handleDelete,
     handleDisconnect,
+    handleDragStop,
     
     // Utilities
     getNodes,
@@ -587,7 +744,7 @@ export function useTeamNode(id: string, data: RFTeamNodeData) {
   }), [
     title,
     description,
-    parsedData.season,
+    data.season,
     seasonProgress,
     bandwidth,
     processedRoster,
@@ -599,6 +756,7 @@ export function useTeamNode(id: string, data: RFTeamNodeData) {
     handleAllocationChange,
     handleDelete,
     handleDisconnect,
+    handleDragStop,
     getNodes
   ]);
 } 

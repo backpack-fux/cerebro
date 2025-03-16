@@ -53,6 +53,14 @@ export const TeamAllocation: React.FC<TeamAllocationProps> = ({
   const allocatedMembers = teamAllocation?.allocatedMembers || [];
   const totalTeamHours = allocatedMembers.reduce((sum, m) => sum + m.hours, 0);
   
+  // DEBUG: Log the project duration received by the component
+  console.log('TeamAllocation - Project Duration:', {
+    teamId: team.teamId,
+    teamName: team.name,
+    projectDurationDays,
+    timeframe
+  });
+  
   return (
     <div className="space-y-2 bg-muted/30 p-3 rounded-md">
       <div className="flex items-center justify-between">
@@ -88,13 +96,17 @@ export const TeamAllocation: React.FC<TeamAllocationProps> = ({
           // Calculate effective weekly capacity
           const effectiveWeeklyCapacity = ((member.allocation || 100) / 100) * (member.weeklyCapacity || 40);
           
-          // Calculate total available hours for the project duration
-          const totalAvailableHours = calculateEffectiveCapacity(
-            member.weeklyCapacity || 40,
-            member.allocation || 100,
-            projectDurationDays,
-            member.daysPerWeek || 5
-          );
+          // DEBUG: Log the weekly capacity values
+          console.log(`[TeamAllocation] Weekly capacity for ${member.name}:`, {
+            rawWeeklyCapacity: member.weeklyCapacity,
+            defaultedWeeklyCapacity: member.weeklyCapacity || 40,
+            memberHoursPerDay: member.hoursPerDay,
+            memberDaysPerWeek: member.daysPerWeek,
+            calculatedDailyCapacity: (member.weeklyCapacity || 40) / (member.daysPerWeek || 5)
+          });
+          
+          // Always use weekly capacity for consistency with feature node
+          const totalAvailableHours = effectiveWeeklyCapacity;
           
           // Calculate over-allocation
           const isOverAllocated = allocation && allocation.hours > totalAvailableHours;

@@ -14,6 +14,8 @@ import { RFTeamNodeData, RosterMember } from '@/services/graph/team/team.types';
 import { ValidationError } from '@/types/validation';
 import { prepareDataForBackend, parseDataFromBackend } from "@/lib/utils";
 import { useNodeStatus } from "@/hooks/useNodeStatus";
+import { useNodeObserver } from '@/hooks/useNodeObserver';
+import { NodeUpdateType } from '@/services/graph/observer/node-observer';
 
 /**
  * Type guard for team nodes
@@ -38,6 +40,9 @@ export function useTeamMemberNode(
 ) {
   const { updateNodeData, setNodes, getNodes, getNode } = useReactFlow();
   const connections = useNodeConnections({ id });
+  
+  // Add the node observer hook
+  const { publishUpdate, publishManifestUpdate, subscribeBasedOnManifest } = useNodeObserver<RFTeamMemberNodeData>(id, 'teamMember');
   
   // Define JSON fields that need special handling
   const jsonFields = ['skills', 'roles'];
@@ -401,6 +406,16 @@ export function useTeamMemberNode(
     };
     updateNodeData(id, { ...data, ...updatedData });
     
+    // Publish update to the observer system using the manifest
+    publishManifestUpdate({
+      ...data,
+      ...updatedData
+    }, 
+    ['title'], // Specify which fields from the manifest are being updated
+    {
+      source: 'ui'
+    });
+    
     // Clear any existing debounce timer
     if (titleDebounceRef.current) {
       clearTimeout(titleDebounceRef.current);
@@ -411,7 +426,7 @@ export function useTeamMemberNode(
       await saveToBackend(updatedData);
       titleDebounceRef.current = null;
     }, 1000); // 1 second debounce
-  }, [id, data, updateNodeData, saveToBackend]);
+  }, [id, data, updateNodeData, saveToBackend, publishManifestUpdate]);
 
   // Update bio handler to also update description for consistency and save to backend
   const handleBioChange = useCallback((bio: string) => {
@@ -469,6 +484,72 @@ export function useTeamMemberNode(
     // Update connected team with new allocation
     updateConnectedTeam(undefined, boundedAllocation);
   }, [id, data, updateNodeData, saveToBackend, calculateEffectiveCapacity, updateConnectedTeam]);
+
+  // Subscribe to updates from other nodes based on manifest
+  useEffect(() => {
+    if (!id) return;
+    
+    // Set up subscription based on manifest
+    const { unsubscribe } = subscribeBasedOnManifest();
+    
+    // Listen for node data updates
+    const handleNodeDataUpdated = (event: CustomEvent) => {
+      const { subscriberId, publisherType, publisherId, relevantFields, data: publisherData } = event.detail;
+      
+      // Only process events meant for this node
+      if (subscriberId !== id) return;
+      
+      console.log(`TeamMember node ${id} received update from ${publisherType} ${publisherId}:`, {
+        relevantFields,
+        publisherData
+      });
+      
+      // Handle updates from team nodes
+      if (publisherType === 'team' && relevantFields.includes('roster')) {
+        // Check if this team member is in the roster
+        const roster = Array.isArray(publisherData.roster) ? publisherData.roster : [];
+        const memberInRoster = roster.find((member: any) => member.memberId === id);
+        
+        if (memberInRoster) {
+          // Update the team ID and allocation if needed
+          const updatedData: Partial<RFTeamMemberNodeData> = {};
+          let hasChanges = false;
+          
+          if (parsedData.teamId !== publisherId) {
+            updatedData.teamId = publisherId;
+            hasChanges = true;
+          }
+          
+          if (parsedData.allocation !== memberInRoster.allocation) {
+            updatedData.allocation = memberInRoster.allocation;
+            hasChanges = true;
+          }
+          
+          if (hasChanges) {
+            // Update local state
+            updateNodeData(id, { ...parsedData, ...updatedData });
+            
+            // Save to backend (debounced in saveToBackend function)
+            saveToBackend(updatedData);
+          }
+        }
+      }
+      
+      // Handle updates from feature nodes
+      if (publisherType === 'feature' && relevantFields.includes('teamAllocations')) {
+        // Feature allocation updates could be handled here if needed
+        // For now, we're just logging the update
+        console.log(`TeamMember ${id} received feature allocation update`);
+      }
+    };
+    
+    window.addEventListener('nodeDataUpdated', handleNodeDataUpdated as EventListener);
+    
+    return () => {
+      unsubscribe();
+      window.removeEventListener('nodeDataUpdated', handleNodeDataUpdated as EventListener);
+    };
+  }, [id, subscribeBasedOnManifest, parsedData, updateNodeData, saveToBackend]);
 
   // Update connection handling to pass summary data
   useEffect(() => {

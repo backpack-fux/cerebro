@@ -32,8 +32,16 @@ export interface MemberAllocation {
 // Team allocation type for option nodes
 export interface TeamAllocation {
   teamId: string;
+  teamName?: string;
   requestedHours: number;
-  allocatedMembers: { memberId: string; hours: number }[];
+  allocatedMembers: Array<{
+    memberId: string;
+    name?: string;
+    hours: number;
+    availableHours?: number;
+  }>;
+  teamBandwidth?: number;
+  availableBandwidth?: number;
 }
 
 // Frontend types for React Flow
@@ -117,13 +125,20 @@ export interface Neo4jOptionNodeData {
 
 // EDGE TYPES HERE
 export interface RFOptionEdge extends RFEdge {
+  id: string;
   source: string;
   target: string;
-  data?: {
-    label?: string; // Optional label for display in UI
-    edgeType?: string; // Original edge type from Neo4j
-    allocation?: number; // Allocation percentage or hours
-    // Add other metadata as needed
+  type: string;
+  data: {
+    label?: string;
+    edgeType?: string;
+    allocation?: number;
+    requestedHours?: number;
+    allocatedMembers?: Array<{
+      memberId: string;
+      name?: string;
+      hours: number;
+    }>;
   };
 }
 

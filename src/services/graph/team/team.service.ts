@@ -7,6 +7,8 @@ import {
   RFTeamEdge, 
   Neo4jTeamNodeData } from '@/services/graph/team/team.types';
 import { reactFlowToNeo4jEdge, neo4jToReactFlowEdge, reactFlowToNeo4j, neo4jToReactFlow } from '@/services/graph/team/team.transform';
+import { initializeTeamResources, setupTeamResourcePublishing, updateTeamRoster } from './team-resource-integration';
+import { teamResourceObserver } from '../observer/team-resource-observer';
 
 export class TeamService {
   constructor(private storage: IGraphStorage<RFTeamNodeData>) {}
@@ -49,6 +51,13 @@ export class TeamService {
       const result = await this.storage.createNode('team', neo4jData as unknown as RFTeamNodeData);
       
       console.log('[TeamService] Created team node:', result);
+      
+      // Initialize team resources in the observer
+      initializeTeamResources(result as RFTeamNode);
+      
+      // Set up team to publish resource updates
+      setupTeamResourcePublishing(result.id);
+      
       return result as RFTeamNode;
     } catch (error) {
       console.error('[TeamService] Error creating team node:', error);
@@ -85,6 +94,10 @@ export class TeamService {
       const result = await this.storage.updateNode(id, neo4jData as unknown as Partial<RFTeamNodeData>);
       
       console.log('[TeamService] Updated team node:', result);
+      
+      // Update team resources in the observer
+      initializeTeamResources(result as RFTeamNode);
+      
       return result as RFTeamNode;
     } catch (error) {
       console.error('[TeamService] Error updating team node:', error);
@@ -95,7 +108,28 @@ export class TeamService {
   async delete(id: string): Promise<void> {
     console.log('[TeamService] Deleting team node:', id);
     try {
+      // Get all edges connected to this team
+      const edges = await this.getEdges(id);
+      
+      // For each connected work node, we should notify them that the team is being deleted
+      // This will allow them to update their UI and internal state
+      for (const edge of edges) {
+        // Check if the edge is connecting to a work node (feature, option, provider)
+        if (edge.type === 'team-feature' || edge.type === 'team-option' || edge.type === 'team-provider') {
+          console.log(`[TeamService] Notifying work node ${edge.target} about team deletion`);
+          
+          // We could implement a notification mechanism here if needed
+          // For now, the work nodes will handle this when they try to access team resources
+        }
+      }
+      
+      // Delete the node from storage
       await this.storage.deleteNode(id);
+      
+      // Clean up team resources in the observer
+      console.log(`[TeamService] Cleaning up team resources for team ${id}`);
+      teamResourceObserver.cleanupTeamResources(id);
+      
       console.log('[TeamService] Deleted team node successfully');
     } catch (error) {
       console.error('[TeamService] Error deleting team node:', error);
@@ -240,6 +274,25 @@ export class TeamService {
         roster,
       });
       
+      // After successfully adding the team member, update the team's roster
+      const updatedTeam = await this.getNode(teamId);
+      if (updatedTeam) {
+        // Parse the roster
+        let roster = [];
+        try {
+          if (typeof updatedTeam.data.roster === 'string') {
+            roster = JSON.parse(updatedTeam.data.roster);
+          } else if (Array.isArray(updatedTeam.data.roster)) {
+            roster = updatedTeam.data.roster;
+          }
+        } catch (error) {
+          console.error('[TeamService] Error parsing roster:', error);
+        }
+        
+        // Update team resources with the new roster
+        updateTeamRoster(teamId, roster);
+      }
+      
       return this.createEdge(edge);
     } catch (error) {
       console.error(`[TeamService] Error adding team member ${memberId} to team ${teamId}:`, error);
@@ -271,6 +324,25 @@ export class TeamService {
         id: teamId,
         roster,
       });
+      
+      // After successfully removing the team member, update the team's roster
+      const updatedTeam = await this.getNode(teamId);
+      if (updatedTeam) {
+        // Parse the roster
+        let roster = [];
+        try {
+          if (typeof updatedTeam.data.roster === 'string') {
+            roster = JSON.parse(updatedTeam.data.roster);
+          } else if (Array.isArray(updatedTeam.data.roster)) {
+            roster = updatedTeam.data.roster;
+          }
+        } catch (error) {
+          console.error('[TeamService] Error parsing roster:', error);
+        }
+        
+        // Update team resources with the new roster
+        updateTeamRoster(teamId, roster);
+      }
     } catch (error) {
       console.error(`[TeamService] Error removing team member ${memberId} from team ${teamId}:`, error);
       throw error;
@@ -309,6 +381,25 @@ export class TeamService {
           id: teamId,
           roster,
         });
+      }
+      
+      // After successfully updating the allocation, update the team's roster
+      const updatedTeam = await this.getNode(teamId);
+      if (updatedTeam) {
+        // Parse the roster
+        let roster = [];
+        try {
+          if (typeof updatedTeam.data.roster === 'string') {
+            roster = JSON.parse(updatedTeam.data.roster);
+          } else if (Array.isArray(updatedTeam.data.roster)) {
+            roster = updatedTeam.data.roster;
+          }
+        } catch (error) {
+          console.error('[TeamService] Error parsing roster:', error);
+        }
+        
+        // Update team resources with the new roster
+        updateTeamRoster(teamId, roster);
       }
     } catch (error) {
       console.error(`[TeamService] Error updating allocation for team member ${memberId} in team ${teamId}:`, error);

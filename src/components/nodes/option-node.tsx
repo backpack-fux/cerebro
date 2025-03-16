@@ -25,6 +25,7 @@ import { CostReceipt } from '@/components/shared/CostReceipt';
 import { TeamAllocation } from '@/components/shared/TeamAllocation';
 import { formatNumber, formatHours } from '@/utils/format-utils';
 import { formatMemberName } from '@/utils/node-utils';
+import type { TeamAllocation as ITeamAllocation } from '@/utils/types/allocation';
 
 /**
  * Option Node component for displaying and editing option data
@@ -82,6 +83,13 @@ export const OptionNode = memo(function OptionNode({ id, data, selected }: NodeP
   
   // Calculate project duration in days for allocation calculations
   const projectDurationDays = Number(data.duration) || 1;
+  
+  // DEBUG: Log the project duration to verify it's correct
+  console.log('Option Node - Project Duration:', {
+    rawDuration: data.duration,
+    calculatedDays: projectDurationDays,
+    nodeId: id
+  });
   
   // Pre-calculate allocation percentages and costs for all members
   const memberAllocations = useMemo(() => {
@@ -293,15 +301,15 @@ export const OptionNode = memo(function OptionNode({ id, data, selected }: NodeP
             <TeamAllocation
               key={team.teamId}
               team={team}
-              teamAllocation={option.processedTeamAllocations.find((a: TeamAllocation) => a.teamId === team.teamId)}
+              teamAllocation={option.processedTeamAllocations.find((a: ITeamAllocation) => a.teamId === team.teamId)}
               memberAllocations={memberAllocations}
               projectDurationDays={projectDurationDays}
               formatMemberName={formatMemberName}
               onMemberValueChange={(teamId, memberId, hours) => {
-                resourceAllocation.handleAllocationChangeLocal(memberId, hours);
+                resourceAllocation.handleAllocationChangeLocal(teamId, memberId, hours);
               }}
               onMemberValueCommit={(teamId, memberId, hours) => {
-                resourceAllocation.handleAllocationCommit(memberId, hours);
+                resourceAllocation.handleAllocationCommit(teamId, memberId, hours);
               }}
             />
           ))}

@@ -7,6 +7,7 @@ import { RFMilestoneNodeData, FeatureAllocationSummary, OptionRevenueSummary, KP
 import { useNodeStatus, NodeStatus } from "@/hooks/useNodeStatus";
 import { useMilestoneMetrics } from "@/hooks/useMilestoneMetrics";
 import { prepareDataForBackend, parseDataFromBackend } from "@/lib/utils";
+import { useNodeObserver } from '@/hooks/useNodeObserver';
 
 /**
  * Hook for managing milestone node state and operations
@@ -16,6 +17,9 @@ export function useMilestoneNode(id: string, data: RFMilestoneNodeData) {
   const { updateNodeData, setNodes, setEdges } = useReactFlow();
   const edges = useEdges();
   const metrics = useMilestoneMetrics(id);
+  
+  // Initialize node observer
+  const { publishUpdate, publishManifestUpdate, subscribeBasedOnManifest } = useNodeObserver<RFMilestoneNodeData>(id, 'milestone');
   
   // Define JSON fields that need special handling
   const jsonFields = ['featureAllocations', 'optionDetails', 'providerDetails'];
@@ -33,8 +37,37 @@ export function useMilestoneNode(id: string, data: RFMilestoneNodeData) {
   const titleDebounceRef = useRef<NodeJS.Timeout | null>(null);
   const descriptionDebounceRef = useRef<NodeJS.Timeout | null>(null);
   const statusDebounceRef = useRef<NodeJS.Timeout | null>(null);
-  const metricsDebounceRef = useRef<NodeJS.Timeout | null>(null);
+  const metricsDebounceRef = useRef<any>(null);
   const lastMetricsRef = useRef<any>(null);
+
+  // Subscribe to updates from other nodes based on manifest
+  useEffect(() => {
+    if (!id) return;
+    
+    const { unsubscribe } = subscribeBasedOnManifest();
+    
+    // Listen for node data updates
+    const handleNodeDataUpdated = (event: CustomEvent) => {
+      const { subscriberId, publisherType, publisherId, relevantFields, data } = event.detail;
+      
+      if (subscriberId !== id) return;
+      
+      console.log(`Milestone node ${id} received update from ${publisherType} ${publisherId}:`, {
+        relevantFields,
+        data
+      });
+      
+      // Handle updates based on publisher type and relevant fields
+      // This can be expanded based on specific needs
+    };
+    
+    window.addEventListener('nodeDataUpdated', handleNodeDataUpdated as EventListener);
+    
+    return () => {
+      unsubscribe();
+      window.removeEventListener('nodeDataUpdated', handleNodeDataUpdated as EventListener);
+    };
+  }, [id, subscribeBasedOnManifest]);
 
   // Save to backend function
   const saveToBackend = useCallback(async (updates: Partial<RFMilestoneNodeData>) => {
@@ -48,12 +81,24 @@ export function useMilestoneNode(id: string, data: RFMilestoneNodeData) {
       // Update React Flow state with the original object data (not stringified)
       updateNodeData(id, updates);
       
-      console.log(`Updated milestone node ${id}`);
+      // Determine which fields were updated
+      const affectedFields = Object.keys(updates).map(key => {
+        // Map the property name to the field ID in the manifest
+        // This is a simplified approach - you might need a more sophisticated mapping
+        return key.toLowerCase();
+      });
+      
+      // Publish the update to subscribers
+      const updatedData = { ...parsedData, ...updates };
+      publishManifestUpdate(updatedData, affectedFields);
+      
+      return true;
     } catch (error) {
-      console.error(`Failed to update milestone node ${id}:`, error);
-      toast.error(`Update Failed: Failed to save milestone data to the server.`);
+      console.error('Error saving milestone node:', error);
+      toast.error('Failed to save milestone data');
+      return false;
     }
-  }, [id, updateNodeData, jsonFields]);
+  }, [id, jsonFields, updateNodeData, parsedData, publishManifestUpdate]);
   
   // Helper function to check if a value is a string
   const isString = (value: any): value is string => {

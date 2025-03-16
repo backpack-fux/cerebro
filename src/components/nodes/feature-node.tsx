@@ -115,7 +115,10 @@ export const FeatureNode = memo(function FeatureNode({ id, data, selected }: Nod
         </NodeHeaderTitle>
         <NodeHeaderActions>
           <button 
-            onClick={feature.refreshData}
+            onClick={() => {
+              feature.refreshData();
+              feature.refreshConnectedTeamData();
+            }}
             className="p-1 rounded-md hover:bg-muted"
             title="Refresh data"
           >
@@ -175,7 +178,7 @@ export const FeatureNode = memo(function FeatureNode({ id, data, selected }: Nod
             type="text"
             placeholder="e.g. 2w or 10d"
             value={feature.duration.value || ''}
-            onChange={(e) => feature.duration.handleDurationChange(e.target.value)}
+            onChange={(e) => feature.handleDurationChange(e.target.value)}
             onBlur={() => {}}
           />
         </div>

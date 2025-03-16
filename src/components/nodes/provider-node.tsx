@@ -36,6 +36,7 @@ import { CostReceipt } from '@/components/shared/CostReceipt';
 import { TeamAllocation } from '@/components/shared/TeamAllocation';
 import { formatHours} from '@/utils/format-utils';
 import { formatMemberName } from '@/utils/node-utils';
+import type { TeamAllocation as ITeamAllocation } from '@/utils/types/allocation';
 
 // Use React.memo to prevent unnecessary re-renders
 export const ProviderNode = memo(function ProviderNode({ id, data, selected }: NodeProps) {
@@ -215,15 +216,15 @@ export const ProviderNode = memo(function ProviderNode({ id, data, selected }: N
             <TeamAllocation
               key={team.teamId}
               team={team}
-              teamAllocation={provider.processedTeamAllocations.find((a: TeamAllocation) => a.teamId === team.teamId)}
+              teamAllocation={provider.processedTeamAllocations.find((a: ITeamAllocation) => a.teamId === team.teamId)}
               memberAllocations={memberAllocations}
               projectDurationDays={projectDurationDays}
               formatMemberName={formatMemberName}
               onMemberValueChange={(teamId, memberId, hours) => {
-                provider.handleAllocationChangeLocal(memberId, hours);
+                provider.handleAllocationChangeLocal(teamId, memberId, hours);
               }}
               onMemberValueCommit={(teamId, memberId, hours) => {
-                provider.handleAllocationCommit(memberId, hours);
+                provider.handleAllocationCommit(teamId, memberId, hours);
               }}
             />
           ))}

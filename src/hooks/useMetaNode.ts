@@ -2,8 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useReactFlow, useEdges } from "@xyflow/react";
 import { toast } from "sonner";
 import { RFMetaNode, RFMetaNodeData } from '@/services/graph/meta/meta.types';
-import { API_URLS } from '@/services/graph/neo4j/api-urls';
+import { API_URLS, NodeType } from '@/services/graph/neo4j/api-urls';
 import { prepareDataForBackend, parseDataFromBackend } from "@/lib/utils";
+import { useNodeObserver } from '@/hooks/useNodeObserver';
 
 /**
  * Hook for managing meta node state and operations
@@ -13,8 +14,11 @@ export function useMetaNode(id: string, data: RFMetaNodeData) {
   const { updateNodeData, setNodes, setEdges } = useReactFlow();
   const edges = useEdges();
   
+  // Initialize node observer
+  const { publishUpdate, publishManifestUpdate, subscribeBasedOnManifest } = useNodeObserver<RFMetaNodeData>(id, 'meta');
+  
   // Define JSON fields that need special handling
-  const jsonFields: string[] = [];
+  const jsonFields: string[] = ['tags', 'relatedLinks'];
   
   // Parse complex objects if they are strings
   const parsedData = useMemo(() => {
@@ -35,6 +39,35 @@ export function useMetaNode(id: string, data: RFMetaNodeData) {
     setDescription(parsedData.description || '');
   }, [parsedData.title, parsedData.description]);
   
+  // Subscribe to updates from other nodes based on manifest
+  useEffect(() => {
+    if (!id) return;
+    
+    const { unsubscribe } = subscribeBasedOnManifest();
+    
+    // Listen for node data updates
+    const handleNodeDataUpdated = (event: CustomEvent) => {
+      const { subscriberId, publisherType, publisherId, relevantFields, data } = event.detail;
+      
+      if (subscriberId !== id) return;
+      
+      console.log(`Meta node ${id} received update from ${publisherType} ${publisherId}:`, {
+        relevantFields,
+        data
+      });
+      
+      // Handle updates based on publisher type and relevant fields
+      // This can be expanded based on specific needs
+    };
+    
+    window.addEventListener('nodeDataUpdated', handleNodeDataUpdated as EventListener);
+    
+    return () => {
+      unsubscribe();
+      window.removeEventListener('nodeDataUpdated', handleNodeDataUpdated as EventListener);
+    };
+  }, [id, subscribeBasedOnManifest]);
+  
   // Helper function to save data to backend
   const saveToBackend = useCallback(async (updates: Partial<RFMetaNodeData>) => {
     try {
@@ -48,20 +81,30 @@ export function useMetaNode(id: string, data: RFMetaNodeData) {
       });
 
       if (!response.ok) {
-        throw new Error(`Failed to update meta node: ${response.status} ${response.statusText}`);
+        throw new Error(`Server responded with ${response.status}`);
       }
-      
-      // Update React Flow state with the original object data (not stringified)
+
+      // Update React Flow state
       updateNodeData(id, updates);
       
-      console.log(`Updated meta node ${id}:`, updates);
-    } catch (error) {
-      console.error(`Failed to update meta node ${id}:`, error);
-      toast.error(`Failed to save changes`, {
-        description: `${error instanceof Error ? error.message : 'Unknown error'}`
+      // Determine which fields were updated
+      const affectedFields = Object.keys(updates).map(key => {
+        // Map the property name to the field ID in the manifest
+        // This is a simplified approach - you might need a more sophisticated mapping
+        return key.toLowerCase();
       });
+      
+      // Publish the update to subscribers
+      const updatedData = { ...parsedData, ...updates };
+      publishManifestUpdate(updatedData, affectedFields);
+      
+      return true;
+    } catch (error) {
+      console.error('Error saving meta node:', error);
+      toast.error('Failed to save meta data');
+      return false;
     }
-  }, [id, jsonFields, updateNodeData]);
+  }, [id, jsonFields, updateNodeData, parsedData, publishManifestUpdate]);
 
   const handleTitleChange = useCallback((newTitle: string) => {
     // Update local state immediately for responsive UI

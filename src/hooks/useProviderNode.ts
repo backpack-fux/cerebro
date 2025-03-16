@@ -19,6 +19,7 @@ import { prepareDataForBackend, parseDataFromBackend, parseJsonIfString } from "
 import { isProviderNode } from "@/utils/type-guards";
 import { TeamAllocation } from "@/utils/types/allocation";
 import { calculateCalendarDuration } from "@/utils/time/calendar";
+import { useNodeObserver } from '@/hooks/useNodeObserver';
 
 /**
  * Hook for managing provider node state and operations
@@ -26,6 +27,9 @@ import { calculateCalendarDuration } from "@/utils/time/calendar";
  */
 export function useProviderNode(id: string, data: RFProviderNodeData) {
   const { getNodes, setNodes, getEdges, setEdges, updateNodeData } = useReactFlow();
+  
+  // Initialize node observer
+  const { publishUpdate, publishManifestUpdate, subscribeBasedOnManifest } = useNodeObserver<RFProviderNodeData>(id, 'provider');
   
   // Define JSON fields that need special handling
   const jsonFields = ['costs', 'ddItems', 'teamAllocations', 'memberAllocations'];
@@ -73,12 +77,28 @@ export function useProviderNode(id: string, data: RFProviderNodeData) {
       
       // Send to backend
       await GraphApiClient.updateNode('provider' as NodeType, id, apiData);
-      console.log(`Updated provider node ${id}:`, updates);
+      
+      // Update React Flow state with the original object data (not stringified)
+      updateNodeData(id, updates);
+      
+      // Determine which fields were updated
+      const affectedFields = Object.keys(updates).map(key => {
+        // Map the property name to the field ID in the manifest
+        // This is a simplified approach - you might need a more sophisticated mapping
+        return key.toLowerCase();
+      });
+      
+      // Publish the update to subscribers
+      const updatedData = { ...parsedData, ...updates };
+      publishManifestUpdate(updatedData, affectedFields);
+      
+      return true;
     } catch (error) {
-      console.error(`Failed to update provider node ${id}:`, error);
-      toast.error(`Update Failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      console.error('Error saving provider node:', error);
+      toast.error('Failed to save provider data');
+      return false;
     }
-  }, [id, jsonFields]);
+  }, [id, jsonFields, updateNodeData, parsedData, publishManifestUpdate]);
   
   // Save team allocations to backend
   const saveTeamAllocationsToBackend = useCallback(async (allocations: TeamAllocation[]) => {
@@ -353,6 +373,35 @@ export function useProviderNode(id: string, data: RFProviderNodeData) {
       toast.error(`Failed to refresh provider ${id}: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }, [id, parsedData, updateNodeData, getNodes]);
+  
+  // Subscribe to updates from other nodes based on manifest
+  useEffect(() => {
+    if (!id) return;
+    
+    const { unsubscribe } = subscribeBasedOnManifest();
+    
+    // Listen for node data updates
+    const handleNodeDataUpdated = (event: CustomEvent) => {
+      const { subscriberId, publisherType, publisherId, relevantFields, data } = event.detail;
+      
+      if (subscriberId !== id) return;
+      
+      console.log(`Provider node ${id} received update from ${publisherType} ${publisherId}:`, {
+        relevantFields,
+        data
+      });
+      
+      // Handle updates based on publisher type and relevant fields
+      // This can be expanded based on specific needs
+    };
+    
+    window.addEventListener('nodeDataUpdated', handleNodeDataUpdated as EventListener);
+    
+    return () => {
+      unsubscribe();
+      window.removeEventListener('nodeDataUpdated', handleNodeDataUpdated as EventListener);
+    };
+  }, [id, subscribeBasedOnManifest]);
   
   // Return the hook API
   return useMemo(() => ({

@@ -18,6 +18,7 @@ import {
 import { calculateMemberAllocationDetails } from '@/utils/allocation/weekly';
 import { calculateCostSummary } from '@/utils/allocation/cost';
 import { calculateEffectiveCapacity } from '@/utils/allocation/capacity';
+import { calculateNodeMemberCapacity } from '@/utils/allocation/node-capacity';
 import {
   calculateCalendarDuration,
   getEndDateFromDuration
@@ -120,20 +121,36 @@ export function useTeamAllocation(nodeId: string, data: FeatureNodeData) {
               const daysPerWeek = Number(memberNode?.data?.daysPerWeek) || 5;
               const weeklyCapacity = Number(memberNode?.data?.weeklyCapacity) || (hoursPerDay * daysPerWeek);
               
+              // DEBUG: Log the capacity values
+              console.log(`[useTeamAllocation] Capacity values for ${memberName}:`, {
+                memberId: member.memberId,
+                hoursPerDay,
+                daysPerWeek,
+                calculatedWeeklyCapacity: hoursPerDay * daysPerWeek,
+                nodeWeeklyCapacity: Number(memberNode?.data?.weeklyCapacity),
+                finalWeeklyCapacity: weeklyCapacity
+              });
+              
               // Calculate available hours based on allocation percentage and weekly capacity
               const teamAllocationPercentage = Number(member.allocation) || 0;
               
-              // Use the utility function to calculate effective capacity
-              const availableHours = calculateEffectiveCapacity(weeklyCapacity, teamAllocationPercentage);
-              
-              // Get the daily rate from the team member node or use a default
-              const dailyRate = Number(memberNode?.data?.dailyRate) || 350;
+              // Use the shared utility function to calculate effective capacity
+              const availableHours = calculateNodeMemberCapacity({
+                memberId: member.memberId,
+                name: memberName,
+                weeklyCapacity,
+                hoursPerDay,
+                daysPerWeek,
+                allocation: teamAllocationPercentage,
+                availableHours: 0, // This will be calculated by the function
+                dailyRate: Number(memberNode?.data?.dailyRate) || 350
+              }, 5); // Default to 5 days for weekly capacity
               
               return {
                 memberId: member.memberId,
                 name: memberName,
                 availableHours,
-                dailyRate,
+                dailyRate: Number(memberNode?.data?.dailyRate) || 350,
                 hoursPerDay,
                 daysPerWeek,
                 weeklyCapacity,

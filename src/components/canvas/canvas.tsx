@@ -21,6 +21,7 @@ import { GraphApiClient } from "@/services/graph/neo4j/api-client";
 import { NodeType } from "@/services/graph/neo4j/api-urls";
 import { Toaster } from "@/components/ui/sonner";
 import { toast } from "sonner";
+import { nodeObserver, NodeUpdateType } from '@/services/graph/observer/node-observer';
 
 // Configure panning buttons (1 = middle mouse, 2 = right mouse)
 // Use middle mouse button (1) for panning to avoid conflicts with selection
@@ -216,7 +217,19 @@ export default function Canvas() {
                 const response = await fetch('/api/graph');
                 
                 if (!response.ok) {
-                    throw new Error(`Failed to fetch graph data: ${response.status} ${response.statusText}`);
+                    // Try to get more detailed error information from the response
+                    let errorDetails = '';
+                    try {
+                        const errorResponse = await response.json();
+                        errorDetails = errorResponse.details || errorResponse.error || '';
+                    } catch (e) {
+                        // If we can't parse the JSON, just use the status text
+                        console.warn('Could not parse error response:', e);
+                    }
+                    
+                    const errorMessage = `Failed to fetch graph data: ${response.status} ${response.statusText}${errorDetails ? ` - ${errorDetails}` : ''}`;
+                    console.error(errorMessage);
+                    throw new Error(errorMessage);
                 }
                 
                 const data = await response.json();
@@ -305,6 +318,12 @@ export default function Canvas() {
         try {
             console.log(`Deleting ${nodeToDelete.type} node: ${nodeId}`);
             
+            // Before deleting from backend, notify subscribers that this node is being deleted
+            nodeObserver.publish(nodeId, { id: nodeId }, {
+                updateType: NodeUpdateType.DELETE,
+                source: 'ui'
+            });
+            
             // Try to delete the node
             try {
                 // Map node types to match API_URLS keys
@@ -363,6 +382,9 @@ export default function Canvas() {
                     });
                 }
             }
+            
+            // Clean up all subscriptions for this node
+            nodeObserver.unsubscribeAll(nodeId);
         } catch (error) {
             console.error(`Error in node deletion process for ${nodeId}:`, error);
             
@@ -634,56 +656,44 @@ export default function Canvas() {
         }, 1000); // 1 second debounce
     }, [updatingNodePositions, nodes]);
     
-    // Track when a node has finished moving (on mouse up)
+    // Handle node drag stop - update position in database
     const onNodeDragStop = useCallback(async (event: React.MouseEvent, node: Node) => {
-        console.log(`Node drag stopped for ${node.id}`, node.position);
+        // Skip if node is being deleted
+        if (deletingNodes.has(node.id)) return;
         
-        // Save the final position after drag
-        if (node.position) {
-            console.log(`Attempting to update node position for ${node.id}:`, node.position);
+        // Add to updating set
+        setUpdatingNodePositions(prev => new Set(prev).add(node.id));
+        
+        try {
+            // Get node type
+            const nodeType = node.type as NodeType;
             
-            // Check if the node is blacklisted before attempting to update
-            if (GraphApiClient.isNodeBlacklisted(node.id)) {
-                console.warn(`⚠️ Skipping position update for blacklisted node ${node.id}`);
-                // Try to remove the node from the UI since it's blacklisted
-                setNodes(nodes => nodes.filter(n => n.id !== node.id));
-                
-                toast.warning(`Node cannot be updated`, {
-                    description: `This node (${node.id.substring(0, 8)}...) has been marked as problematic and will be removed.`,
-                    duration: 5000
-                });
-                return;
-            }
+            // Update position in database
+            await GraphApiClient.updateNode(nodeType, node.id, { position: node.position });
             
-            // The issue might be with how we're passing the position data
-            // Let's ensure we're passing it in the format expected by the API
-            const updateData = {
-                position: {
-                    x: node.position.x,
-                    y: node.position.y
-                }
-            };
+            // Dispatch a custom event for node drag stop
+            const customEvent = new CustomEvent('nodeDragStop', {
+                detail: { nodeId: node.id, nodeType: node.type }
+            });
+            window.dispatchEvent(customEvent);
             
-            console.log('Sending update with data:', updateData);
-            
-            try {
-                await GraphApiClient.updateNode(
-                    node.type as NodeType,
-                    node.id,
-                    updateData
-                );
-                console.log(`Successfully updated position for ${node.type} node ${node.id}`);
-                
-                // Show success toast (but make it subtle since this happens often)
-                toast(`Position saved`, {
-                    description: `Node position has been updated.`,
-                    duration: 2000 // shorter duration for frequent operations
-                });
-            } catch (error) {
-                console.error(`Failed to update position for node ${node.id}:`, error);
-            }
+            // Publish position update to observer system
+            nodeObserver.publish(node.id, { position: node.position }, {
+                updateType: NodeUpdateType.POSITION,
+                source: 'drag'
+            });
+        } catch (error) {
+            console.error(`Failed to update position for node ${node.id}:`, error);
+            toast.error(`Failed to update node position: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        } finally {
+            // Remove from updating set
+            setUpdatingNodePositions(prev => {
+                const newSet = new Set(prev);
+                newSet.delete(node.id);
+                return newSet;
+            });
         }
-    }, [nodes, setNodes, setError]);
+    }, [deletingNodes]);
     
     // Handle selection events
     const onSelectionStart = useCallback(() => {
