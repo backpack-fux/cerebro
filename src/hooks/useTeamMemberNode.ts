@@ -12,7 +12,7 @@ import {
 } from '@/services/graph/team-member/team-member.types';
 import { RFTeamNodeData, RosterMember } from '@/services/graph/team/team.types';
 import { ValidationError } from '@/types/validation';
-import { prepareDataForBackend, parseDataFromBackend } from "@/lib/utils";
+import { prepareDataForBackend, parseDataFromBackend } from "@/utils/utils";
 import { useNodeStatus } from "@/hooks/useNodeStatus";
 import { useNodeObserver } from '@/hooks/useNodeObserver';
 import { NodeUpdateType } from '@/services/graph/observer/node-observer';

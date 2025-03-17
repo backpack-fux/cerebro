@@ -2,7 +2,7 @@
 
 import { DollarSign } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { formatHours } from "@/lib/utils";
+import { formatHours } from "@/utils/utils";
 
 /**
  * Interface for member cost data used in the cost receipt

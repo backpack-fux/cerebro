@@ -19,7 +19,7 @@ import {
   prepareDataForBackend,
   parseDataFromBackend,
   parseJsonIfString
-} from '@/lib/utils';
+} from '@/utils/utils';
 import { isOptionNode } from "@/utils/type-guards";
 import { TeamAllocation } from "@/utils/types/allocation";
 import { calculateCalendarDuration } from "@/utils/time/calendar";

@@ -3,7 +3,7 @@ import { ProviderService } from '@/services/graph/provider/provider.service';
 import { neo4jStorage } from '@/services/graph/neo4j/neo4j.provider';
 import { CreateProviderNodeParams, RFProviderNode, Neo4jProviderNodeData, ProviderCost, DDItem, TeamAllocation } from '@/services/graph/provider/provider.types';
 import { neo4jToReactFlow } from '@/services/graph/provider/provider.transform';
-import { parseTeamAllocations } from '@/lib/utils';
+import { parseTeamAllocations } from '@/utils/utils';
 
 // Initialize the provider service
 const providerService = new ProviderService(neo4jStorage);

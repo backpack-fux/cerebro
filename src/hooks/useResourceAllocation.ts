@@ -5,7 +5,7 @@ import {
   calculateWeeklyCapacity, 
   percentageToHours,
   MemberCapacity
-} from '@/lib/utils';
+} from '@/utils/utils';
 import { calculateEffectiveCapacity } from '@/utils/allocation/capacity';
 import { ConnectedTeam } from '@/hooks/useTeamAllocation';
 import { AvailableMember } from '@/utils/types/allocation';

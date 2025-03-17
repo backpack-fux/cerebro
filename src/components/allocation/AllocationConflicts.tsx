@@ -1,6 +1,6 @@
 import React from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { formatHours } from "@/lib/utils";
+import { formatHours } from "@/utils/utils";
 import { useAllocationEngine } from "@/hooks/useAllocationEngine";
 import { AlertCircle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";

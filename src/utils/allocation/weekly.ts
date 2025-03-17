@@ -1,7 +1,7 @@
 import { parseISO, eachWeekOfInterval, format, addDays, differenceInDays } from 'date-fns';
 import { TimeAllocation, WeeklyAllocation, WeeklyAvailability, RosterMember, MemberAllocation, TeamAllocation } from '../types/allocation';
 import { calculateWorkingDays } from '../time/calendar';
-import { parseJsonIfString } from '@/lib/utils';
+import { parseJsonIfString } from '@/utils/utils';
 
 /**
  * Calculate member allocations from team roster and requested hours

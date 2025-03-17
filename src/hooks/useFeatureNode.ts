@@ -13,7 +13,7 @@ import { useTeamAllocation } from "@/hooks/useTeamAllocation";
 import { useNodeStatus, NodeStatus } from "@/hooks/useNodeStatus";
 import { useDurationInput } from "@/hooks/useDurationInput";
 import { useResourceAllocation } from "@/hooks/useResourceAllocation";
-import { prepareDataForBackend, parseDataFromBackend, parseJsonIfString } from "@/lib/utils";
+import { prepareDataForBackend, parseDataFromBackend, parseJsonIfString } from "@/utils/utils";
 import { isFeatureNode } from "@/utils/type-guards";
 import { TeamAllocation } from "@/utils/types/allocation";
 import { format } from 'date-fns';

@@ -15,7 +15,7 @@ import { useNodeStatus } from "@/hooks/useNodeStatus";
 import { useDurationInput } from "@/hooks/useDurationInput";
 import { useResourceAllocation } from "@/hooks/useResourceAllocation";
 import { v4 as uuidv4 } from 'uuid';
-import { prepareDataForBackend, parseDataFromBackend, parseJsonIfString } from "@/lib/utils";
+import { prepareDataForBackend, parseDataFromBackend, parseJsonIfString } from "@/utils/utils";
 import { isProviderNode } from "@/utils/type-guards";
 import { TeamAllocation } from "@/utils/types/allocation";
 import { calculateCalendarDuration } from "@/utils/time/calendar";

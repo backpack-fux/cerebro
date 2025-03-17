@@ -1,36 +1,128 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Cerebro - Project Management System
+
+A modern project management system built with Next.js that helps teams manage resources, track features, and make strategic decisions.
+
+## Features
+
+- **Node-Based Architecture**: Flexible system for managing different types of nodes (Team, Feature, Option, Provider, etc.)
+- **Real-time Updates**: Automatic synchronization of data across connected nodes
+- **Resource Management**: Sophisticated team resource allocation and tracking
+- **Visual Interface**: Interactive graph visualization of project relationships
+- **Type Safety**: Full TypeScript support with comprehensive type definitions
 
 ## Getting Started
 
-First, run the development server:
+### Prerequisites
 
+- Node.js 18+ or Bun
+- Docker (for Neo4j database)
+- Git
+
+### Installation
+
+1. Clone the repository:
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
+git clone https://github.com/yourusername/cerebro.git
+cd cerebro
+```
+
+2. Install dependencies:
+```bash
+bun install
+```
+
+3. Start the development server:
+```bash
 bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+4. Start Neo4j (in a separate terminal):
+```bash
+docker-compose up -d
+```
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Open [http://localhost:3000](http://localhost:3000) with your browser to see the application.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Project Structure
 
-## Learn More
+```
+src/
+├── app/                    # Next.js app directory
+├── components/            # React components
+├── hooks/                # Custom React hooks
+├── services/             # Business logic and services
+│   └── graph/           # Graph-related services
+│       ├── observer/    # Node observer system
+│       └── [node-type]/ # Individual node type services
+└── utils/               # Utility functions
+```
 
-To learn more about Next.js, take a look at the following resources:
+## Core Systems
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+### Node Data Manifest System
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+The Node Data Manifest System manages data dependencies between different node types:
 
-## Deploy on Vercel
+- **Publishing**: Nodes can publish specific data fields
+- **Subscribing**: Nodes can subscribe to updates from other nodes
+- **Real-time Updates**: Changes are immediately reflected across connected nodes
+- **Type Safety**: Full TypeScript support for data structures
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+### Team Resource Observer
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Manages team resource allocations across work nodes:
+
+- **Centralized Resource Management**: Single source of truth for team resources
+- **Resource Contention Handling**: Proper management of competing resource requests
+- **Consistent Calculations**: Uniform approach to calculating available hours
+- **Real-time Updates**: Immediate reflection of resource changes
+
+## API Documentation
+
+The API documentation is available at `/api-docs` in the application. It includes:
+
+- Endpoint descriptions
+- Request/response examples
+- Authentication details
+- Rate limiting information
+
+## Development
+
+### Adding a New Node Type
+
+1. Create a new manifest file in `src/services/graph/[node-type]/[node-type].manifest.ts`
+2. Define the node's fields and relationships
+3. Create the node's service and hook
+4. Implement the UI components
+5. Add API endpoints
+
+### Testing
+
+```bash
+# Run tests
+bun test
+
+# Run tests with coverage
+bun test --coverage
+```
+
+## Deployment
+
+The application is configured for deployment on Vercel:
+
+1. Push your changes to GitHub
+2. Connect your repository to Vercel
+3. Configure environment variables
+4. Deploy
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Commit your changes
+4. Push to the branch
+5. Create a Pull Request
+
+## License
+
+This project is licensed under the MIT License - see the LICENSE file for details.

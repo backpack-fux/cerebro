@@ -2,7 +2,7 @@
 
 import { Users2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { formatHours } from "@/lib/utils";
+import { formatHours } from "@/utils/utils";
 import { MemberAllocation, MemberAllocationData } from "./MemberAllocation";
 import { useAllocationEngine } from '@/hooks/useAllocationEngine';
 import { calculateEffectiveCapacity } from '@/utils/allocation/capacity';

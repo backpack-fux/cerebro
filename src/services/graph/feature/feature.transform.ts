@@ -1,7 +1,7 @@
 import { RFFeatureNode, RFFeatureNodeData, Neo4jFeatureNodeData, RFFeatureEdge, Neo4jFeatureEdge, MemberAllocation, TeamAllocation } from '@/services/graph/feature/feature.types';
 import { GraphEdge, GraphNode } from '../neo4j/graph.interface';
 import { Node as Neo4jNode, Relationship as Neo4jRelationship } from 'neo4j-driver';
-import { parseDataFromBackend } from '@/lib/utils';
+import { parseDataFromBackend } from '@/utils/utils';
 
 export function reactFlowToNeo4j(featureNode: RFFeatureNode): Neo4jFeatureNodeData {
   const data = featureNode.data as RFFeatureNodeData; // Cast to ensure type safety

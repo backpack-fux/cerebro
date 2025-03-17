@@ -9,7 +9,7 @@ import {
   RosterMember 
 } from '@/services/graph/team/team.types';
 import { RFTeamMemberNodeData } from "@/services/graph/team-member/team-member.types";
-import { prepareDataForBackend, parseDataFromBackend } from "@/lib/utils";
+import { prepareDataForBackend, parseDataFromBackend } from "@/utils/utils";
 import { getCurrentDate } from "@/utils/time/calendar";
 import { calculateEffectiveCapacity } from "@/utils/allocation/capacity";
 import { useNodeObserver } from '@/hooks/useNodeObserver';

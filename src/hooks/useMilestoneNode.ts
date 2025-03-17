@@ -6,7 +6,7 @@ import { NodeType } from '@/services/graph/neo4j/api-urls';
 import { RFMilestoneNodeData, FeatureAllocationSummary, OptionRevenueSummary, KPI, ProviderCostSummary } from '@/services/graph/milestone/milestone.types';
 import { useNodeStatus, NodeStatus } from "@/hooks/useNodeStatus";
 import { useMilestoneMetrics } from "@/hooks/useMilestoneMetrics";
-import { prepareDataForBackend, parseDataFromBackend } from "@/lib/utils";
+import { prepareDataForBackend, parseDataFromBackend } from "@/utils/utils";
 import { useNodeObserver } from '@/hooks/useNodeObserver';
 
 /**

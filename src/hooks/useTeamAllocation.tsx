@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useNodeConnections, useReactFlow } from '@xyflow/react';
 import { CostSummaryComponent } from '@/components/allocation/CostSummary';
-import { parseJsonIfString } from '@/lib/utils';
+import { parseJsonIfString } from '@/utils/utils';
 import { 
   isTeamNode, 
   isMemberNode,

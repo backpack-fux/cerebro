@@ -17,7 +17,7 @@ import { useMilestoneNode } from '@/hooks/useMilestoneNode';
 import { Trash2, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
-import { formatHours } from "@/lib/utils";
+import { formatHours } from "@/utils/utils";
 
 const MilestoneNode = memo(({ id, data, selected }: NodeProps) => {
   // Use the hook to manage state and operations

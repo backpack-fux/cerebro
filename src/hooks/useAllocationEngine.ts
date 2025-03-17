@@ -3,7 +3,7 @@ import { useReactFlow } from '@xyflow/react';
 import { getWeeklyBuckets } from '@/utils/allocation/weekly';
 import { calculateEffectiveCapacity, calculateWeeklyHours } from '@/utils/allocation/capacity';
 import { calculateCalendarDuration, doTimePeriodsOverlap, getDefaultTimeframe } from '@/utils/time/calendar';
-import { parseJsonIfString } from '@/lib/utils';
+import { parseJsonIfString } from '@/utils/utils';
 import { format } from 'date-fns';
 
 /**
