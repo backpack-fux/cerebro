@@ -397,17 +397,9 @@ export function useTeamMemberNode(
       title,
       name: title // Keep name in sync with title
     };
-    updateNodeData(id, { ...data, ...updatedData });
     
-    // Publish update to the observer system using the manifest
-    publishManifestUpdate({
-      ...data,
-      ...updatedData
-    }, 
-    ['title'], // Specify which fields from the manifest are being updated
-    {
-      source: 'ui'
-    });
+    // Update ReactFlow state first
+    updateNodeData(id, { ...data, ...updatedData });
     
     // Clear any existing debounce timer
     if (titleDebounceRef.current) {
@@ -417,6 +409,17 @@ export function useTeamMemberNode(
     // Set a new debounce timer
     titleDebounceRef.current = setTimeout(async () => {
       await saveToBackend(updatedData);
+      
+      // Publish update to the observer system using the manifest AFTER saving
+      publishManifestUpdate({
+        ...data,
+        ...updatedData
+      }, 
+      ['title'], // Specify which fields from the manifest are being updated
+      {
+        source: 'ui'
+      });
+      
       titleDebounceRef.current = null;
     }, 1000); // 1 second debounce
   }, [id, data, updateNodeData, saveToBackend, publishManifestUpdate]);
@@ -437,9 +440,20 @@ export function useTeamMemberNode(
     // Set a new debounce timer
     bioDebounceRef.current = setTimeout(async () => {
       await saveToBackend(updatedData);
+      
+      // Publish update to the observer system using the manifest AFTER saving
+      publishManifestUpdate({
+        ...data,
+        ...updatedData
+      }, 
+      ['description'], // Specify which fields from the manifest are being updated
+      {
+        source: 'ui'
+      });
+      
       bioDebounceRef.current = null;
     }, 1000); // 1 second debounce
-  }, [id, data, updateNodeData, saveToBackend]);
+  }, [id, data, updateNodeData, saveToBackend, publishManifestUpdate]);
 
   // Add handler for timezone with backend saving
   const handleTimezoneChange = useCallback((timezone: string) => {

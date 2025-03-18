@@ -312,20 +312,6 @@ export function useTeamNode(id: string, data: RFTeamNodeData) {
     // Update node data
     updateNodeData(id, { ...data, title: newTitle });
     
-    // Ensure roster is an array before publishing
-    const safeRoster = Array.isArray(data.roster) ? data.roster : [];
-    
-    // Publish update to the observer system using the manifest
-    publishManifestUpdate({
-      ...data,
-      title: newTitle,
-      roster: safeRoster // Ensure roster is always an array
-    }, 
-    ['title'], // Specify which fields from the manifest are being updated
-    {
-      source: 'ui'
-    });
-    
     // Clear any existing debounce timer
     if (titleDebounceRef.current) {
       clearTimeout(titleDebounceRef.current);
@@ -334,6 +320,21 @@ export function useTeamNode(id: string, data: RFTeamNodeData) {
     // Set a new debounce timer
     titleDebounceRef.current = setTimeout(async () => {
       await saveToBackend({ title: newTitle });
+      
+      // Ensure roster is an array before publishing
+      const safeRoster = Array.isArray(data.roster) ? data.roster : [];
+      
+      // Publish update to the observer system using the manifest AFTER saving
+      publishManifestUpdate({
+        ...data,
+        title: newTitle,
+        roster: safeRoster // Ensure roster is always an array
+      }, 
+      ['title'], // Specify which fields from the manifest are being updated
+      {
+        source: 'ui'
+      });
+      
       titleDebounceRef.current = null;
     }, 1000); // 1 second debounce
   }, [id, data, updateNodeData, saveToBackend, publishManifestUpdate]);
@@ -347,9 +348,20 @@ export function useTeamNode(id: string, data: RFTeamNodeData) {
     
     descriptionDebounceRef.current = setTimeout(async () => {
       await saveToBackend({ description: newDescription });
+      
+      // Publish update to the observer system using the manifest AFTER saving
+      publishManifestUpdate({
+        ...data,
+        description: newDescription
+      }, 
+      ['description'], // Specify which fields from the manifest are being updated
+      {
+        source: 'ui'
+      });
+      
       descriptionDebounceRef.current = null;
     }, 1000);
-  }, [id, data, updateNodeData, saveToBackend]);
+  }, [id, data, updateNodeData, saveToBackend, publishManifestUpdate]);
 
   // Handle season change
   const handleSeasonChange = useCallback((updates: Partial<Season>) => {
