@@ -739,7 +739,7 @@ export function useFeatureNode(id: string, data: RFFeatureNodeData) {
 
     // Handle node data updates
     const handleNodeDataUpdated = (event: NodeDataEvent) => {
-      const { publisherType, relevantFields } = event.detail;
+      const { publisherType, relevantFields, publisherId } = event.detail;
 
       switch (publisherType) {
         case 'team':
@@ -747,6 +747,26 @@ export function useFeatureNode(id: string, data: RFFeatureNodeData) {
           if (relevantFields.includes('roster') || relevantFields.includes('bandwidth')) {
             // Refresh team data to get updated allocations
             refreshConnectedTeamData();
+          }
+          break;
+
+        case 'feature':
+          // Handle feature updates that might affect this feature (hierarchical relationships)
+          if (
+            relevantFields.includes('parentId') || 
+            relevantFields.includes('childIds') || 
+            relevantFields.includes('isRollup') ||
+            relevantFields.includes('originalEstimate') ||
+            relevantFields.includes('rollupEstimate') ||
+            relevantFields.includes('hierarchy.parentId') ||
+            relevantFields.includes('hierarchy.childIds') ||
+            relevantFields.includes('hierarchy.isRollup')
+          ) {
+            // Refresh the node data to get updated hierarchy info
+            console.log(`[FeatureNode] Received hierarchy update from feature ${publisherId}`, {
+              fields: relevantFields
+            });
+            refreshData();
           }
           break;
 
@@ -766,7 +786,7 @@ export function useFeatureNode(id: string, data: RFFeatureNodeData) {
       unsubscribe();
       window.removeEventListener('nodeDataUpdated', handleNodeDataUpdated as EventListener);
     };
-  }, [id, subscribeBasedOnManifest, refreshConnectedTeamData]);
+  }, [id, subscribeBasedOnManifest, refreshConnectedTeamData, refreshData]);
 
   // Return the hook API
   return useMemo(() => ({

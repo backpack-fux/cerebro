@@ -47,6 +47,43 @@ export const CommonFields: Record<string, DataField> = {
     name: 'Updated At',
     description: 'When the node was last updated',
     path: 'updatedAt'
+  },
+  
+  // Hierarchical relationship fields
+  PARENT_ID: {
+    id: 'parentId',
+    name: 'Parent Node',
+    description: 'ID of the parent node',
+    path: 'hierarchy.parentId',
+    critical: true
+  },
+  CHILD_IDS: {
+    id: 'childIds',
+    name: 'Child Nodes',
+    description: 'IDs of child nodes',
+    path: 'hierarchy.childIds',
+    critical: true
+  },
+  IS_ROLLUP: {
+    id: 'isRollup',
+    name: 'Is Rollup Node',
+    description: 'Whether this node aggregates values from children',
+    path: 'hierarchy.isRollup',
+    critical: true
+  },
+  ORIGINAL_ESTIMATE: {
+    id: 'originalEstimate',
+    name: 'Original Estimate',
+    description: 'Original time estimate for this node',
+    path: 'originalEstimate',
+    critical: false
+  },
+  ROLLUP_ESTIMATE: {
+    id: 'rollupEstimate',
+    name: 'Rollup Estimate',
+    description: 'Calculated estimate from child nodes',
+    path: 'rollupEstimate',
+    critical: true
   }
 };
 

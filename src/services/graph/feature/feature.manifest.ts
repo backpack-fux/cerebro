@@ -21,7 +21,8 @@ export const FeatureFields: Record<string, DataField> = {
     id: 'cost',
     name: 'Cost',
     description: 'The calculated cost for this feature',
-    path: 'cost'
+    path: 'cost',
+    critical: true
   },
   DURATION: {
     id: 'duration',
@@ -79,6 +80,13 @@ export const FeaturePublishes = {
     CommonFields.STATUS,
     CommonFields.CREATED_AT,
     CommonFields.UPDATED_AT,
+    // Hierarchical fields
+    CommonFields.PARENT_ID,
+    CommonFields.CHILD_IDS,
+    CommonFields.IS_ROLLUP,
+    CommonFields.ORIGINAL_ESTIMATE,
+    CommonFields.ROLLUP_ESTIMATE,
+    // Feature-specific fields
     FeatureFields.BUILD_TYPE,
     FeatureFields.COST,
     FeatureFields.DURATION,
@@ -97,10 +105,21 @@ export const FeaturePublishes = {
 
 // Define what the feature node subscribes to
 export const FeatureSubscribes = {
-  nodeTypes: ['team', 'teamMember'] as NodeType[],
+  nodeTypes: ['team', 'teamMember', 'feature'] as NodeType[],
   fields: {
     team: ['title', 'roster', 'bandwidth'],
-    teamMember: ['title', 'weeklyCapacity', 'dailyRate']
+    teamMember: ['title', 'weeklyCapacity', 'dailyRate'],
+    feature: [
+      'title', 
+      'description', 
+      'duration', 
+      'cost',
+      'rollupEstimate', 
+      'originalEstimate', 
+      'parentId', 
+      'childIds',
+      'isRollup'
+    ]
   }
 };
 

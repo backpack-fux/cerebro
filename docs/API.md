@@ -578,4 +578,155 @@ Deletes a provider edge.
 {
   "success": true
 }
-``` 
+```
+
+## Hierarchical Node Relationships
+
+Cerebro supports hierarchical relationships between nodes of the same type, allowing for parent-child relationships.
+
+### Feature Node Hierarchies
+
+#### Get Feature Children
+
+```http
+GET /api/graph/feature/{feature_id}/children
+```
+
+Retrieves all child nodes of a feature.
+
+**Response**
+
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "id": "string",
+      "title": "string",
+      "description": "string",
+      "buildType": "internal|external",
+      "duration": 0,
+      "timeUnit": "days|weeks",
+      "originalEstimate": 0,
+      "rollupEstimate": 0,
+      "rollupContribution": true,
+      "weight": 1
+    }
+  ]
+}
+```
+
+#### Get Feature Parent
+
+```http
+GET /api/graph/feature/{feature_id}/parent
+```
+
+Retrieves the parent of a feature node.
+
+**Response**
+
+```json
+{
+  "success": true,
+  "data": {
+    "id": "string",
+    "title": "string",
+    "description": "string",
+    "buildType": "internal|external",
+    "duration": 0,
+    "timeUnit": "days|weeks",
+    "originalEstimate": 0,
+    "rollupEstimate": 0,
+    "rollupContribution": true,
+    "weight": 1
+  }
+}
+```
+
+If the feature has no parent, the response will include `"data": null`.
+
+#### Create Parent-Child Relationship
+
+```http
+POST /api/graph/feature/{parent_id}/children
+Content-Type: application/json
+
+{
+  "childId": "string",
+  "rollupContribution": true,
+  "weight": 1
+}
+```
+
+Creates a parent-child relationship between two features.
+
+**Parameters**
+
+- `childId` (required): ID of the child feature
+- `rollupContribution` (optional): Whether this child contributes to the parent's metrics, defaults to `true`
+- `weight` (optional): Weight factor for calculations, defaults to `1`
+
+**Response**
+
+```json
+{
+  "success": true,
+  "data": {
+    "parentId": "string",
+    "childId": "string",
+    "rollupContribution": true,
+    "weight": 1
+  }
+}
+```
+
+#### Remove Parent-Child Relationship
+
+```http
+DELETE /api/graph/feature/{parent_id}/children/{child_id}
+```
+
+Removes a parent-child relationship between two features.
+
+**Response**
+
+```json
+{
+  "success": true,
+  "data": {
+    "parentId": "string",
+    "childId": "string",
+    "remainingChildIds": ["string"]
+  }
+}
+```
+
+### Hierarchical Field Updates
+
+When updating feature nodes, you can include hierarchical fields:
+
+```http
+PATCH /api/graph/feature/{feature_id}
+Content-Type: application/json
+
+{
+  "hierarchy": {
+    "parentId": "string|null",
+    "childIds": ["string"],
+    "isRollup": true
+  },
+  "originalEstimate": 0,
+  "rollupEstimate": 0
+}
+```
+
+#### Hierarchical Fields
+
+- `hierarchy.parentId`: ID of the parent node (null if this is a root node)
+- `hierarchy.childIds`: Array of child node IDs
+- `hierarchy.isRollup`: Whether this node should aggregate values from children
+- `originalEstimate`: The estimate for work directly on this node
+- `rollupEstimate`: The calculated estimate including child contributions
+
+Note: In most cases, you should use the dedicated relationship endpoints rather than directly modifying these fields. 

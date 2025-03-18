@@ -260,69 +260,80 @@ export default function Canvas() {
     }, [addNodeToGraph, getViewport]);
     
     // Fetch graph data on component mount
-    useEffect(() => {
-        const fetchGraphData = async () => {
-            try {
-                setIsLoading(true);
-                
-                // Only attempt cleanup if there are blacklisted nodes
-                if (GraphApiClient.hasBlacklistedNodes()) {
-                    await GraphApiClient.cleanupBlacklistedNodes();
-                }
-                
-                const response = await fetch('/api/graph');
-                
-                if (!response.ok) {
-                    // Try to get more detailed error information from the response
-                    let errorDetails = '';
-                    try {
-                        const errorResponse = await response.json();
-                        errorDetails = errorResponse.details || errorResponse.error || '';
-                    } catch (e) {
-                        // If we can't parse the JSON, just use the status text
-                        console.warn('Could not parse error response:', e);
-                    }
-                    
-                    const errorMessage = `Failed to fetch graph data: ${response.status} ${response.statusText}${errorDetails ? ` - ${errorDetails}` : ''}`;
-                    console.error(errorMessage);
-                    throw new Error(errorMessage);
-                }
-                
-                const data = await response.json();
-                console.log('Loaded graph data:', data);
-                
-                if (data.nodes && Array.isArray(data.nodes)) {
-                    // Filter out any blacklisted nodes
-                    const filteredNodes = data.nodes.filter((node: Node<GraphNodeData>) => {
-                        const isBlacklisted = GraphApiClient.isNodeBlacklisted(node.id);
-                        if (isBlacklisted) {
-                            console.warn(`🚫 Filtering out blacklisted node ${node.id} from initial load`);
-                        }
-                        return !isBlacklisted;
-                    });
-                    
-                    console.log(`Filtered out ${data.nodes.length - filteredNodes.length} blacklisted nodes`);
-                    setNodes(filteredNodes);
-                }
-                
-                if (data.edges && Array.isArray(data.edges)) {
-                    setEdges(data.edges);
-                }
-            } catch (error) {
-                console.error('Error fetching graph data:', error);
-                setError(error instanceof Error ? error.message : 'Unknown error');
-                
-                toast.error('Failed to load graph data', {
-                    description: error instanceof Error ? error.message : 'Unknown error',
-                    duration: 5000
-                });
-            } finally {
-                setIsLoading(false);
+    const loadGraphData = useCallback(async () => {
+        try {
+            setIsLoading(true);
+            setError(null);
+            
+            // Fetch graph data
+            const response = await fetch('/api/graph');
+            if (!response.ok) {
+                throw new Error(`Failed to fetch graph data: ${response.status} ${response.statusText}`);
             }
-        };
-        
-        fetchGraphData();
+            
+            const data = await response.json();
+            console.log('Loaded graph data: ', { nodes: data.nodes?.length, edges: data.edges?.length });
+            
+            // Filter out blacklisted nodes
+            const filteredNodes = (data.nodes || []).filter((node: any) => !GraphApiClient.isNodeBlacklisted(node.id));
+            console.log(`Filtered out ${(data.nodes || []).length - filteredNodes.length} blacklisted nodes`);
+            
+            // Transform nodes to React Flow format
+            const reactflowNodes = filteredNodes.map((node: any) => ({
+                id: node.id,
+                type: node.type,
+                position: node.position,
+                data: node.data,
+            })) as Node<GraphNodeData>[];
+            
+            // Transform edges to React Flow format
+            const reactflowEdges = (data.edges || []).map((edge: any) => {
+                // Check if this is a SOURCE or PARENT_CHILD type edge
+                const isHierarchical = edge.type === 'SOURCE' || edge.type === 'PARENT_CHILD';
+                
+                return {
+                    id: edge.id,
+                    source: edge.from,
+                    target: edge.to,
+                    type: 'default', // Always use 'default' type for React Flow
+                    data: {
+                        ...(edge.properties || {}),
+                        // Store the original edge type in data.edgeType
+                        edgeType: edge.type.toLowerCase(),
+                        // For hierarchical edges, add specific properties
+                        ...(isHierarchical && {
+                            label: edge.properties?.label || 'Parent-Child',
+                            rollupContribution: edge.properties?.rollupContribution !== false, // Default to true
+                            weight: edge.properties?.weight || 1
+                        })
+                    }
+                };
+            }) as Edge[];
+            
+            // Log details about the edges for debugging
+            reactflowEdges.forEach(edge => {
+                console.log(`Edge ${edge.id}: ${edge.source} -> ${edge.target} (type: ${edge.type}, edgeType: ${edge.data?.edgeType})`);
+            });
+            
+            setNodes(reactflowNodes);
+            setEdges(reactflowEdges);
+        } catch (error) {
+            console.error('Error loading graph data:', error);
+            setError(error instanceof Error ? error.message : 'Unknown error');
+            
+            toast.error('Failed to load graph data', {
+                description: error instanceof Error ? error.message : 'Unknown error',
+                duration: 5000
+            });
+        } finally {
+            setIsLoading(false);
+        }
     }, [setNodes, setEdges]);
+    
+    // Use effect to load the graph data on mount
+    useEffect(() => {
+        loadGraphData();
+    }, [loadGraphData]);
     
     // Handle node updates from the observer
     useEffect(() => {

@@ -9,6 +9,11 @@ import {
   isFieldCritical,
   debugNodeUpdate
 } from '@/services/graph/observer/node-manifest';
+import { 
+  containsHierarchyFields, 
+  containsMetricFields,
+  notifyParentOfChanges 
+} from '@/services/graph/hierarchy/hierarchy.service';
 
 /**
  * Helper hook to easily connect React Flow nodes with the observer system
@@ -164,6 +169,17 @@ export function useNodeObserver<T extends Record<string, unknown>>(
         affectedFields,
         ...metadata
       });
+      
+      // Handle hierarchical updates if any hierarchy-related fields or metric fields changed
+      if (containsHierarchyFields(affectedFields) || containsMetricFields(affectedFields)) {
+        // If this node has metric fields that changed, notify its parent
+        console.log(`[NodeObserver] Node ${nodeId} has changed hierarchy or metric fields`, {
+          fields: affectedFields,
+          isCostChange: affectedFields.includes('cost')
+        });
+        notifyParentOfChanges(nodeType, nodeId, affectedFields)
+          .catch(err => console.error('Error notifying parent of changes:', err));
+      }
     }
   }, [nodeId, nodeType]);
   
@@ -211,6 +227,17 @@ export function useNodeObserver<T extends Record<string, unknown>>(
       affectedFields: validFieldIds,
       ...metadata
     });
+    
+    // Handle hierarchical updates if any hierarchy-related fields or metric fields changed
+    if (containsHierarchyFields(validFieldIds) || containsMetricFields(validFieldIds)) {
+      // If this node has metric fields that changed, notify its parent
+      console.log(`[NodeObserver] Node ${nodeId} has changed hierarchy or metric fields`, {
+        fields: validFieldIds,
+        isCostChange: validFieldIds.includes('cost')
+      });
+      notifyParentOfChanges(nodeType, nodeId, validFieldIds)
+        .catch(err => console.error('Error notifying parent of changes:', err));
+    }
   }, [nodeId, nodeType]);
   
   // Cleanup subscriptions when node is unmounted

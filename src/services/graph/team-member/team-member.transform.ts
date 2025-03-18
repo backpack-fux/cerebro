@@ -127,30 +127,40 @@ export function reactFlowToNeo4jEdge(edge: RFTeamMemberEdge): GraphEdge {
 /**
  * Transform a Neo4j edge to a ReactFlow edge
  */
-export function neo4jToReactFlowEdge(edge: Neo4jTeamMemberEdge): RFTeamMemberEdge {
-  let memberSummary: TeamMemberSummary | undefined;
+export function neo4jToReactFlowEdge(neo4jEdge: Neo4jTeamMemberEdge): RFTeamMemberEdge {
+  console.log('[Transform] Converting Neo4j team member edge to React Flow edge:', {
+    id: neo4jEdge.id,
+    from: neo4jEdge.from,
+    to: neo4jEdge.to,
+    type: neo4jEdge.type,
+    properties: neo4jEdge.properties
+  });
   
+  let memberSummary: TeamMemberSummary | undefined;
+   
   // Parse the memberSummary if it exists
-  if (edge.properties?.memberSummary) {
+  if (neo4jEdge.properties?.memberSummary) {
     try {
-      memberSummary = JSON.parse(edge.properties.memberSummary);
+      memberSummary = typeof neo4jEdge.properties.memberSummary === 'string' 
+        ? JSON.parse(neo4jEdge.properties.memberSummary) 
+        : neo4jEdge.properties.memberSummary;
     } catch (error) {
       console.error('[TeamMemberTransform] Error parsing memberSummary:', error);
     }
   }
   
   return {
-    id: edge.id,
-    source: edge.from,
-    target: edge.to,
-    type: edge.type.toLowerCase(),
+    id: neo4jEdge.id,
+    source: neo4jEdge.from,
+    target: neo4jEdge.to,
+    type: 'default', // Always use default type for rendering in React Flow
     data: {
-      label: edge.properties?.label,
-      edgeType: edge.type.toLowerCase(),
+      label: neo4jEdge.properties?.label,
+      edgeType: neo4jEdge.type.toLowerCase(), // Store original edge type in data
       memberSummary,
-      allocation: edge.properties?.allocation,
-      role: edge.properties?.role
-    }
+      allocation: neo4jEdge.properties?.allocation,
+      role: neo4jEdge.properties?.role
+    },
   };
 }
 

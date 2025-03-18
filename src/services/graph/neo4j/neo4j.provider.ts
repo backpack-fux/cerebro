@@ -31,6 +31,7 @@ import { transformTeamNode, transformTeamEdge } from '@/services/graph/team/team
 import { transformFeatureNode, transformFeatureEdge } from '@/services/graph/feature/feature.transform';
 import { transformOptionNode, transformOptionEdge } from '@/services/graph/option/option.transform';
 import { transformProviderNode, transformProviderEdge } from '@/services/graph/provider/provider.transform';
+import { transformHierarchyEdge } from '@/services/graph/hierarchy/hierarchy.transform';
 
 // Generic transform functions for any node/edge type (could be dynamic or default)
 function transformNode(node: Neo4jNode): GraphNode<Record<string, unknown>> | null {
@@ -62,6 +63,12 @@ function transformNode(node: Neo4jNode): GraphNode<Record<string, unknown>> | nu
 
 function transformEdge(relationship: Neo4jRelationship, sourceId?: string, targetId?: string): GraphEdge | null {
   if (!relationship.properties) return null;
+
+  // Check if this is a hierarchical parent-child relationship
+  if (relationship.type === 'PARENT_CHILD' || relationship.type === 'SOURCE') {
+    // Use the hierarchical transform
+    return transformHierarchyEdge(relationship, sourceId, targetId);
+  }
 
   return {
     id: relationship.properties.id as string || `edge-${crypto.randomUUID()}`,

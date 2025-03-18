@@ -252,6 +252,22 @@ export enum NodeUpdateType {
       
       this.debug(`Removed all subscriptions for ${nodeId}`);
     }
+    
+    // Add this method to help debug issues with node observer and API routes
+    logApiRouteError(message: string, params: any) {
+      console.error(`[NodeObserver] API Route Error: ${message}`, params);
+      
+      // Check for common issues with dynamic route params in Next.js
+      if (params && typeof params === 'object' && 'id' in params) {
+        console.warn(`
+[NodeObserver] Possible Next.js route parameter issue detected.
+- In Next.js 13+ App Router, params from dynamic routes need to be properly handled.
+- Use 'params?.id' instead of 'params.id' and add null checks.
+- If you continue to see "params should be awaited" errors, update your route handlers
+  according to Next.js documentation.
+        `);
+      }
+    }
   }
   
   // Create singleton instance

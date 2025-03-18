@@ -3,8 +3,5 @@
   "installCommand": "curl -fsSL https://bun.sh/install | bash && ~/.bun/bin/bun install --frozen-lockfile",
   "buildCommand": "~/.bun/bin/bun run build",
   "framework": "nextjs",
-  "outputDirectory": ".next",
-  "env": {
-    "NODE_ENV": "production"
-  }
+  "outputDirectory": ".next"
 } 

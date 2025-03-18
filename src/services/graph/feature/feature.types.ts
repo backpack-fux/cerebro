@@ -1,5 +1,6 @@
 import { Node, XYPosition, Edge as RFEdge } from "@xyflow/react";
 import { ReactFlowNodeBase } from "@/services/graph/base-node/reactflow.types";
+import { HierarchicalNodeData, HierarchicalNodeRelationship, PARENT_CHILD_EDGE_TYPE } from "@/services/graph/hierarchy/hierarchy.types";
 
 // NODE TYPES HERE
 
@@ -35,7 +36,7 @@ export interface AvailableBandwidth {
 }
 
 // Frontend types for React Flow
-export interface RFFeatureNodeData extends ReactFlowNodeBase {
+export interface RFFeatureNodeData extends ReactFlowNodeBase, HierarchicalNodeData {
   title: string;
   description?: string;
   buildType?: BuildType;
@@ -61,6 +62,9 @@ export type CreateFeatureNodeParams = {
   timeUnit?: TimeUnit;
   status?: string;
   position: XYPosition;
+  hierarchy?: HierarchicalNodeRelationship;
+  originalEstimate?: number;
+  rollupEstimate?: number;
 };
 
 interface UpdatableFeatureNodeData {
@@ -75,6 +79,9 @@ interface UpdatableFeatureNodeData {
   teamAllocations?: TeamAllocation[];
   status?: string;
   position?: XYPosition;
+  hierarchy?: HierarchicalNodeRelationship;
+  originalEstimate?: number;
+  rollupEstimate?: number;
 }
 
 export type UpdateFeatureNodeParams = UpdatableFeatureNodeData & {
@@ -99,6 +106,9 @@ export interface Neo4jFeatureNodeData {
   updatedAt: string;
   positionX: number;
   positionY: number;
+  hierarchy?: string; // JSON string of HierarchicalNodeRelationship
+  originalEstimate?: number;
+  rollupEstimate?: number;
 }
 
 // EDGE TYPES HERE
@@ -117,6 +127,8 @@ export interface RFFeatureEdge extends RFEdge {
       name?: string;
       hours: number;
     }>;
+    rollupContribution?: boolean; // Added for hierarchical relationships
+    weight?: number; // Added for weighted calculations
   };
 }
 
@@ -124,12 +136,14 @@ export interface Neo4jFeatureEdge {
   id: string; // Unique string ID for the edge
   from: string; // Source node ID
   to: string; // Target node ID
-  type: 'FEATURE_TEAM' | 'FEATURE_MEMBER' | 'FEATURE_DEPENDENCY' | string; // Edge types for feature connections
+  type: 'FEATURE_TEAM' | 'FEATURE_MEMBER' | 'FEATURE_DEPENDENCY' | typeof PARENT_CHILD_EDGE_TYPE | string; // Edge types for feature connections
   properties?: {
     label?: string; // Optional label for display
     createdAt?: string; // Optional timestamp for tracking creation
     updatedAt?: string; // Optional timestamp for tracking updates
     allocation?: number; // Allocation percentage or hours
+    rollupContribution?: boolean; // Whether this child contributes to parent metrics
+    weight?: number; // Optional weight for weighted calculations
     // Add other metadata as needed
   };
 } 
