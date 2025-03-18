@@ -1,6 +1,22 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { teamService } from '@/services/graph/neo4j/neo4j.provider';
+import { teamService, featureService } from '@/services/graph/neo4j/neo4j.provider';
 import { RFTeamEdge } from '@/services/graph/team/team.types';
+
+// Define a more precise type for Neo4j errors
+interface Neo4jError {
+  code: string | number;
+  message: string;
+}
+
+// Helper function to check if an object is a Neo4j error
+function isNeo4jError(error: unknown): error is Neo4jError {
+  return (
+    error !== null &&
+    typeof error === 'object' &&
+    'code' in error &&
+    'message' in error
+  );
+}
 
 // POST /api/graph/team/edges - Create a new edge between team nodes
 export async function POST(req: NextRequest) {
@@ -26,8 +42,67 @@ export async function POST(req: NextRequest) {
       data: edge.data,
     });
 
-    // Use TeamService to create the edge
-    const createdEdge = await teamService.createEdge(edge);
+    // Check if this is a connection to a feature node
+    // First try to get the node from the feature service
+    let isFeatureConnection = false;
+    let featureNode = null;
+    try {
+      featureNode = await featureService.getNode(edge.target);
+      isFeatureConnection = !!featureNode;
+      console.log(`[API] Target node check: ${isFeatureConnection ? 'Is a feature node' : 'Not a feature node'}`);
+    } catch (error) {
+      console.log('[API] Error checking if target is a feature node, assuming it is not:', error);
+    }
+    
+    let createdEdge;
+    
+    if (isFeatureConnection) {
+      console.log(`[API] Detected team to feature connection: Team ${edge.source}, Feature ${edge.target}`);
+      
+      // STEP 1: Create the edge between team and feature
+      // Use the standard edge creation to ensure the edge is created properly
+      createdEdge = await teamService.createEdge(edge);
+      console.log('[API] Created edge between team and feature:', createdEdge);
+      
+      // STEP 2: Update the team node with feature information
+      // This is similar to how we update a team member with team information
+      const teamId = edge.source;
+      const featureId = edge.target;
+      const requestedHours = edge.data?.allocation || 0;
+      
+      // Get the current team data
+      const teamNode = await teamService.getNode(teamId);
+      if (!teamNode) {
+        throw new Error(`Team with ID ${teamId} not found`);
+      }
+      
+      // Update the team with feature information
+      // This could include adding the feature to a "features" array on the team
+      // For now, we'll just log this step
+      console.log(`[API] Would update team ${teamId} with feature ${featureId} information`);
+      
+      // STEP 3: Update the feature node with team allocation information
+      // Use direct service call instead of API call
+      await featureService.update({
+        id: featureId,
+        teamAllocations: [{
+          teamId,
+          requestedHours,
+          allocatedMembers: []
+        }]
+      });
+      
+      console.log('[API] Updated feature with team allocation information');
+      
+      console.log('[API] Successfully added team to feature:', {
+        featureId: edge.target,
+        teamId: edge.source,
+        requestedHours
+      });
+    } else {
+      // Use TeamService to create the edge
+      createdEdge = await teamService.createEdge(edge);
+    }
     
     console.log('[API] Successfully created TeamEdge:', {
       id: createdEdge.id,
@@ -47,10 +122,10 @@ export async function POST(req: NextRequest) {
     });
     
     // Check if it's a Neo4j-specific error
-    if (error && typeof error === 'object' && 'code' in error) {
+    if (isNeo4jError(error)) {
       console.error('[API] Neo4j error details:', {
-        code: (error as any).code,
-        message: (error as any).message
+        code: error.code,
+        message: error.message
       });
     }
     
@@ -104,10 +179,10 @@ export async function GET(req: NextRequest) {
     });
     
     // Check if it's a Neo4j-specific error
-    if (error && typeof error === 'object' && 'code' in error) {
+    if (isNeo4jError(error)) {
       console.error('[API] Neo4j error details:', {
-        code: (error as any).code,
-        message: (error as any).message
+        code: error.code,
+        message: error.message
       });
     }
     

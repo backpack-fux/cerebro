@@ -1,6 +1,6 @@
 import React from "react";
 
-import { cn } from "@/lib/utils";
+import { cn } from "@/utils/utils";
 import { Slot } from "@radix-ui/react-slot";
 import { Button, ButtonProps } from "@/components/ui/button";
 import {
@@ -59,7 +59,7 @@ export const NodeHeaderTitle = React.forwardRef<
     <Comp
       ref={ref}
       {...props}
-      className={cn(className, "user-select-none flex-1 font-semibold")}
+      className={cn(className, "flex-1 font-semibold pointer-events-auto")}
     />
   );
 });

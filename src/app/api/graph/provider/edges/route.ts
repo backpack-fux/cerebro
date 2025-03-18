@@ -2,6 +2,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import { providerService } from '@/services/graph/neo4j/neo4j.provider';
 import { RFProviderEdge } from '@/services/graph/provider/provider.types';
 
+interface Neo4jErrorResponse {
+  code: string;
+  message: string;
+}
+
 // POST /api/graph/provider/edges - Create a new edge between provider nodes
 export async function POST(req: NextRequest) {
   try {
@@ -48,9 +53,10 @@ export async function POST(req: NextRequest) {
     
     // Check if it's a Neo4j-specific error
     if (error && typeof error === 'object' && 'code' in error) {
+      const neo4jError = error as Neo4jErrorResponse;
       console.error('[API] Neo4j error details:', {
-        code: (error as any).code,
-        message: (error as any).message
+        code: neo4jError.code,
+        message: neo4jError.message
       });
     }
     
@@ -105,9 +111,10 @@ export async function GET(req: NextRequest) {
     
     // Check if it's a Neo4j-specific error
     if (error && typeof error === 'object' && 'code' in error) {
+      const neo4jError = error as Neo4jErrorResponse;
       console.error('[API] Neo4j error details:', {
-        code: (error as any).code,
-        message: (error as any).message
+        code: neo4jError.code,
+        message: neo4jError.message
       });
     }
     

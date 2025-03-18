@@ -1,6 +1,6 @@
 "use client";
 
-import { Handle, Position, type NodeProps, useReactFlow } from "@xyflow/react";
+import { Handle, Position, type NodeProps } from "@xyflow/react";
 import { BaseNode } from '@/components/nodes/base-node';
 import { 
   NodeHeader,
@@ -9,193 +9,47 @@ import {
   NodeHeaderMenuAction,
 } from '@/components/nodes/node-header';
 import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { memo } from "react";
 import { Textarea } from "@/components/ui/textarea";
-import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { useNodeStatus, NodeStatus } from "@/hooks/useNodeStatus";
-import { useMilestoneMetrics } from "@/hooks/useMilestoneMetrics";
-import { GraphApiClient } from '@/services/graph/neo4j/api-client';
-import { NodeType } from '@/services/graph/neo4j/api-urls';
-import { useEdges } from "@xyflow/react";
 import { RFMilestoneNodeData } from '@/services/graph/milestone/milestone.types';
+import { useMilestoneNode } from '@/hooks/useMilestoneNode';
+import { Progress } from "@/components/ui/progress";
+import { formatHours } from "@/utils/utils";
 
-export function MilestoneNode({ id, data, selected }: NodeProps) {
-  const { updateNodeData, setNodes, setEdges } = useReactFlow();
-  const edges = useEdges();
-  const metrics = useMilestoneMetrics(id);
-  
-  // Cast data to the correct type
-  const milestoneData = data as RFMilestoneNodeData;
-  
-  // Local state for title, description, and status to avoid excessive API calls
-  const [title, setTitle] = useState(milestoneData.title);
-  const [description, setDescription] = useState(milestoneData.description || '');
-  
-  // Refs for debounce timers
-  const titleDebounceRef = useRef<NodeJS.Timeout | null>(null);
-  const descriptionDebounceRef = useRef<NodeJS.Timeout | null>(null);
-  const statusDebounceRef = useRef<NodeJS.Timeout | null>(null);
-  
-  // Update local state when props change
-  useEffect(() => {
-    setTitle(milestoneData.title);
-    setDescription(milestoneData.description || '');
-  }, [milestoneData.title, milestoneData.description]);
-  
-  // Override the handleStatusChange to include API persistence
-  const persistStatusChange = useCallback((newStatus: NodeStatus) => {
-    // Update ReactFlow state for consistency
-    updateNodeData(id, { ...milestoneData, status: newStatus });
+const MilestoneNode = memo(({ id, data, selected }: NodeProps) => {
+  // Use the hook to manage state and operations
+  const {
+    // Data
+    title,
+    description,
+    status,
+    metrics,
     
-    // Clear any existing debounce timer
-    if (statusDebounceRef.current) {
-      clearTimeout(statusDebounceRef.current);
-    }
+    // Actions
+    handleTitleChange,
+    handleDescriptionChange,
+    handleDelete,
+    cycleStatus,
     
-    // Set a new debounce timer
-    statusDebounceRef.current = setTimeout(async () => {
-      try {
-        // Persist the change to the database
-        await GraphApiClient.updateNode('milestone' as NodeType, id, { 
-          status: newStatus 
-        });
-        console.log(`Updated milestone ${id} status to "${newStatus}"`);
-      } catch (error: unknown) {
-        console.error(`Failed to update milestone ${id} status:`, error);
-      }
-      statusDebounceRef.current = null;
-    }, 1000); // 1 second debounce
-  }, [id, milestoneData, updateNodeData]);
+    // Utilities
+    getStatusColor
+  } = useMilestoneNode(id, data as RFMilestoneNodeData);
 
-  // Create a wrapper function that matches the signature expected by useNodeStatus
-  const handleNodeStatusChange = useCallback((nodeId: string, nodeData: any) => {
-    if (nodeData.status && typeof nodeData.status === 'string') {
-      persistStatusChange(nodeData.status as NodeStatus);
-    }
-  }, [persistStatusChange]);
-
-  // Use the standard hook with our wrapper
-  const { status, getStatusColor, cycleStatus } = useNodeStatus(
-    id, 
-    milestoneData, 
-    handleNodeStatusChange, 
-    {
-      canBeActive: true,
-      defaultStatus: 'planning'
-    }
-  );
-
-  // Auto-update milestone status based on connected nodes
-  useEffect(() => {
-    if (metrics.nodeCount > 0) {
-      let newStatus: NodeStatus = 'planning';
-      
-      const completionPercentage = (metrics.completedCount / metrics.nodeCount) * 100;
-      
-      if (completionPercentage === 100) {
-        newStatus = 'completed';
-      } else if (completionPercentage > 0) {
-        newStatus = 'in_progress';
-      }
-
-      if (newStatus !== status) {
-        persistStatusChange(newStatus);
-      }
-    }
-  }, [metrics.completedCount, metrics.nodeCount, status, persistStatusChange]);
-
-  const handleTitleChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const newTitle = e.target.value;
-    // Update local state immediately for responsive UI
-    setTitle(newTitle);
-    // Update ReactFlow state for consistency
-    updateNodeData(id, { ...milestoneData, title: newTitle });
-    
-    // Clear any existing debounce timer
-    if (titleDebounceRef.current) {
-      clearTimeout(titleDebounceRef.current);
-    }
-    
-    // Set a new debounce timer
-    titleDebounceRef.current = setTimeout(async () => {
-      try {
-        // Only make API call if value has changed
-        if (newTitle !== milestoneData.title) {
-          // Persist the change to the database
-          await GraphApiClient.updateNode('milestone' as NodeType, id, { 
-            title: newTitle 
-          });
-          console.log(`Updated milestone ${id} title to "${newTitle}"`);
-        }
-      } catch (error: unknown) {
-        console.error(`Failed to update milestone ${id}:`, error);
-      }
-      titleDebounceRef.current = null;
-    }, 1000); // 1 second debounce
-  }, [id, milestoneData, updateNodeData]);
-
-  const handleDescriptionChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    const newDescription = e.target.value;
-    // Update local state immediately for responsive UI
-    setDescription(newDescription);
-    // Update ReactFlow state for consistency
-    updateNodeData(id, { ...milestoneData, description: newDescription });
-    
-    // Clear any existing debounce timer
-    if (descriptionDebounceRef.current) {
-      clearTimeout(descriptionDebounceRef.current);
-    }
-    
-    // Set a new debounce timer
-    descriptionDebounceRef.current = setTimeout(async () => {
-      try {
-        // Only make API call if value has changed
-        if (newDescription !== milestoneData.description) {
-          // Persist the change to the database
-          await GraphApiClient.updateNode('milestone' as NodeType, id, { 
-            description: newDescription 
-          });
-          console.log(`Updated milestone ${id} description`);
-        }
-      } catch (error: unknown) {
-        console.error(`Failed to update milestone ${id} description:`, error);
-      }
-      descriptionDebounceRef.current = null;
-    }, 1000); // 1 second debounce
-  }, [id, milestoneData, updateNodeData]);
-  
-  // Clean up timers on unmount
-  useEffect(() => {
-    return () => {
-      if (titleDebounceRef.current) clearTimeout(titleDebounceRef.current);
-      if (descriptionDebounceRef.current) clearTimeout(descriptionDebounceRef.current);
-      if (statusDebounceRef.current) clearTimeout(statusDebounceRef.current);
-    };
-  }, []);
-
-  const handleDelete = useCallback(() => {
-    // First delete the node from the database
-    GraphApiClient.deleteNode('milestone' as NodeType, id)
-      .then(() => {
-        console.log(`Successfully deleted milestone node ${id}`);
-        // Then remove it from the UI
-        setNodes((nodes) => nodes.filter((node) => node.id !== id));
-        
-        // Also delete associated edges
-        const connectedEdges = edges.filter((edge) => edge.source === id || edge.target === id);
-        connectedEdges.forEach((edge) => {
-          GraphApiClient.deleteEdge('milestone' as NodeType, edge.id)
-            .catch((error: unknown) => console.error(`Failed to delete edge ${edge.id}:`, error));
-        });
-      })
-      .catch((error: unknown) => {
-        console.error(`Failed to delete milestone node ${id}:`, error);
-      });
-  }, [id, setNodes, edges]);
+  // Calculate completion percentage
+  const completionPercentage = metrics.nodeCount > 0
+    ? (metrics.completedCount / metrics.nodeCount) * 100
+    : 0;
 
   return (
-    <BaseNode selected={selected}>
+    <BaseNode selected={selected} className="w-[350px]">
+      <Handle
+        type="source"
+        position={Position.Right}
+        id="source"
+        className="w-2 h-2 rounded-full border-2 border-background bg-primary"
+      />
+
       <NodeHeader>
         <NodeHeaderTitle>
           <div className="flex items-center gap-2">
@@ -209,7 +63,7 @@ export function MilestoneNode({ id, data, selected }: NodeProps) {
             </Badge>
             <input
               value={title}
-              onChange={handleTitleChange}
+              onChange={(e) => handleTitleChange(e.target.value)}
               className="bg-transparent outline-none placeholder:text-muted-foreground"
               placeholder="Milestone Title"
             />
@@ -227,49 +81,150 @@ export function MilestoneNode({ id, data, selected }: NodeProps) {
       <div className="px-3 pb-3 space-y-4">
         <Textarea
           value={description}
-          onChange={handleDescriptionChange}
+          onChange={(e) => handleDescriptionChange(e.target.value)}
           placeholder="Describe this milestone..."
           className="min-h-[80px] resize-y bg-transparent"
         />
 
+        {/* Progress section */}
         <div className="space-y-2">
-          <Label>Milestone Metrics</Label>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="flex items-center justify-between">
+            <Badge
+              variant="outline"
+              className="text-xs"
+              style={{ backgroundColor: getStatusColor(status) + '20', borderColor: getStatusColor(status) }}
+            >
+              {status.replace('_', ' ')}
+            </Badge>
+            
+            {metrics.nodeCount > 0 && (
+              <div className="text-xs text-muted-foreground">
+                {metrics.completedCount} of {metrics.nodeCount} completed
+              </div>
+            )}
+          </div>
+          
+          {metrics.nodeCount > 0 && (
+            <div className="w-full">
+              <Progress value={completionPercentage} className="h-2" />
+            </div>
+          )}
+        </div>
+
+        {/* Cost and Revenue Summary */}
+        <div className="space-y-3">
+          <div className="flex justify-between items-center p-2 bg-muted/30 rounded-md">
             <div>
-              <div className="text-sm text-muted-foreground">Total Cost</div>
-              <div className="font-mono">
-                ${metrics.totalCost.toLocaleString('en-US', { 
-                  minimumFractionDigits: 2, 
-                  maximumFractionDigits: 2 
-                })}
+              <div className="text-sm font-medium">Total Cost</div>
+              <div className="text-xs text-muted-foreground">
+                Team: ${metrics.teamCosts.toLocaleString('en-US', { maximumFractionDigits: 2 })}
+                {metrics.providerCosts > 0 && `, Providers: $${metrics.providerCosts.toLocaleString('en-US', { maximumFractionDigits: 2 })}`}
               </div>
             </div>
-            <div>
-              <div className="text-sm text-muted-foreground">Monthly Value</div>
-              <div className="font-mono">
-                ${metrics.monthlyValue.toLocaleString('en-US', { 
-                  minimumFractionDigits: 2, 
-                  maximumFractionDigits: 2 
-                })}
-              </div>
+            <div className="text-right">
+              <div className="font-medium">${metrics.totalCost.toLocaleString('en-US', { maximumFractionDigits: 2 })}</div>
+              {metrics.monthlyValue > 0 && (
+                <div className="text-xs text-green-600">
+                  +${metrics.monthlyValue.toLocaleString('en-US', { maximumFractionDigits: 2 })}/mo
+                </div>
+              )}
             </div>
           </div>
-          <div className="text-sm text-muted-foreground">
-            Completion: {metrics.statusCounts.planning} planning, {metrics.statusCounts.in_progress} in progress, {metrics.statusCounts.completed} completed, {metrics.statusCounts.active} active ({metrics.nodeCount} nodes)
-          </div>
+          
+          {/* Feature Allocations */}
+          {metrics.featureAllocations.length > 0 && (
+            <div className="space-y-2">
+              <div className="text-sm font-medium">Feature Allocations</div>
+              <div className="max-h-[200px] overflow-y-auto space-y-3 text-sm">
+                {metrics.featureAllocations.map(feature => (
+                  <div key={feature.featureId} className="space-y-1 border-b border-muted pb-2">
+                    <div className="flex justify-between items-center">
+                      <div className="font-medium">{feature.name}</div>
+                      <div className="text-right font-mono">
+                        ${feature.totalCost.toLocaleString('en-US', { maximumFractionDigits: 2 })}
+                      </div>
+                    </div>
+                    
+                    {feature.members.map(member => (
+                      <div key={member.memberId} className="flex justify-between items-center text-xs pl-2">
+                        <div>
+                          <span>{member.name}</span>
+                          <div className="text-xs text-muted-foreground">
+                            {formatHours(member.hours)}
+                          </div>
+                        </div>
+                        <div className="text-right font-mono">
+                          ${member.cost.toLocaleString('en-US', { maximumFractionDigits: 2 })}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          
+          {/* Provider Costs */}
+          {metrics.providerDetails.length > 0 && (
+            <div className="space-y-2">
+              <div className="text-sm font-medium">Provider Costs</div>
+              <div className="max-h-[100px] overflow-y-auto space-y-1 text-sm">
+                {metrics.providerDetails.map(provider => (
+                  <div key={provider.id} className="flex justify-between items-center text-xs p-1 border-b border-muted">
+                    <div>
+                      <span>{provider.name}</span>
+                      <div className="text-xs text-muted-foreground">
+                        {provider.type}
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <div className="font-mono">
+                        ${provider.amount.toLocaleString('en-US', { maximumFractionDigits: 2 })}
+                        {provider.type !== 'fixed' && '/mo'}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          
+          {/* Option Revenues */}
+          {metrics.optionDetails.length > 0 && (
+            <div className="space-y-2">
+              <div className="text-sm font-medium">Revenue Streams</div>
+              <div className="max-h-[100px] overflow-y-auto space-y-1 text-sm">
+                {metrics.optionDetails.map(option => (
+                  <div key={option.id} className="flex justify-between items-center text-xs p-1 border-b border-muted">
+                    <div>
+                      <span>{option.name}</span>
+                      <div className="text-xs text-muted-foreground">
+                        {option.transactionFeeRate}% of ${option.monthlyVolume.toLocaleString('en-US')}
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <div className="font-mono text-green-600">
+                        +${option.monthlyRevenue.toLocaleString('en-US', { maximumFractionDigits: 2 })}/mo
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
       <Handle
-        type="source"
-        position={Position.Right}
-        id="source"
-      />
-      <Handle
         type="target"
         position={Position.Bottom}
         id="target"
+        className="w-2 h-2 rounded-full border-2 border-background bg-primary"
       />
     </BaseNode>
   );
-}
+});
+
+MilestoneNode.displayName = 'MilestoneNode';
+
+export { MilestoneNode };

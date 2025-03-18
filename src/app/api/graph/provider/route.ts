@@ -1,51 +1,60 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { ProviderService } from '@/services/graph/provider/provider.service';
-import { neo4jStorage } from '@/services/graph/neo4j/neo4j.provider';
-import { CreateProviderNodeParams, RFProviderNode, Neo4jProviderNodeData, ProviderCost, DDItem, TeamAllocation } from '@/services/graph/provider/provider.types';
-import { neo4jToReactFlow } from '@/services/graph/provider/provider.transform';
-
-// Initialize the provider service
-const providerService = new ProviderService(neo4jStorage);
+import { CreateProviderNodeParams, ProviderCost, DDItem, TeamAllocation } from '@/services/graph/provider/provider.types';
+import { providerService } from '@/services/graph/neo4j/neo4j.provider';
 
 /**
  * Validates a ProviderCost object
  * @param cost The provider cost to validate
  * @returns True if valid, false otherwise
  */
-function isValidProviderCost(cost: any): cost is ProviderCost {
-  if (!cost || typeof cost !== 'object' || !cost.id || !cost.name || !cost.costType || !cost.details) {
+function isValidProviderCost(cost: unknown): cost is ProviderCost {
+  if (!cost || typeof cost !== 'object' || !('id' in cost) || !('name' in cost) || !('costType' in cost) || !('details' in cost)) {
+    return false;
+  }
+
+  const { costType, details } = cost as ProviderCost;
+
+  // First validate common fields
+  if (typeof details !== 'object' || !details || typeof details.type !== 'string') {
     return false;
   }
 
   // Validate based on cost type
-  switch (cost.costType) {
-    case 'fixed':
+  switch (costType) {
+    case 'fixed': {
+      const fixedDetails = details as { type: string; amount: number; frequency: string };
       return (
-        typeof cost.details.type === 'string' &&
-        typeof cost.details.amount === 'number' &&
-        ['monthly', 'annual'].includes(cost.details.frequency)
+        typeof fixedDetails.amount === 'number' &&
+        typeof fixedDetails.frequency === 'string' &&
+        ['monthly', 'annual'].includes(fixedDetails.frequency)
       );
-    case 'unit':
+    }
+    case 'unit': {
+      const unitDetails = details as { type: string; unitPrice: number; unitType: string };
       return (
-        typeof cost.details.type === 'string' &&
-        typeof cost.details.unitPrice === 'number' &&
-        typeof cost.details.unitType === 'string'
+        typeof unitDetails.unitPrice === 'number' &&
+        typeof unitDetails.unitType === 'string'
       );
-    case 'revenue':
+    }
+    case 'revenue': {
+      const revenueDetails = details as { type: string; percentage: number };
+      return typeof revenueDetails.percentage === 'number';
+    }
+    case 'tiered': {
+      const tieredDetails = details as { type: string; unitType: string; tiers: unknown[] };
       return (
-        typeof cost.details.type === 'string' &&
-        typeof cost.details.percentage === 'number'
-      );
-    case 'tiered':
-      return (
-        typeof cost.details.type === 'string' &&
-        typeof cost.details.unitType === 'string' &&
-        Array.isArray(cost.details.tiers) &&
-        cost.details.tiers.every((tier: any) => 
-          typeof tier.min === 'number' && 
-          typeof tier.unitPrice === 'number'
+        typeof tieredDetails.unitType === 'string' &&
+        Array.isArray(tieredDetails.tiers) &&
+        tieredDetails.tiers.every((tier: unknown) => 
+          tier !== null &&
+          typeof tier === 'object' &&
+          'min' in tier &&
+          'unitPrice' in tier &&
+          typeof (tier as { min: number }).min === 'number' && 
+          typeof (tier as { unitPrice: number }).unitPrice === 'number'
         )
       );
+    }
     default:
       return false;
   }
@@ -56,7 +65,7 @@ function isValidProviderCost(cost: any): cost is ProviderCost {
  * @param costs The costs array to validate
  * @returns True if valid, false otherwise
  */
-function isValidProviderCosts(costs: any): costs is ProviderCost[] {
+function isValidProviderCosts(costs: unknown): costs is ProviderCost[] {
   return Array.isArray(costs) && costs.every(isValidProviderCost);
 }
 
@@ -65,13 +74,16 @@ function isValidProviderCosts(costs: any): costs is ProviderCost[] {
  * @param item The DD item to validate
  * @returns True if valid, false otherwise
  */
-function isValidDDItem(item: any): item is DDItem {
+function isValidDDItem(item: unknown): item is DDItem {
   return (
-    item &&
+    item !== null &&
     typeof item === 'object' &&
-    typeof item.id === 'string' &&
-    typeof item.name === 'string' &&
-    ['pending', 'in_progress', 'completed', 'blocked'].includes(item.status)
+    'id' in item &&
+    'name' in item &&
+    'status' in item &&
+    typeof (item as DDItem).id === 'string' &&
+    typeof (item as DDItem).name === 'string' &&
+    ['pending', 'in_progress', 'completed', 'blocked'].includes((item as DDItem).status)
   );
 }
 
@@ -80,7 +92,7 @@ function isValidDDItem(item: any): item is DDItem {
  * @param items The items array to validate
  * @returns True if valid, false otherwise
  */
-function isValidDDItems(items: any): items is DDItem[] {
+function isValidDDItems(items: unknown): items is DDItem[] {
   return Array.isArray(items) && items.every(isValidDDItem);
 }
 
@@ -89,17 +101,21 @@ function isValidDDItems(items: any): items is DDItem[] {
  * @param allocation The team allocation to validate
  * @returns True if valid, false otherwise
  */
-function isValidTeamAllocation(allocation: any): allocation is TeamAllocation {
+function isValidTeamAllocation(allocation: unknown): allocation is TeamAllocation {
+  if (!allocation || typeof allocation !== 'object') return false;
+  
+  const typedAllocation = allocation as TeamAllocation;
   return (
-    allocation &&
-    typeof allocation === 'object' &&
-    typeof allocation.teamId === 'string' &&
-    typeof allocation.requestedHours === 'number' &&
-    Array.isArray(allocation.allocatedMembers) &&
-    allocation.allocatedMembers.every((member: any) => 
+    typeof typedAllocation.teamId === 'string' &&
+    typeof typedAllocation.requestedHours === 'number' &&
+    Array.isArray(typedAllocation.allocatedMembers) &&
+    typedAllocation.allocatedMembers.every((member: unknown) => 
+      member !== null &&
       typeof member === 'object' &&
-      typeof member.memberId === 'string' &&
-      typeof member.hours === 'number'
+      'memberId' in member &&
+      'hours' in member &&
+      typeof (member as { memberId: string }).memberId === 'string' &&
+      typeof (member as { hours: number }).hours === 'number'
     )
   );
 }
@@ -109,18 +125,34 @@ function isValidTeamAllocation(allocation: any): allocation is TeamAllocation {
  * @param allocations The allocations array to validate
  * @returns True if valid, false otherwise
  */
-function isValidTeamAllocations(allocations: any): allocations is TeamAllocation[] {
+function isValidTeamAllocations(allocations: unknown): allocations is TeamAllocation[] {
+  // If it's a string, try to parse it first
+  if (typeof allocations === 'string') {
+    try {
+      const parsed = JSON.parse(allocations);
+      return Array.isArray(parsed) && parsed.every(isValidTeamAllocation);
+    } catch (e) {
+      console.warn('[API] Failed to parse teamAllocations string:', e);
+      return false;
+    }
+  }
+  
+  // If it's already an array, validate directly
   return Array.isArray(allocations) && allocations.every(isValidTeamAllocation);
 }
 
 export async function POST(req: NextRequest) {
   try {
     console.log('[API] Starting ProviderNode creation');
-    const params: CreateProviderNodeParams = await req.json();
+    const params = await req.json();
     
     // Remove any costs, ddItems, or teamAllocations from the params
     // These will be handled by the service after node creation
-    const { costs, ddItems, teamAllocations, ...createParams } = params as any;
+    const { costs, ddItems, teamAllocations, ...createParams } = params as Partial<CreateProviderNodeParams & {
+      costs: unknown;
+      ddItems: unknown;
+      teamAllocations: unknown;
+    }>;
     
     if (!createParams.title || !createParams.position) {
       console.warn('[API] Invalid ProviderNode creation request: Missing required fields');
@@ -139,7 +171,7 @@ export async function POST(req: NextRequest) {
     });
 
     // Create the provider node
-    const createdNode = await providerService.create(createParams);
+    const createdNode = await providerService.create(createParams as CreateProviderNodeParams);
     
     // If costs were provided, add them to the node
     if (costs && isValidProviderCosts(costs)) {
@@ -160,16 +192,58 @@ export async function POST(req: NextRequest) {
     }
     
     // If teamAllocations were provided, add them to the node
-    if (teamAllocations && isValidTeamAllocations(teamAllocations)) {
-      console.log('[API] Adding team allocations to provider node:', teamAllocations);
-      await providerService.update({
-        id: createdNode.id,
-        teamAllocations
-      });
+    if (teamAllocations !== undefined) {
+      console.log('[API] Adding team allocations to provider node:', 
+        typeof teamAllocations === 'string' ? teamAllocations : JSON.stringify(teamAllocations));
+      console.log('[API DEBUG] teamAllocations type:', typeof teamAllocations);
+      console.log('[API DEBUG] Is Array?', Array.isArray(teamAllocations));
+      
+      if (!isValidTeamAllocations(teamAllocations)) {
+        console.warn('[API] Invalid teamAllocations provided');
+        
+        // Try to parse it if it's a string
+        if (typeof teamAllocations === 'string') {
+          try {
+            const parsed = JSON.parse(teamAllocations);
+            console.log('[API DEBUG] Parsed teamAllocations:', JSON.stringify(parsed));
+            console.log('[API DEBUG] Parsed is array?', Array.isArray(parsed));
+            
+            // If it parses to an array but still fails validation, show more details
+            if (Array.isArray(parsed)) {
+              const invalidItems = parsed.filter(item => !isValidTeamAllocation(item));
+              console.log('[API DEBUG] Invalid items in teamAllocations:', JSON.stringify(invalidItems));
+            }
+          } catch (e) {
+            console.log('[API DEBUG] Failed to parse teamAllocations string:', e);
+          }
+        }
+      } else {
+        // For the provider service, we need to pass the original array or the parsed array
+        let teamAllocationsArray: TeamAllocation[] = [];
+        
+        // If it's a string, parse it back to an array for the service
+        if (typeof teamAllocations === 'string') {
+          try {
+            const parsed = JSON.parse(teamAllocations);
+            if (Array.isArray(parsed)) {
+              teamAllocationsArray = parsed;
+            }
+          } catch (e) {
+            console.warn('[API] Failed to parse teamAllocations string for service update:', e);
+          }
+        } else if (Array.isArray(teamAllocations)) {
+          teamAllocationsArray = teamAllocations;
+        }
+        
+        await providerService.update({
+          id: createdNode.id,
+          teamAllocations: teamAllocationsArray
+        });
+      }
     }
     
     // Retrieve the node to get the complete data
-    const node = await neo4jStorage.getNode(createdNode.id);
+    const node = await providerService.getById(createdNode.id);
     
     if (!node) {
       console.error('[API] Failed to retrieve created node:', createdNode.id);
@@ -179,8 +253,8 @@ export async function POST(req: NextRequest) {
       );
     }
     
-    // Transform the node to properly parse JSON strings
-    const transformedNode = neo4jToReactFlow(node.data as unknown as Neo4jProviderNodeData);
+    // No need to transform since getById already returns RFProviderNode
+    const transformedNode = node;
     
     // Ensure the ID is included in the response
     transformedNode.id = createdNode.id;
@@ -202,21 +276,9 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json(transformedNode, { status: 201 });
   } catch (error) {
-    console.error('[API] Error creating ProviderNode:', {
-      error: error instanceof Error ? error.message : 'Unknown error',
-      stack: error instanceof Error ? error.stack : undefined,
-      type: error instanceof Error ? error.constructor.name : typeof error
-    });
-    
-    if (error && typeof error === 'object' && 'code' in error) {
-      console.error('[API] Neo4j error details:', {
-        code: (error as any).code,
-        message: (error as any).message
-      });
-    }
-    
+    console.error('[API] Error creating ProviderNode:', error);
     return NextResponse.json(
-      { error: 'Failed to create ProviderNode', details: error instanceof Error ? error.message : 'Unknown error' },
+      { error: 'Failed to create ProviderNode' },
       { status: 500 }
     );
   }

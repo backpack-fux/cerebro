@@ -1,6 +1,6 @@
 "use client";
 
-import { Handle, Position, type NodeProps, useReactFlow } from "@xyflow/react";
+import { Handle, Position, type NodeProps } from "@xyflow/react";
 import { BaseNode } from '@/components/nodes/base-node';
 import { 
   NodeHeader,
@@ -9,365 +9,271 @@ import {
   NodeHeaderMenuAction,
 } from '@/components/nodes/node-header';
 import { DropdownMenuItem } from "@radix-ui/react-dropdown-menu";
-import { useCallback, useMemo } from "react";
+import { memo, useMemo, useState, useEffect } from "react";
+import { useReactFlow } from "@xyflow/react";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
-import { Plus, Trash } from "lucide-react";
+import { Plus, Trash, RefreshCw } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Input } from "@/components/ui/input";
-import { useTeamAllocation } from "@/hooks/useTeamAllocation";
-import { Slider } from "@/components/ui/slider";
-import { useDurationInput } from "@/hooks/useDurationInput";
-import { useNodeStatus } from "@/hooks/useNodeStatus";
-import { 
-  RFOptionNodeData, 
-  Goal, 
-  Risk, 
-  OptionType,
-  TeamAllocation
-} from '@/services/graph/option/option.types';
-import { GraphApiClient } from '@/services/graph/neo4j/api-client';
-import { NodeType } from '@/services/graph/neo4j/api-urls';
-import { toast } from "sonner";
+import { RFOptionNodeData, ImpactLevel, SeverityLevel } from '@/services/graph/option/option.types';
+import { useOptionNode } from '@/hooks/useOptionNode';
+import { useResourceAllocation } from '@/hooks/useResourceAllocation';
+import { CostReceipt } from '@/components/shared/CostReceipt';
+import { TeamAllocation } from '@/components/shared/TeamAllocation';
+import { formatNumber, formatHours } from '@/utils/format-utils';
+import { formatMemberName } from '@/utils/node-utils';
+import type { TeamAllocation as ITeamAllocation } from '@/utils/types/allocation';
+import { NodeStatus } from '@/hooks/useNodeStatus';
+import { MemberAllocationData as ImportedMemberAllocationData, AvailableMember } from '@/utils/types/allocation';
 
-export function OptionNode({ id, data, selected }: NodeProps) {
-  const { updateNodeData, setNodes, setEdges, getEdges } = useReactFlow();
+// Debug logger that only logs in development
+const debugLog = (message: string, data?: unknown) => {
+  if (process.env.NODE_ENV === 'development') {
+    console.log(`[OptionNode] ${message}`, data);
+  }
+};
+
+// Define a local MemberAllocationData interface
+interface LocalMemberAllocationData {
+  memberId: string;
+  name: string;
+  hours: number;
+  cost?: number;
+  capacity: number;
+  allocation: number;
+  daysEquivalent: number;
+  percentage?: number;
+  memberCapacity?: number;
+  hourlyRate?: number;
+  current?: {
+    hours?: number;
+    cost?: number;
+  };
+}
+
+// Define the MemberCost interface
+interface MemberCost {
+  memberId: string;
+  name: string;
+  hours: number;
+  hourlyRate: number;
+  cost: number;
+}
+
+// Define the ExtendedRFOptionNodeData interface locally to match useOptionNode's expectations
+interface ExtendedRFOptionNodeData extends RFOptionNodeData {
+  status?: NodeStatus;
+}
+
+/**
+ * Option Node component for displaying and editing option data
+ * Uses React.memo to prevent unnecessary re-renders
+ */
+export const OptionNode = memo(function OptionNode({ id, data, selected }: NodeProps) {
+  const { getNodes } = useReactFlow();
   
-  // Cast data to the correct type
-  const optionData = data as RFOptionNodeData;
+  // Create data with properly typed status
+  const typedData = useMemo(() => {
+    const result = { ...data };
+    // Convert status string to NodeStatus type
+    if (data.status) {
+      const validStatuses: Array<NodeStatus> = ['planning', 'in_progress', 'completed', 'active'];
+      result.status = validStatuses.includes(data.status as NodeStatus) 
+        ? data.status as NodeStatus 
+        : 'planning';
+    }
+    return result as ExtendedRFOptionNodeData;
+  }, [data]);
   
-  // Ensure complex objects are always arrays
-  const goals = Array.isArray(optionData.goals) ? optionData.goals : [];
-  const risks = Array.isArray(optionData.risks) ? optionData.risks : [];
-  const teamMembers = Array.isArray(optionData.teamMembers) ? optionData.teamMembers : [];
-  const memberAllocations = Array.isArray(optionData.memberAllocations) ? optionData.memberAllocations : [];
-  const teamAllocations = Array.isArray(optionData.teamAllocations) ? optionData.teamAllocations : [];
+  // Use our custom hook for option node logic
+  const option = useOptionNode(id, typedData);
   
-  // Update optionData with the ensured arrays
-  const safeOptionData = {
-    ...optionData,
-    goals,
-    risks,
-    teamMembers,
-    memberAllocations,
-    teamAllocations
+  // Use the shared resource allocation hook
+  const resourceAllocation = useResourceAllocation(data, option, getNodes);
+  
+  // Local state for input values to prevent clearing during re-renders
+  const [localTransactionFee, setLocalTransactionFee] = useState<string>(
+    option.transactionFeeRate !== undefined ? option.transactionFeeRate.toString() : ''
+  );
+  const [localMonthlyVolume, setLocalMonthlyVolume] = useState<string>(
+    option.monthlyVolume !== undefined ? option.monthlyVolume.toString() : ''
+  );
+  
+  // Update local state when option values change
+  useEffect(() => {
+    if (option.transactionFeeRate !== undefined) {
+      setLocalTransactionFee(option.transactionFeeRate.toString());
+    }
+    if (option.monthlyVolume !== undefined) {
+      setLocalMonthlyVolume(option.monthlyVolume.toString());
+    }
+  }, [option.transactionFeeRate, option.monthlyVolume]);
+  
+  // Handle transaction fee input change
+  const handleTransactionFeeInput = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    setLocalTransactionFee(value);
+    
+    const numValue = parseFloat(value);
+    if (!isNaN(numValue)) {
+      option.handleTransactionFeeChange(numValue);
+    }
   };
   
-  const {
-    connectedTeams,
-    requestTeamAllocation,
-    costs,
-    CostSummary
-  } = useTeamAllocation(id, safeOptionData);
-
-  const { status, getStatusColor, cycleStatus } = useNodeStatus(id, safeOptionData, updateNodeData, {
-    canBeActive: true,
-    defaultStatus: 'planning'
-  });
-
-  // Save data to backend
-  const saveToBackend = async (field: string, value: any) => {
-    try {
-      await GraphApiClient.updateNode('option' as NodeType, id, { [field]: value });
-      console.log(`Updated option node ${id} ${field}`);
-    } catch (error) {
-      console.error(`Failed to update option node ${id}:`, error);
-      toast.error(`Update Failed: Failed to save ${field} to the server.`);
+  // Handle monthly volume input change
+  const handleMonthlyVolumeInput = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    setLocalMonthlyVolume(value);
+    
+    const numValue = parseFloat(value);
+    if (!isNaN(numValue)) {
+      option.handleMonthlyVolumeChange(numValue);
     }
   };
-
-  const handleTitleChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const newTitle = e.target.value;
-    updateNodeData(id, { ...safeOptionData, title: newTitle });
-    saveToBackend('title', newTitle);
-  }, [id, safeOptionData, updateNodeData]);
-
-  const handleDescriptionChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    const newDescription = e.target.value;
-    updateNodeData(id, { ...safeOptionData, description: newDescription });
-    saveToBackend('description', newDescription);
-  }, [id, safeOptionData, updateNodeData]);
-
-  const addGoal = useCallback(() => {
-    const newGoal: Goal = {
-      id: `goal-${Date.now()}`,
-      description: '',
-      impact: 'medium'
-    };
-    const updatedGoals = [...goals, newGoal];
-    updateNodeData(id, { 
-      ...safeOptionData, 
-      goals: updatedGoals
-    });
-    saveToBackend('goals', updatedGoals);
-  }, [id, safeOptionData, goals, updateNodeData]);
-
-  const updateGoal = useCallback((goalId: string, updates: Partial<Goal>) => {
-    const updatedGoals = goals.map(goal => 
-      goal.id === goalId ? { ...goal, ...updates } : goal
-    );
-    updateNodeData(id, {
-      ...safeOptionData,
-      goals: updatedGoals
-    });
-    saveToBackend('goals', updatedGoals);
-  }, [id, safeOptionData, goals, updateNodeData]);
-
-  const removeGoal = useCallback((goalId: string) => {
-    const updatedGoals = goals.filter(goal => goal.id !== goalId);
-    updateNodeData(id, {
-      ...safeOptionData,
-      goals: updatedGoals
-    });
-    saveToBackend('goals', updatedGoals);
-  }, [id, safeOptionData, goals, updateNodeData]);
-
-  const addRisk = useCallback(() => {
-    const newRisk: Risk = {
-      id: `risk-${Date.now()}`,
-      description: '',
-      severity: 'medium'
-    };
-    const updatedRisks = [...risks, newRisk];
-    updateNodeData(id, { 
-      ...safeOptionData, 
-      risks: updatedRisks
-    });
-    saveToBackend('risks', updatedRisks);
-  }, [id, safeOptionData, risks, updateNodeData]);
-
-  const updateRisk = useCallback((riskId: string, updates: Partial<Risk>) => {
-    const updatedRisks = risks.map(risk => 
-      risk.id === riskId ? { ...risk, ...updates } : risk
-    );
-    updateNodeData(id, {
-      ...safeOptionData,
-      risks: updatedRisks
-    });
-    saveToBackend('risks', updatedRisks);
-  }, [id, safeOptionData, risks, updateNodeData]);
-
-  const removeRisk = useCallback((riskId: string) => {
-    const updatedRisks = risks.filter(risk => risk.id !== riskId);
-    updateNodeData(id, {
-      ...safeOptionData,
-      risks: updatedRisks
-    });
-    saveToBackend('risks', updatedRisks);
-  }, [id, safeOptionData, risks, updateNodeData]);
-
-  const handleDelete = useCallback(() => {
-    // Delete the node from the backend
-    GraphApiClient.deleteNode('option' as NodeType, id)
-      .then(() => {
-        setNodes((nodes) => nodes.filter((node) => node.id !== id));
-        
-        // Also delete connected edges
-        const connectedEdges = getEdges().filter((edge) => edge.source === id || edge.target === id);
-        connectedEdges.forEach((edge) => {
-          GraphApiClient.deleteEdge('option' as NodeType, edge.id)
-            .catch((error) => console.error('Failed to delete edge:', error));
-        });
-      })
-      .catch((error) => {
-        console.error('Failed to delete option node:', error);
-        toast.error("Delete Failed: Failed to delete the option node from the server.");
-      });
-  }, [id, setNodes, getEdges]);
-
-  const handleOptionTypeChange = useCallback((value: OptionType) => {
-    updateNodeData(id, { ...safeOptionData, optionType: value });
-    saveToBackend('optionType', value);
-  }, [id, safeOptionData, updateNodeData]);
-
-  const handleTransactionFeeChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = parseFloat(e.target.value);
-    if (!isNaN(value) && value >= 0 && value <= 100) {
-      updateNodeData(id, { ...safeOptionData, transactionFeeRate: value });
-      saveToBackend('transactionFeeRate', value);
-    }
-  }, [id, safeOptionData, updateNodeData]);
-
-  const handleMonthlyVolumeChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = parseFloat(e.target.value);
-    if (!isNaN(value) && value >= 0) {
-      updateNodeData(id, { ...safeOptionData, monthlyVolume: value });
-      saveToBackend('monthlyVolume', value);
-    }
-  }, [id, safeOptionData, updateNodeData]);
-
-  const duration = useDurationInput(id, safeOptionData, updateNodeData, {
-    maxDays: 90,
-    label: "Time to Close",
-    fieldName: "duration",
-    tip: 'Estimated time to close the deal and go live'
+  
+  // Calculate project duration in days for allocation calculations
+  const projectDurationDays = Number(data.duration) || 1;
+  
+  // DEBUG: Log the project duration to verify it's correct
+  debugLog('Project Duration:', {
+    rawDuration: data.duration,
+    calculatedDays: projectDurationDays,
+    nodeId: id
   });
-
-  // Calculate expected monthly value
-  const expectedMonthlyValue = useMemo(() => {
-    if (safeOptionData.transactionFeeRate && safeOptionData.monthlyVolume) {
-      return (safeOptionData.transactionFeeRate / 100) * safeOptionData.monthlyVolume;
-    }
-    return 0;
-  }, [safeOptionData.transactionFeeRate, safeOptionData.monthlyVolume]);
-
-  // Add this calculation after the expectedMonthlyValue memo
-  const payoffDetails = useMemo(() => {
-    if (!expectedMonthlyValue || !costs.totalCost || expectedMonthlyValue === 0) {
-      return null;
-    }
-
-    const totalCost = costs.totalCost;
-    const monthsToPayoff = totalCost / expectedMonthlyValue;
+  
+  // Pre-calculate allocation percentages and costs for all members
+  const memberAllocations = useMemo(() => {
+    return resourceAllocation.calculateMemberAllocations(
+      option.connectedTeams,
+      option.processedTeamAllocations,
+      projectDurationDays,
+      (memberId: string, memberData?: { title?: string }) => formatMemberName(memberId, getNodes(), memberData)
+    );
+  }, [
+    option.connectedTeams, 
+    option.processedTeamAllocations, 
+    projectDurationDays,
+    resourceAllocation,
+    getNodes
+  ]);
+  
+  // Calculate cost summary
+  const costSummary = useMemo(() => {
+    return resourceAllocation.calculateCostSummary(memberAllocations);
+  }, [memberAllocations, resourceAllocation]);
+  
+  // Adapter function to match the expected type for TeamAllocation's formatMemberName
+  const formatMemberNameForTeam = (id: string, member: AvailableMember): string => {
+    return member.name || formatMemberName(id, getNodes(), { title: member.name });
+  };
+  
+  // Convert MemberAllocationData[] to MemberCost[]
+  const convertAllocationsToCostArray = (allocations: LocalMemberAllocationData[]): MemberCost[] => {
+    return allocations.map(allocation => ({
+      memberId: allocation.memberId,
+      name: allocation.name || '',
+      hours: allocation.hours,
+      hourlyRate: allocation.hourlyRate || 0,
+      cost: allocation.cost || 0
+    }));
+  };
+  
+  // Convert memberAllocations to use the correct MemberCapacity type
+  const convertMemberAllocations = (allocations: Map<string, LocalMemberAllocationData>): Map<string, ImportedMemberAllocationData> => {
+    const result = new Map<string, ImportedMemberAllocationData>();
     
-    return {
-      monthsToPayoff,
-      yearsToPayoff: monthsToPayoff / 12,
-      isPayoffPossible: expectedMonthlyValue > 0
-    };
-  }, [expectedMonthlyValue, costs.totalCost]);
-
-  // Handle allocation changes
-  const handleAllocationChange = useCallback((memberId: string, percentage: number) => {
-    const teamId = connectedTeams.find(team => 
-      team.availableBandwidth.some(m => m.memberId === memberId)
-    )?.teamId;
-
-    if (!teamId) return;
-
-    // Calculate hours based on percentage
-    const hoursRequested = (percentage / 100) * 8 * (safeOptionData.duration || 1); // Convert % to hours
-    
-    // Update the team allocations in the node data
-    let updatedTeamAllocations = [...teamAllocations];
-    
-    // Find if this team already has an allocation
-    const existingTeamIndex = updatedTeamAllocations.findIndex(a => a.teamId === teamId);
-    
-    if (existingTeamIndex >= 0) {
-      // Update existing team allocation
-      const existingTeam = updatedTeamAllocations[existingTeamIndex];
-      const existingMemberIndex = existingTeam.allocatedMembers.findIndex(m => m.memberId === memberId);
-      
-      if (existingMemberIndex >= 0) {
-        // Update existing member allocation
-        updatedTeamAllocations[existingTeamIndex].allocatedMembers[existingMemberIndex].hours = hoursRequested;
-      } else {
-        // Add new member to existing team
-        updatedTeamAllocations[existingTeamIndex].allocatedMembers.push({
-          memberId,
-          hours: hoursRequested
-        });
-      }
-      
-      // Update requested hours total
-      updatedTeamAllocations[existingTeamIndex].requestedHours = 
-        updatedTeamAllocations[existingTeamIndex].allocatedMembers.reduce(
-          (sum, member) => sum + member.hours, 0
-        );
-    } else {
-      // Create new team allocation
-      updatedTeamAllocations.push({
-        teamId,
-        requestedHours: hoursRequested,
-        allocatedMembers: [{
-          memberId,
-          hours: hoursRequested
-        }]
-      });
-    }
-    
-    // Update node data
-    updateNodeData(id, {
-      ...safeOptionData,
-      teamAllocations: updatedTeamAllocations
+    allocations.forEach((allocation, key) => {
+      const converted: ImportedMemberAllocationData = {
+        ...allocation,
+        memberCapacity: allocation.memberCapacity ? {
+          hoursPerDay: allocation.memberCapacity as number,
+          daysPerWeek: 5, // Default value
+        } : undefined,
+        cost: allocation.cost || 0, // Ensure cost is defined
+      };
+      result.set(key, converted);
     });
     
-    // Save to backend
-    saveToBackend('teamAllocations', updatedTeamAllocations);
-    
-    // Also update via the hook for UI consistency
-    requestTeamAllocation(teamId, hoursRequested, [memberId]);
-  }, [connectedTeams, safeOptionData, id, updateNodeData, requestTeamAllocation]);
-
+    return result;
+  };
+  
   return (
-    <BaseNode selected={selected}>
+    <BaseNode selected={selected} className="w-[400px]">
+      <Handle type="source" position={Position.Top} id="source" />
+      <Handle type="target" position={Position.Bottom} id="target" />
+      
       <NodeHeader>
         <NodeHeaderTitle>
           <div className="flex items-center gap-2">
             <Badge 
               variant="secondary" 
-              className={`cursor-pointer ${getStatusColor(status)}`}
-              onClick={cycleStatus}
+              className={`cursor-pointer ${option.getStatusColor(option.status)}`}
+              onClick={option.cycleStatus}
             >
-              {status}
+              {option.status}
             </Badge>
             <input
-              value={safeOptionData.title}
-              onChange={handleTitleChange}
-              className="bg-transparent outline-none placeholder:text-muted-foreground"
+              value={option.title}
+              onChange={(e) => option.handleTitleChange(e.target.value)}
+              className="bg-transparent outline-none w-full"
               placeholder="Option Title"
             />
           </div>
         </NodeHeaderTitle>
         <NodeHeaderActions>
-          <NodeHeaderMenuAction label="Option node menu">
-            <DropdownMenuItem onSelect={handleDelete} className="cursor-pointer">
+          <button 
+            onClick={option.refreshData}
+            className="p-1 rounded-md hover:bg-muted"
+            title="Refresh data"
+          >
+            <RefreshCw className="h-4 w-4" />
+          </button>
+          <NodeHeaderMenuAction label="Provider Actions">
+            <DropdownMenuItem 
+              className="text-destructive focus:text-destructive"
+              onClick={option.handleDelete}
+            >
               Delete
             </DropdownMenuItem>
           </NodeHeaderMenuAction>
         </NodeHeaderActions>
       </NodeHeader>
 
-      <div className="px-3 pb-3 space-y-4">
+      <div className="p-4 space-y-4">
         <div className="space-y-2">
           <Label>Option Type</Label>
           <RadioGroup
-            value={safeOptionData.optionType}
-            onValueChange={handleOptionTypeChange}
+            value={option.optionType || 'customer'}
+            onValueChange={option.handleOptionTypeChange}
             className="flex gap-4"
           >
             <div className="flex items-center space-x-2">
               <RadioGroupItem value="customer" id="customer" />
-              <Label 
-                htmlFor="customer" 
-                className="text-sm cursor-pointer"
-              >
-                Customer
-              </Label>
+              <Label htmlFor="customer">Customer</Label>
             </div>
             <div className="flex items-center space-x-2">
               <RadioGroupItem value="contract" id="contract" />
-              <Label 
-                htmlFor="contract" 
-                className="text-sm cursor-pointer"
-              >
-                Contract
-              </Label>
+              <Label htmlFor="contract">Contract</Label>
             </div>
             <div className="flex items-center space-x-2">
               <RadioGroupItem value="partner" id="partner" />
-              <Label 
-                htmlFor="partner" 
-                className="text-sm cursor-pointer"
-              >
-                Partner
-              </Label>
+              <Label htmlFor="partner">Partner</Label>
             </div>
           </RadioGroup>
         </div>
 
-        {safeOptionData.optionType === 'customer' && (
+        {(option.optionType === 'customer' || option.optionType === undefined) && (
           <div className="space-y-4 p-3 bg-muted/30 rounded-lg">
             <div className="space-y-2">
               <Label>Transaction Fee Rate</Label>
               <div className="relative">
                 <Input
                   type="number"
-                  value={safeOptionData.transactionFeeRate || ''}
-                  onChange={handleTransactionFeeChange}
+                  value={localTransactionFee}
+                  onChange={handleTransactionFeeInput}
                   className="pr-8 bg-transparent"
                   placeholder="0.00"
                   min={0}
@@ -388,8 +294,8 @@ export function OptionNode({ id, data, selected }: NodeProps) {
                 </span>
                 <Input
                   type="number"
-                  value={safeOptionData.monthlyVolume || ''}
-                  onChange={handleMonthlyVolumeChange}
+                  value={localMonthlyVolume}
+                  onChange={handleMonthlyVolumeInput}
                   className="pl-7 bg-transparent"
                   placeholder="0.00"
                   min={0}
@@ -398,45 +304,39 @@ export function OptionNode({ id, data, selected }: NodeProps) {
               </div>
             </div>
 
-            {(safeOptionData.transactionFeeRate || safeOptionData.monthlyVolume) && (
+            {(option.transactionFeeRate || option.monthlyVolume) && (
               <div className="space-y-1 pt-2 border-t">
-                {safeOptionData.transactionFeeRate && safeOptionData.transactionFeeRate > 0 && (
+                {option.transactionFeeRate && option.transactionFeeRate > 0 && (
                   <div className="text-xs text-muted-foreground flex justify-between">
                     <span>Fee Rate:</span>
-                    <span>${safeOptionData.transactionFeeRate.toFixed(2)} per $100</span>
+                    <span>${option.transactionFeeRate.toFixed(2)} per $100</span>
                   </div>
                 )}
-                {safeOptionData.monthlyVolume && safeOptionData.monthlyVolume > 0 && (
+                {option.monthlyVolume && option.monthlyVolume > 0 && (
                   <div className="text-xs text-muted-foreground flex justify-between">
                     <span>Monthly Volume:</span>
                     <span>
-                      ${safeOptionData.monthlyVolume.toLocaleString('en-US', { 
-                        minimumFractionDigits: 2, 
-                        maximumFractionDigits: 2 
-                      })}
+                      ${formatNumber(option.monthlyVolume)}
                     </span>
                   </div>
                 )}
-                {expectedMonthlyValue > 0 && (
+                {option.expectedMonthlyValue > 0 && (
                   <div className="text-sm font-medium flex justify-between items-center pt-1">
                     <span>Expected Monthly Revenue:</span>
                     <Badge variant="default">
-                      ${expectedMonthlyValue.toLocaleString('en-US', { 
-                        minimumFractionDigits: 2, 
-                        maximumFractionDigits: 2 
-                      })}
+                      ${formatNumber(option.expectedMonthlyValue)}
                     </Badge>
                   </div>
                 )}
-                {payoffDetails && payoffDetails.isPayoffPossible && (
+                {option.payoffDetails && option.payoffDetails.isPayoffPossible && (
                   <div className="text-xs text-muted-foreground flex justify-between">
                     <span>Time to Payoff:</span>
                     <span>
-                      {payoffDetails.monthsToPayoff < 1 
-                        ? `${Math.round(payoffDetails.monthsToPayoff * 30)} days`
-                        : payoffDetails.monthsToPayoff < 12
-                          ? `${payoffDetails.monthsToPayoff.toFixed(1)} months`
-                          : `${payoffDetails.yearsToPayoff.toFixed(1)} years`
+                      {option.payoffDetails.monthsToPayoff < 1 
+                        ? `${Math.round(option.payoffDetails.monthsToPayoff * 30)} days`
+                        : option.payoffDetails.monthsToPayoff < 12
+                          ? `${option.payoffDetails.monthsToPayoff.toFixed(1)} months`
+                          : `${option.payoffDetails.yearsToPayoff.toFixed(1)} years`
                       }
                     </span>
                   </div>
@@ -445,74 +345,129 @@ export function OptionNode({ id, data, selected }: NodeProps) {
             )}
           </div>
         )}
-
-        {/* Time to Close Section */}
-        <div className="space-y-2">
-          <Label>{duration.config.label}</Label>
-          <div className="space-y-1">
-            <div className="relative">
-              <Input
-                value={duration.value || ''}
-                onChange={(e) => duration.handleDurationChange(e.target.value)}
-                onKeyDown={duration.handleDurationKeyDown}
-                className="bg-transparent pr-24"
-                placeholder="e.g. 12 or 2w"
-              />
-              <div className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
-                {duration.displayValue}
-              </div>
+        
+        {/* Time to Close */}
+        <div className="space-y-1">
+          <Label>{option.timeToClose.config.label}</Label>
+          <div className="flex items-center space-x-2">
+            <div className="text-sm font-medium">
+              {option.timeToClose.displayValue}
             </div>
-            <p className="text-xs text-muted-foreground">
-              {duration.config.tip} Max {duration.formatDuration(duration.config.maxDays)}
-            </p>
+            <Input
+              value={option.timeToClose.value || ''}
+              onChange={(e) => option.timeToClose.handleDurationChange(e.target.value)}
+              onKeyDown={option.timeToClose.handleDurationKeyDown}
+              className="w-20 h-8"
+              placeholder="Days"
+            />
           </div>
         </div>
 
-        {/* Team Allocations Section */}
+        <Textarea
+          value={option.description}
+          onChange={(e) => option.handleDescriptionChange(e.target.value)}
+          placeholder="Describe this option..."
+          className="min-h-[80px] resize-none"
+        />
+
+        {/* Resource Allocation Section */}
         <div className="space-y-2">
-          <Label>Team Allocations</Label>
+          <Label className="flex items-center gap-2">
+            <span>Resource Allocation</span>
+            <Badge variant="outline" className="font-mono">
+              {formatHours(costSummary.totalHours)}
+            </Badge>
+          </Label>
           
-          {connectedTeams.length === 0 ? (
+          {option.connectedTeams.length === 0 && (
             <div className="text-sm text-muted-foreground">
               Connect to teams to allocate resources
             </div>
+          )}
+          
+          {option.connectedTeams.map(team => (
+            <TeamAllocation
+              key={team.teamId}
+              team={team}
+              teamAllocation={option.processedTeamAllocations.find((a: ITeamAllocation) => a.teamId === team.teamId)}
+              memberAllocations={convertMemberAllocations(memberAllocations)}
+              projectDurationDays={projectDurationDays}
+              formatMemberName={formatMemberNameForTeam}
+              onMemberValueChange={(teamId, memberId, hours) => {
+                resourceAllocation.handleAllocationChangeLocal(teamId, memberId, hours);
+              }}
+              onMemberValueCommit={(teamId, memberId, hours) => {
+                resourceAllocation.handleAllocationCommit(teamId, memberId, hours);
+              }}
+            />
+          ))}
+        </div>
+
+        {/* Cost Receipt Section */}
+        {costSummary && costSummary.allocations.length > 0 && (
+          <CostReceipt
+            allocations={convertAllocationsToCostArray(costSummary.allocations)}
+            totalCost={costSummary.totalCost}
+            totalHours={costSummary.totalHours}
+            totalDays={costSummary.totalDays}
+          />
+        )}
+
+        {/* Goals & Value Creation Section */}
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <Label>Goals & Value Creation</Label>
+            <Button 
+              variant="ghost" 
+              size="icon" 
+              className="h-5 w-5" 
+              onClick={option.addGoal}
+            >
+              <Plus className="h-3 w-3" />
+            </Button>
+          </div>
+          
+          {option.processedGoals.length === 0 ? (
+            <div className="text-sm text-muted-foreground">
+              Add goals to track value creation
+            </div>
           ) : (
-            <div className="space-y-4">
-              {connectedTeams.map(team => (
-                <div key={team.teamId} className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="font-medium">{team.title}</span>
-                  </div>
-
-                  {/* Member Allocation Controls */}
-                  <div className="space-y-4">
-                    {team.availableBandwidth.map(member => {
-                      const allocation = safeOptionData.teamAllocations
-                        ?.find(a => a.teamId === team.teamId)
-                        ?.allocatedMembers
-                        .find(m => m.memberId === member.memberId);
-                      
-                      const percentage = allocation 
-                        ? (allocation.hours / 8 / (safeOptionData.duration || 1)) * 100 
-                        : 0;
-
-                      return (
-                        <div key={member.memberId} className="space-y-2">
-                          <div className="flex items-center justify-between text-sm">
-                            <span>{member.name}</span>
-                            <span className="text-muted-foreground">
-                              {percentage.toFixed(0)}% ({member.availableHours}h available)
-                            </span>
-                          </div>
-                          <Slider
-                            value={[percentage]}
-                            onValueChange={([value]) => handleAllocationChange(member.memberId, value)}
-                            max={100}
-                            step={1}
-                          />
-                        </div>
-                      );
-                    })}
+            <div className="space-y-2">
+              {option.processedGoals.map(goal => (
+                <div key={goal.id} className="flex items-start gap-2 p-2 rounded-md bg-muted/30">
+                  <Textarea
+                    value={goal.description || ''}
+                    onChange={(e) => option.updateGoal(goal.id, { description: e.target.value })}
+                    placeholder="Describe this goal..."
+                    className="flex-1 min-h-[60px] resize-none bg-transparent text-sm"
+                  />
+                  <div className="flex flex-col gap-1">
+                    <RadioGroup
+                      value={goal.impact || 'medium'}
+                      onValueChange={(value: ImpactLevel) => option.updateGoal(goal.id, { impact: value })}
+                      className="flex flex-col gap-1"
+                    >
+                      <div className="flex items-center space-x-1">
+                        <RadioGroupItem value="high" id={`${goal.id}-high`} className="h-3 w-3" />
+                        <Label htmlFor={`${goal.id}-high`} className="text-xs">High</Label>
+                      </div>
+                      <div className="flex items-center space-x-1">
+                        <RadioGroupItem value="medium" id={`${goal.id}-medium`} className="h-3 w-3" />
+                        <Label htmlFor={`${goal.id}-medium`} className="text-xs">Med</Label>
+                      </div>
+                      <div className="flex items-center space-x-1">
+                        <RadioGroupItem value="low" id={`${goal.id}-low`} className="h-3 w-3" />
+                        <Label htmlFor={`${goal.id}-low`} className="text-xs">Low</Label>
+                      </div>
+                    </RadioGroup>
+                    <Button 
+                      variant="ghost" 
+                      size="icon" 
+                      className="h-5 w-5 mt-1" 
+                      onClick={() => option.removeGoal(goal.id)}
+                    >
+                      <Trash className="h-3 w-3" />
+                    </Button>
                   </div>
                 </div>
               ))}
@@ -520,129 +475,71 @@ export function OptionNode({ id, data, selected }: NodeProps) {
           )}
         </div>
 
-        {/* Cost Summary */}
-        {costs && costs.allocations.length > 0 && (
-          <CostSummary costs={costs} duration={safeOptionData.duration} />
-        )}
-
-        <Textarea
-          value={safeOptionData.description || ''}
-          onChange={handleDescriptionChange}
-          placeholder="Describe this option..."
-          className="min-h-[80px] resize-y bg-transparent"
-        />
-
-        {/* Goals Section */}
-        <div className="space-y-2">
-          <div className="flex items-center justify-between">
-            <Label>Goals & Value Creation</Label>
-            <Button 
-              variant="ghost" 
-              size="sm" 
-              onClick={addGoal}
-              className="h-6 px-2"
-            >
-              <Plus className="h-4 w-4" />
-            </Button>
-          </div>
-          <div className="space-y-2">
-            {goals.map(goal => (
-              <div key={goal.id} className="flex gap-2 items-start">
-                <Textarea
-                  value={goal.description}
-                  onChange={(e) => updateGoal(goal.id, { description: e.target.value })}
-                  placeholder="Describe the goal..."
-                  className="flex-1 min-h-[60px] text-sm"
-                />
-                <div className="flex flex-col gap-1">
-                  <Badge 
-                    variant={goal.impact === 'high' ? 'default' : 'secondary'}
-                    className="cursor-pointer"
-                    onClick={() => updateGoal(goal.id, { 
-                      impact: goal.impact === 'high' ? 'medium' : 'high' 
-                    })}
-                  >
-                    {goal.impact}
-                  </Badge>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => removeGoal(goal.id)}
-                    className="h-6 px-2"
-                  >
-                    <Trash className="h-4 w-4" />
-                  </Button>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Risks Section */}
+        {/* Risks & Mitigations Section */}
         <div className="space-y-2">
           <div className="flex items-center justify-between">
             <Label>Risks & Mitigations</Label>
             <Button 
               variant="ghost" 
-              size="sm" 
-              onClick={addRisk}
-              className="h-6 px-2"
+              size="icon" 
+              className="h-5 w-5" 
+              onClick={option.addRisk}
             >
-              <Plus className="h-4 w-4" />
+              <Plus className="h-3 w-3" />
             </Button>
           </div>
-          <div className="space-y-3">
-            {risks.map(risk => (
-              <div key={risk.id} className="space-y-2">
-                <div className="flex gap-2 items-start">
+          
+          {option.processedRisks.length === 0 ? (
+            <div className="text-sm text-muted-foreground">
+              Add risks to track potential issues
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {option.processedRisks.map(risk => (
+                <div key={risk.id} className="flex items-start gap-2 p-2 rounded-md bg-muted/30">
                   <Textarea
-                    value={risk.description}
-                    onChange={(e) => updateRisk(risk.id, { description: e.target.value })}
-                    placeholder="Describe the risk..."
-                    className="flex-1 min-h-[60px] text-sm"
+                    value={risk.description || ''}
+                    onChange={(e) => option.updateRisk(risk.id, { description: e.target.value })}
+                    placeholder="Describe this risk..."
+                    className="flex-1 min-h-[60px] resize-none bg-transparent text-sm"
                   />
                   <div className="flex flex-col gap-1">
-                    <Badge 
-                      variant={risk.severity === 'high' ? 'destructive' : 'secondary'}
-                      className="cursor-pointer"
-                      onClick={() => updateRisk(risk.id, { 
-                        severity: risk.severity === 'high' ? 'medium' : 'high' 
-                      })}
+                    <RadioGroup
+                      value={risk.severity || 'medium'}
+                      onValueChange={(value: SeverityLevel) => option.updateRisk(risk.id, { severity: value })}
+                      className="flex flex-col gap-1"
                     >
-                      {risk.severity}
-                    </Badge>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => removeRisk(risk.id)}
-                      className="h-6 px-2"
+                      <div className="flex items-center space-x-1">
+                        <RadioGroupItem value="high" id={`${risk.id}-high`} className="h-3 w-3" />
+                        <Label htmlFor={`${risk.id}-high`} className="text-xs">High</Label>
+                      </div>
+                      <div className="flex items-center space-x-1">
+                        <RadioGroupItem value="medium" id={`${risk.id}-medium`} className="h-3 w-3" />
+                        <Label htmlFor={`${risk.id}-medium`} className="text-xs">Med</Label>
+                      </div>
+                      <div className="flex items-center space-x-1">
+                        <RadioGroupItem value="low" id={`${risk.id}-low`} className="h-3 w-3" />
+                        <Label htmlFor={`${risk.id}-low`} className="text-xs">Low</Label>
+                      </div>
+                    </RadioGroup>
+                    <Button 
+                      variant="ghost" 
+                      size="icon" 
+                      className="h-5 w-5 mt-1" 
+                      onClick={() => option.removeRisk(risk.id)}
                     >
-                      <Trash className="h-4 w-4" />
+                      <Trash className="h-3 w-3" />
                     </Button>
                   </div>
                 </div>
-                <Textarea
-                  value={risk.mitigation}
-                  onChange={(e) => updateRisk(risk.id, { mitigation: e.target.value })}
-                  placeholder="How will this risk be mitigated?"
-                  className="w-full text-sm text-muted-foreground"
-                />
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
-
-      <Handle
-        type="source"
-        position={Position.Top}
-        id="source"
-      />
-      <Handle
-        type="target"
-        position={Position.Bottom}
-        id="target"
-      />
     </BaseNode>
   );
-}
+});
+
+// Export the memoized component
+export default OptionNode;

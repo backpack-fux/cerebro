@@ -1,21 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { FeatureService } from '@/services/graph/feature/feature.service';
-import { neo4jStorage } from '@/services/graph/neo4j/neo4j.provider';
-import { CreateFeatureNodeParams, RFFeatureNode, Neo4jFeatureNodeData, MemberAllocation, TeamAllocation } from '@/services/graph/feature/feature.types';
-import { neo4jToReactFlow } from '@/services/graph/feature/feature.transform';
-
-// Initialize the feature service
-const featureService = new FeatureService(neo4jStorage);
+import { featureService } from '@/services/graph/neo4j/neo4j.provider';
+import { CreateFeatureNodeParams, MemberAllocation, TeamAllocation } from '@/services/graph/feature/feature.types';
 
 /**
  * Validates a MemberAllocation object
  * @param allocation The member allocation to validate
  * @returns True if valid, false otherwise
  */
-function isValidMemberAllocation(allocation: any): allocation is MemberAllocation {
+function isValidMemberAllocation(allocation: MemberAllocation): allocation is MemberAllocation {
   return (
-    allocation &&
+    allocation !== null &&
     typeof allocation === 'object' &&
+    'memberId' in allocation &&
+    'timePercentage' in allocation &&
     typeof allocation.memberId === 'string' &&
     typeof allocation.timePercentage === 'number'
   );
@@ -26,7 +23,7 @@ function isValidMemberAllocation(allocation: any): allocation is MemberAllocatio
  * @param allocations The allocations array to validate
  * @returns True if valid, false otherwise
  */
-function isValidMemberAllocations(allocations: any): allocations is MemberAllocation[] {
+function isValidMemberAllocations(allocations: MemberAllocation[]): allocations is MemberAllocation[] {
   return Array.isArray(allocations) && allocations.every(isValidMemberAllocation);
 }
 
@@ -35,15 +32,21 @@ function isValidMemberAllocations(allocations: any): allocations is MemberAlloca
  * @param allocation The team allocation to validate
  * @returns True if valid, false otherwise
  */
-function isValidTeamAllocation(allocation: any): allocation is TeamAllocation {
+function isValidTeamAllocation(allocation: TeamAllocation): allocation is TeamAllocation {
   return (
-    allocation &&
+    allocation !== null &&
     typeof allocation === 'object' &&
+    'teamId' in allocation &&
+    'requestedHours' in allocation &&
+    'allocatedMembers' in allocation &&
     typeof allocation.teamId === 'string' &&
     typeof allocation.requestedHours === 'number' &&
     Array.isArray(allocation.allocatedMembers) &&
-    allocation.allocatedMembers.every((member: any) => 
+    allocation.allocatedMembers.every((member): member is { memberId: string; hours: number } => 
+      member !== null &&
       typeof member === 'object' &&
+      'memberId' in member &&
+      'hours' in member &&
       typeof member.memberId === 'string' &&
       typeof member.hours === 'number'
     )
@@ -55,18 +58,21 @@ function isValidTeamAllocation(allocation: any): allocation is TeamAllocation {
  * @param allocations The allocations array to validate
  * @returns True if valid, false otherwise
  */
-function isValidTeamAllocations(allocations: any): allocations is TeamAllocation[] {
+function isValidTeamAllocations(allocations: TeamAllocation[]): allocations is TeamAllocation[] {
   return Array.isArray(allocations) && allocations.every(isValidTeamAllocation);
 }
 
 export async function POST(req: NextRequest) {
   try {
     console.log('[API] Starting FeatureNode creation');
-    const params: CreateFeatureNodeParams = await req.json();
+    const params = await req.json();
     
     // Remove any memberAllocations or teamAllocations from the params
     // These will be handled by the service after node creation
-    const { memberAllocations, teamAllocations, ...createParams } = params as any;
+    const { memberAllocations, teamAllocations, ...createParams } = params as CreateFeatureNodeParams & {
+      memberAllocations?: MemberAllocation[];
+      teamAllocations?: TeamAllocation[];
+    };
     
     if (!createParams.title || !createParams.position) {
       console.warn('[API] Invalid FeatureNode creation request: Missing required fields');
@@ -126,7 +132,7 @@ export async function POST(req: NextRequest) {
     }
     
     // Retrieve the node to get the complete data
-    const node = await neo4jStorage.getNode(createdNode.id);
+    const node = await featureService.getById(createdNode.id);
     
     if (!node) {
       console.error('[API] Failed to retrieve created node:', createdNode.id);
@@ -136,8 +142,8 @@ export async function POST(req: NextRequest) {
       );
     }
     
-    // Transform the node to properly parse JSON strings
-    const transformedNode = neo4jToReactFlow(node.data as unknown as Neo4jFeatureNodeData);
+    // No need to transform since getById already returns RFFeatureNode
+    const transformedNode = node;
     
     // Ensure the ID is explicitly set in the response
     transformedNode.id = createdNode.id;
@@ -168,9 +174,10 @@ export async function POST(req: NextRequest) {
     });
     
     if (error && typeof error === 'object' && 'code' in error) {
+      const neo4jError = error as { code: string; message: string };
       console.error('[API] Neo4j error details:', {
-        code: (error as any).code,
-        message: (error as any).message
+        code: neo4jError.code,
+        message: neo4jError.message
       });
     }
     

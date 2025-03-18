@@ -1,6 +1,7 @@
-import { RFMilestoneNode, RFMilestoneNodeData, Neo4jMilestoneNodeData, RFMilestoneEdge, Neo4jMilestoneEdge } from '@/services/graph/milestone/milestone.types';
+import { RFMilestoneNode, RFMilestoneNodeData, Neo4jMilestoneNodeData, RFMilestoneEdge, Neo4jMilestoneEdge, FeatureAllocationSummary, OptionRevenueSummary, ProviderCostSummary } from '@/services/graph/milestone/milestone.types';
 import { GraphEdge, GraphNode } from '../neo4j/graph.interface';
 import { Node as Neo4jNode, Relationship as Neo4jRelationship } from 'neo4j-driver';
+import { parseDataFromBackend } from '@/utils/utils';
 
 export function reactFlowToNeo4j(milestoneNode: RFMilestoneNode): Neo4jMilestoneNodeData {
   const data = milestoneNode.data as RFMilestoneNodeData; // Cast to ensure type safety
@@ -10,24 +11,100 @@ export function reactFlowToNeo4j(milestoneNode: RFMilestoneNode): Neo4jMilestone
   const cleanId = milestoneNode.id.startsWith('milestone-') 
     ? milestoneNode.id.substring('milestone-'.length) 
     : milestoneNode.id;
-    
+  
+  // Convert complex objects to JSON strings for Neo4j storage
+  let featureAllocationsValue = undefined;
+  if (data.featureAllocations) {
+    if (typeof data.featureAllocations === 'string') {
+      try {
+        // Try to parse it to validate it's proper JSON
+        JSON.parse(data.featureAllocations);
+        // If it parses successfully, use it as is
+        featureAllocationsValue = data.featureAllocations;
+      } catch {
+        // If it fails to parse, stringify it
+        featureAllocationsValue = JSON.stringify(data.featureAllocations);
+      }
+    } else {
+      // If it's not a string, stringify it
+      featureAllocationsValue = JSON.stringify(data.featureAllocations);
+    }
+  }
+  
+  // Convert option details to JSON string for Neo4j storage
+  let optionDetailsValue = undefined;
+  if (data.optionDetails) {
+    if (typeof data.optionDetails === 'string') {
+      try {
+        // Try to parse it to validate it's proper JSON
+        JSON.parse(data.optionDetails);
+        // If it parses successfully, use it as is
+        optionDetailsValue = data.optionDetails;
+      } catch {
+        // If it fails to parse, stringify it
+        optionDetailsValue = JSON.stringify(data.optionDetails);
+      }
+    } else {
+      // If it's not a string, stringify it
+      optionDetailsValue = JSON.stringify(data.optionDetails);
+    }
+  }
+  
+  // Convert provider details to JSON string for Neo4j storage
+  let providerDetailsValue = undefined;
+  if (data.providerDetails) {
+    if (typeof data.providerDetails === 'string') {
+      try {
+        // Try to parse it to validate it's proper JSON
+        JSON.parse(data.providerDetails);
+        // If it parses successfully, use it as is
+        providerDetailsValue = data.providerDetails;
+      } catch {
+        // If it fails to parse, stringify it
+        providerDetailsValue = JSON.stringify(data.providerDetails);
+      }
+    } else {
+      // If it's not a string, stringify it
+      providerDetailsValue = JSON.stringify(data.providerDetails);
+    }
+  }
+  
   return {
-    id: cleanId, // Use clean ID without prefix
-    name: data.title || 'Untitled Milestone', // Default fallback
-    description: data.description,
+    id: cleanId,
     title: data.title,
+    description: data.description,
     status: data.status,
-    kpis: data.kpis ? JSON.stringify(data.kpis) : undefined, // Convert KPIs to JSON string for Neo4j
-    createdAt: data.createdAt || new Date().toISOString(), // Default to now if not provided
-    updatedAt: data.updatedAt || new Date().toISOString(), // Default to now if not provided
+    name: data.name || data.title || 'Untitled Milestone',
+    kpis: data.kpis ? JSON.stringify(data.kpis) : undefined,
     positionX: milestoneNode.position.x,
     positionY: milestoneNode.position.y,
+    createdAt: data.createdAt,
+    updatedAt: new Date().toISOString(),
+    // Add cost and revenue data
+    totalCost: data.totalCost,
+    monthlyValue: data.monthlyValue,
+    teamCosts: data.teamCosts,
+    providerCosts: data.providerCosts,
+    featureAllocations: featureAllocationsValue,
+    optionDetails: optionDetailsValue,
+    providerDetails: providerDetailsValue
   };
 }
 
 export function neo4jToReactFlow(neo4jData: Neo4jMilestoneNodeData): RFMilestoneNode {
-  // Parse KPIs from JSON string if available
-  const kpis = neo4jData.kpis ? JSON.parse(neo4jData.kpis) : undefined;
+  console.log('[Transform] Converting Neo4j milestone to React Flow:', {
+    id: neo4jData.id,
+    title: neo4jData.title,
+    featureAllocations: typeof neo4jData.featureAllocations === 'string' ? 'string' : typeof neo4jData.featureAllocations,
+    optionDetails: typeof neo4jData.optionDetails === 'string' ? 'string' : typeof neo4jData.optionDetails,
+    providerDetails: typeof neo4jData.providerDetails === 'string' ? 'string' : typeof neo4jData.providerDetails
+  });
+
+  // Define JSON fields that need special handling
+  const jsonFields = ['kpis', 'featureAllocations', 'optionDetails', 'providerDetails'];
+  
+  // Parse all JSON fields
+  const parsedData = parseDataFromBackend(neo4jData as unknown as Record<string, unknown>, jsonFields);
   
   return {
     id: neo4jData.id, // Use the ID directly without adding a prefix
@@ -37,11 +114,20 @@ export function neo4jToReactFlow(neo4jData: Neo4jMilestoneNodeData): RFMilestone
       title: neo4jData.title,
       description: neo4jData.description,
       status: neo4jData.status,
-      kpis,
+      kpis: parsedData.kpis,
       name: neo4jData.name,
       createdAt: neo4jData.createdAt,
       updatedAt: neo4jData.updatedAt,
+      // Add cost and revenue data
+      totalCost: neo4jData.totalCost,
+      monthlyValue: neo4jData.monthlyValue,
+      teamCosts: neo4jData.teamCosts,
+      providerCosts: neo4jData.providerCosts,
+      featureAllocations: parsedData.featureAllocations,
+      optionDetails: parsedData.optionDetails,
+      providerDetails: parsedData.providerDetails
     } as RFMilestoneNodeData,
+    // Add any other properties needed for React Flow
   };
 }
 
@@ -83,33 +169,97 @@ export function neo4jToReactFlowEdge(neo4jEdge: Neo4jMilestoneEdge): RFMilestone
 }
 
 export function transformMilestoneNode(node: Neo4jNode): GraphNode<RFMilestoneNodeData> | null {
-  if (!node?.properties) return null;
+  if (!node?.properties) {
+    console.error('[Transform] Node has no properties:', node);
+    return null;
+  }
 
-  const type = node.labels[0]?.toLowerCase() as 'milestone';
-  if (type !== 'milestone') return null;
+  try {
+    const type = node.labels[0]?.toLowerCase() as 'milestone';
+    if (type !== 'milestone') {
+      console.warn('[Transform] Not a milestone node:', node.labels);
+      return null;
+    }
 
-  const { positionX, positionY, id, kpis, ...properties } = node.properties;
-  
-  // Parse KPIs from JSON string if available
-  const parsedKpis = kpis ? JSON.parse(kpis as string) : undefined;
+    const { 
+      positionX, 
+      positionY, 
+      id, 
+      kpis, 
+      featureAllocations, 
+      optionDetails,
+      providerDetails,
+      ...properties 
+    } = node.properties;
+    
+    if (!id) {
+      console.error('[Transform] Node missing id property:', node.properties);
+      return null;
+    }
+    
+    // Safely parse JSON fields with robust error handling
+    const parseJsonSafely = <T>(jsonString: string | unknown, fieldName: string): T | undefined => {
+      if (!jsonString) return undefined;
+      
+      try {
+        if (typeof jsonString === 'string') {
+          return JSON.parse(jsonString) as T;
+        } else {
+          return jsonString as T;
+        }
+      } catch (error) {
+        console.error(`[Transform] Error parsing ${fieldName} JSON:`, error);
+        return undefined;
+      }
+    };
+    
+    // Parse KPIs
+    const parsedKpis = parseJsonSafely(kpis, 'kpis');
+    
+    // Parse feature allocations
+    const parsedFeatureAllocations = parseJsonSafely<FeatureAllocationSummary[]>(
+      featureAllocations, 'featureAllocations'
+    ) || [];
+    
+    // Parse option details
+    const parsedOptionDetails = parseJsonSafely<OptionRevenueSummary[]>(
+      optionDetails, 'optionDetails'
+    ) || [];
+    
+    // Parse provider details
+    const parsedProviderDetails = parseJsonSafely<ProviderCostSummary[]>(
+      providerDetails, 'providerDetails'
+    ) || [];
+    
+    // Ensure position values are numeric
+    const x = typeof positionX === 'number' ? positionX : 0;
+    const y = typeof positionY === 'number' ? positionY : 0;
 
-  return {
-    id: id as string, // Use the ID directly from Neo4j without adding a prefix
-    type,
-    position: {
-      x: typeof positionX === 'number' ? positionX : 0,
-      y: typeof positionY === 'number' ? positionY : 0,
-    },
-    data: {
-      title: properties.title as string,
-      description: properties.description as string | undefined,
-      status: properties.status as string | undefined,
-      kpis: parsedKpis,
-      name: properties.name as string,
-      createdAt: properties.createdAt as string,
-      updatedAt: properties.updatedAt as string,
-    } as RFMilestoneNodeData,
-  };
+    return {
+      id: id as string,
+      type: 'milestone',
+      position: { x, y },
+      data: {
+        // Using a type assertion here because Neo4j properties can contain various types
+        // that we need to include in the node data. This is safe because we're doing proper
+        // validation of specific fields above and handling the complex nested objects properly.
+        ...(properties as Record<string, unknown>),
+        kpis: parsedKpis,
+        featureAllocations: parsedFeatureAllocations,
+        optionDetails: parsedOptionDetails,
+        providerDetails: parsedProviderDetails,
+        // Ensure critical properties are always present
+        title: properties.title as string || 'Untitled Milestone',
+        name: properties.name as string || properties.title as string || 'Untitled Milestone',
+        description: properties.description as string || '',
+        createdAt: properties.createdAt as string || new Date().toISOString(),
+        updatedAt: properties.updatedAt as string || new Date().toISOString(),
+      } as RFMilestoneNodeData,
+    };
+  } catch (error) {
+    console.error('[Transform] Error transforming milestone node:', error);
+    return null;
+  }
 }
 
 export function transformMilestoneEdge(relationship: Neo4jRelationship, sourceId?: string, targetId?: string): GraphEdge | null {

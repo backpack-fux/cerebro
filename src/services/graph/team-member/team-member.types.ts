@@ -132,6 +132,8 @@ export interface RFTeamMemberEdge extends RFEdge {
     label?: string; // Optional label for display in UI
     edgeType?: string; // Original edge type from Neo4j
     memberSummary?: TeamMemberSummary; // Summary data for the team member
+    allocation?: number; // Allocation percentage for team members
+    role?: string; // Role of the team member in the team
   };
 }
 
@@ -145,6 +147,8 @@ export interface Neo4jTeamMemberEdge {
     memberSummary?: string; // JSON string of TeamMemberSummary
     createdAt?: string; // Optional timestamp for tracking creation
     updatedAt?: string; // Optional timestamp for tracking updates
+    allocation?: number; // Allocation percentage for team members
+    role?: string; // Role of the team member in the team
   };
 }
 

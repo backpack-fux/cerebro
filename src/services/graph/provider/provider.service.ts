@@ -1,5 +1,5 @@
 import { IGraphStorage } from '@/services/graph/neo4j/graph.interface';
-import { RFProviderNode, RFProviderNodeData, CreateProviderNodeParams, UpdateProviderNodeParams, RFProviderEdge, ProviderCost, DDItem, TeamAllocation } from '@/services/graph/provider/provider.types';
+import { RFProviderNode, RFProviderNodeData, CreateProviderNodeParams, UpdateProviderNodeParams, RFProviderEdge, ProviderCost, DDItem, TeamAllocation, Neo4jProviderNodeData } from '@/services/graph/provider/provider.types';
 import { reactFlowToNeo4jEdge, neo4jToReactFlowEdge } from '@/services/graph/provider/provider.transform';
 
 export class ProviderService {
@@ -28,7 +28,77 @@ export class ProviderService {
 
   async update(params: UpdateProviderNodeParams): Promise<RFProviderNode> {
     const { id, ...updateData } = params;
-    return this.storage.updateNode(id, updateData as Partial<RFProviderNodeData>) as Promise<RFProviderNode>;
+    
+    console.log('[ProviderService DEBUG] Updating provider node:', id);
+    console.log('[ProviderService DEBUG] Update data:', JSON.stringify(updateData));
+    
+    // Create a copy of updateData properly typed for Neo4j serialization
+    const neo4jUpdateData: Partial<Neo4jProviderNodeData> = { 
+      ...updateData as Partial<Omit<Neo4jProviderNodeData, 'costs' | 'ddItems' | 'teamAllocations'>>
+    };
+    
+    // Handle costs - ensure it's a string for Neo4j
+    if (updateData.costs) {
+      console.log('[ProviderService DEBUG] costs type:', typeof updateData.costs);
+      console.log('[ProviderService DEBUG] Is Array?', Array.isArray(updateData.costs));
+      
+      // If it's not a string, stringify it
+      if (typeof updateData.costs !== 'string' && updateData.costs !== null) {
+        console.log('[ProviderService DEBUG] costs is not a string, stringifying it');
+        neo4jUpdateData.costs = JSON.stringify(updateData.costs);
+      } else if (typeof updateData.costs === 'string') {
+        neo4jUpdateData.costs = updateData.costs;
+      }
+    }
+    
+    // Handle ddItems - ensure it's a string for Neo4j
+    if (updateData.ddItems) {
+      console.log('[ProviderService DEBUG] ddItems type:', typeof updateData.ddItems);
+      console.log('[ProviderService DEBUG] Is Array?', Array.isArray(updateData.ddItems));
+      
+      // If it's not a string, stringify it
+      if (typeof updateData.ddItems !== 'string' && updateData.ddItems !== null) {
+        console.log('[ProviderService DEBUG] ddItems is not a string, stringifying it');
+        neo4jUpdateData.ddItems = JSON.stringify(updateData.ddItems);
+      } else if (typeof updateData.ddItems === 'string') {
+        neo4jUpdateData.ddItems = updateData.ddItems;
+      }
+    }
+    
+    // Handle teamAllocations - ensure it's a string for Neo4j
+    if (updateData.teamAllocations) {
+      console.log('[ProviderService DEBUG] teamAllocations type:', typeof updateData.teamAllocations);
+      console.log('[ProviderService DEBUG] Is Array?', Array.isArray(updateData.teamAllocations));
+      
+      // If it's not a string, stringify it
+      if (typeof updateData.teamAllocations !== 'string' && updateData.teamAllocations !== null) {
+        console.log('[ProviderService DEBUG] teamAllocations is not a string, stringifying it');
+        neo4jUpdateData.teamAllocations = JSON.stringify(updateData.teamAllocations);
+      } else if (typeof updateData.teamAllocations === 'string') {
+        neo4jUpdateData.teamAllocations = updateData.teamAllocations;
+      }
+    }
+    
+    // Note: We're telling TypeScript this is what we want
+    // The GraphStorage interface expects Partial<RFProviderNodeData>, but we've prepared the data 
+    // to match Neo4j's expected format with strings for complex objects
+    const result = await this.storage.updateNode(id, neo4jUpdateData as unknown as Partial<RFProviderNodeData>);
+    
+    // Cast the result to RFProviderNode
+    const providerNode = result as RFProviderNode;
+    
+    console.log('[ProviderService DEBUG] Update result:', {
+      id: providerNode.id,
+      type: providerNode.type,
+      teamAllocations: providerNode.data.teamAllocations ? 
+        (typeof providerNode.data.teamAllocations === 'string' ? 
+          'string of length ' + (providerNode.data.teamAllocations as string).length : 
+         Array.isArray(providerNode.data.teamAllocations) ? 
+          `array of ${providerNode.data.teamAllocations.length} items` : 
+         typeof providerNode.data.teamAllocations) : 'undefined'
+    });
+    
+    return providerNode;
   }
 
   async delete(id: string): Promise<void> {
@@ -359,5 +429,12 @@ export class ProviderService {
         teamAllocations,
       });
     }
+  }
+
+  // Add getById method to retrieve a node by ID
+  async getById(id: string): Promise<RFProviderNode | null> {
+    const node = await this.storage.getNode(id);
+    if (!node) return null;
+    return node as RFProviderNode;
   }
 } 

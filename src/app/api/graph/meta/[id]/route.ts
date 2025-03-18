@@ -46,9 +46,10 @@ export async function GET(request: NextRequest) {
     
     // Check if it's a Neo4j-specific error
     if (error && typeof error === 'object' && 'code' in error) {
+      const neo4jError = error as { code: string; message: string };
       console.error('[API] Neo4j error details:', {
-        code: (error as any).code,
-        message: (error as any).message
+        code: neo4jError.code,
+        message: neo4jError.message
       });
     }
     
@@ -111,9 +112,10 @@ export async function PATCH(request: NextRequest) {
     
     // Check if it's a Neo4j-specific error
     if (error && typeof error === 'object' && 'code' in error) {
+      const neo4jError = error as { code: string; message: string };
       console.error('[API] Neo4j error details:', {
-        code: (error as any).code,
-        message: (error as any).message
+        code: neo4jError.code,
+        message: neo4jError.message
       });
     }
     
@@ -169,9 +171,10 @@ export async function DELETE(request: NextRequest) {
     
     // Check if it's a Neo4j-specific error
     if (error && typeof error === 'object' && 'code' in error) {
+      const neo4jError = error as { code: string; message: string };
       console.error('[API] Neo4j error details:', {
-        code: (error as any).code,
-        message: (error as any).message
+        code: neo4jError.code,
+        message: neo4jError.message
       });
     }
     

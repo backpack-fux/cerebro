@@ -1,51 +1,70 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { ProviderService } from '@/services/graph/provider/provider.service';
-import { neo4jStorage } from '@/services/graph/neo4j/neo4j.provider';
-import { UpdateProviderNodeParams, Neo4jProviderNodeData, ProviderCost, DDItem, TeamAllocation } from '@/services/graph/provider/provider.types';
+import { createProviderStorage, createProviderService } from '@/services/graph/neo4j/neo4j.provider';
+import { 
+  UpdateProviderNodeParams, 
+  Neo4jProviderNodeData, 
+  ProviderCost, 
+  DDItem, 
+  TeamAllocation, 
+  FixedCost,
+  UnitCost,
+  RevenueCost,
+  TieredCost,
+  DDStatus
+} from '@/services/graph/provider/provider.types';
 import { neo4jToReactFlow } from '@/services/graph/provider/provider.transform';
 
-// Initialize the provider service
-const providerService = new ProviderService(neo4jStorage);
+// Initialize provider service with the correct storage type
+const providerStorage = createProviderStorage();
+const providerService = createProviderService(providerStorage);
 
 /**
  * Validates a ProviderCost object
  * @param cost The provider cost to validate
  * @returns True if valid, false otherwise
  */
-function isValidProviderCost(cost: any): cost is ProviderCost {
-  if (!cost || typeof cost !== 'object' || !cost.id || !cost.name || !cost.costType || !cost.details) {
+function isValidProviderCost(cost: ProviderCost): cost is ProviderCost {
+  if (!cost || typeof cost !== 'object' || !('id' in cost) || !('name' in cost) || !('costType' in cost) || !('details' in cost)) {
     return false;
   }
 
   // Validate based on cost type
   switch (cost.costType) {
-    case 'fixed':
+    case 'fixed': {
+      const details = cost.details as FixedCost;
       return (
-        typeof cost.details.type === 'string' &&
-        typeof cost.details.amount === 'number' &&
-        ['monthly', 'annual'].includes(cost.details.frequency)
+        typeof details.type === 'string' &&
+        typeof details.amount === 'number' &&
+        ['monthly', 'annual'].includes(details.frequency)
       );
-    case 'unit':
+    }
+    case 'unit': {
+      const details = cost.details as UnitCost;
       return (
-        typeof cost.details.type === 'string' &&
-        typeof cost.details.unitPrice === 'number' &&
-        typeof cost.details.unitType === 'string'
+        typeof details.type === 'string' &&
+        typeof details.unitPrice === 'number' &&
+        typeof details.unitType === 'string'
       );
-    case 'revenue':
+    }
+    case 'revenue': {
+      const details = cost.details as RevenueCost;
       return (
-        typeof cost.details.type === 'string' &&
-        typeof cost.details.percentage === 'number'
+        typeof details.type === 'string' &&
+        typeof details.percentage === 'number'
       );
-    case 'tiered':
+    }
+    case 'tiered': {
+      const details = cost.details as TieredCost;
       return (
-        typeof cost.details.type === 'string' &&
-        typeof cost.details.unitType === 'string' &&
-        Array.isArray(cost.details.tiers) &&
-        cost.details.tiers.every((tier: any) => 
+        typeof details.type === 'string' &&
+        typeof details.unitType === 'string' &&
+        Array.isArray(details.tiers) &&
+        details.tiers.every((tier) => 
           typeof tier.min === 'number' && 
           typeof tier.unitPrice === 'number'
         )
       );
+    }
     default:
       return false;
   }
@@ -56,7 +75,7 @@ function isValidProviderCost(cost: any): cost is ProviderCost {
  * @param costs The costs array to validate
  * @returns True if valid, false otherwise
  */
-function isValidProviderCosts(costs: any): costs is ProviderCost[] {
+function isValidProviderCosts(costs: ProviderCost[]): costs is ProviderCost[] {
   return Array.isArray(costs) && costs.every(isValidProviderCost);
 }
 
@@ -65,13 +84,13 @@ function isValidProviderCosts(costs: any): costs is ProviderCost[] {
  * @param item The DD item to validate
  * @returns True if valid, false otherwise
  */
-function isValidDDItem(item: any): item is DDItem {
+function isValidDDItem(item: DDItem): item is DDItem {
+  if (!item || typeof item !== 'object') return false;
+  
   return (
-    item &&
-    typeof item === 'object' &&
     typeof item.id === 'string' &&
     typeof item.name === 'string' &&
-    ['pending', 'in_progress', 'completed', 'blocked'].includes(item.status)
+    ['pending', 'in_progress', 'completed', 'blocked'].includes(item.status as DDStatus)
   );
 }
 
@@ -80,7 +99,7 @@ function isValidDDItem(item: any): item is DDItem {
  * @param items The items array to validate
  * @returns True if valid, false otherwise
  */
-function isValidDDItems(items: any): items is DDItem[] {
+function isValidDDItems(items: DDItem[]): items is DDItem[] {
   return Array.isArray(items) && items.every(isValidDDItem);
 }
 
@@ -89,15 +108,20 @@ function isValidDDItems(items: any): items is DDItem[] {
  * @param allocation The team allocation to validate
  * @returns True if valid, false otherwise
  */
-function isValidTeamAllocation(allocation: any): allocation is TeamAllocation {
+function isValidTeamAllocation(allocation: TeamAllocation): allocation is TeamAllocation {
+  if (!allocation || typeof allocation !== 'object' || !('allocatedMembers' in allocation)) {
+    return false;
+  }
+
   return (
-    allocation &&
-    typeof allocation === 'object' &&
     typeof allocation.teamId === 'string' &&
     typeof allocation.requestedHours === 'number' &&
     Array.isArray(allocation.allocatedMembers) &&
-    allocation.allocatedMembers.every((member: any) => 
+    allocation.allocatedMembers.every((member) => 
+      member !== null &&
       typeof member === 'object' &&
+      'memberId' in member &&
+      'hours' in member &&
       typeof member.memberId === 'string' &&
       typeof member.hours === 'number'
     )
@@ -109,12 +133,12 @@ function isValidTeamAllocation(allocation: any): allocation is TeamAllocation {
  * @param allocations The allocations array to validate
  * @returns True if valid, false otherwise
  */
-function isValidTeamAllocations(allocations: any): allocations is TeamAllocation[] {
+function isValidTeamAllocations(allocations: TeamAllocation[]): allocations is TeamAllocation[] {
   return Array.isArray(allocations) && allocations.every(isValidTeamAllocation);
 }
 
 // GET /api/graph/provider/[id] - Get a provider node by ID
-export async function GET(request: NextRequest) {
+export async function GET(request: NextRequest): Promise<NextResponse> {
   try {
     // Get ID from URL instead of params
     const url = new URL(request.url);
@@ -131,8 +155,8 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Use the neo4jStorage to get the node
-    const rawNode = await neo4jStorage.getNode(id);
+    // Use the providerStorage to get the node
+    const rawNode = await providerStorage.getNode(id);
     
     if (!rawNode) {
       console.warn('[API] ProviderNode not found:', id);
@@ -182,12 +206,31 @@ export async function GET(request: NextRequest) {
     
     // Check if it's a Neo4j-specific error
     if (error && typeof error === 'object' && 'code' in error) {
+      const neo4jError = error as { code: string; message: string };
       console.error('[API] Neo4j error details:', {
-        code: (error as any).code,
-        message: (error as any).message
+        code: neo4jError.code,
+        message: neo4jError.message
       });
+      
+      // Return specific error response based on Neo4j error code
+      if (neo4jError.code === 'Neo.ClientError.Schema.ConstraintValidationFailed') {
+        return NextResponse.json(
+          { error: 'Database constraint violation', details: neo4jError.message },
+          { status: 409 }
+        );
+      } else if (neo4jError.code.startsWith('Neo.ClientError')) {
+        return NextResponse.json(
+          { error: 'Database client error', details: neo4jError.message },
+          { status: 400 }
+        );
+      } else if (neo4jError.code.startsWith('Neo.TransientError')) {
+        return NextResponse.json(
+          { error: 'Temporary database error, please retry', details: neo4jError.message },
+          { status: 503 }
+        );
+      }
     }
-    
+
     return NextResponse.json(
       { error: 'Failed to get ProviderNode', details: error instanceof Error ? error.message : 'Unknown error' },
       { status: 500 }
@@ -196,7 +239,7 @@ export async function GET(request: NextRequest) {
 }
 
 // PATCH /api/graph/provider/[id] - Update a provider node by ID
-export async function PATCH(request: NextRequest) {
+export async function PATCH(request: NextRequest): Promise<NextResponse> {
   try {
     // Get ID from URL instead of params
     const url = new URL(request.url);
@@ -245,9 +288,9 @@ export async function PATCH(request: NextRequest) {
         { status: 400 }
       );
     }
-    
+
     // Check if the node exists first
-    const node = await neo4jStorage.getNode(id);
+    const node = await providerStorage.getNode(id);
     
     if (!node) {
       console.warn('[API] ProviderNode not found for update:', id);
@@ -255,18 +298,6 @@ export async function PATCH(request: NextRequest) {
         { error: 'ProviderNode not found' },
         { status: 404 }
       );
-    }
-
-    // Convert complex objects to JSON strings
-    const cleanUpdateData: any = { ...updateData };
-    if (cleanUpdateData.costs) {
-      cleanUpdateData.costs = JSON.stringify(cleanUpdateData.costs);
-    }
-    if (cleanUpdateData.ddItems) {
-      cleanUpdateData.ddItems = JSON.stringify(cleanUpdateData.ddItems);
-    }
-    if (cleanUpdateData.teamAllocations) {
-      cleanUpdateData.teamAllocations = JSON.stringify(cleanUpdateData.teamAllocations);
     }
 
     console.log('[API] Updating ProviderNode with data:', {
@@ -281,14 +312,14 @@ export async function PATCH(request: NextRequest) {
       teamAllocations: updateData.teamAllocations ? `${updateData.teamAllocations.length} allocations` : 'not provided'
     });
 
-    // Use the providerService to update the node
-    const updatedNode = await providerService.update(cleanUpdateData);
-    
+    // Update the provider node
+    const updatedNode = await providerService.update(updateData);
+
     // Ensure complex objects are properly parsed
     if (typeof updatedNode.data.costs === 'string') {
       try {
         updatedNode.data.costs = JSON.parse(updatedNode.data.costs);
-      } catch (e) {
+      } catch {
         updatedNode.data.costs = [];
       }
     }
@@ -296,7 +327,7 @@ export async function PATCH(request: NextRequest) {
     if (typeof updatedNode.data.ddItems === 'string') {
       try {
         updatedNode.data.ddItems = JSON.parse(updatedNode.data.ddItems);
-      } catch (e) {
+      } catch {
         updatedNode.data.ddItems = [];
       }
     }
@@ -304,13 +335,10 @@ export async function PATCH(request: NextRequest) {
     if (typeof updatedNode.data.teamAllocations === 'string') {
       try {
         updatedNode.data.teamAllocations = JSON.parse(updatedNode.data.teamAllocations);
-      } catch (e) {
+      } catch {
         updatedNode.data.teamAllocations = [];
       }
     }
-
-    // Ensure the ID is included in the response
-    updatedNode.id = id;
 
     console.log('[API] Successfully updated ProviderNode:', {
       id: updatedNode.id,
@@ -326,6 +354,7 @@ export async function PATCH(request: NextRequest) {
       }
     });
 
+    // Return the updated node
     return NextResponse.json(updatedNode);
   } catch (error) {
     console.error('[API] Error updating ProviderNode:', {
@@ -336,10 +365,29 @@ export async function PATCH(request: NextRequest) {
     
     // Check if it's a Neo4j-specific error
     if (error && typeof error === 'object' && 'code' in error) {
+      const neo4jError = error as { code: string; message: string };
       console.error('[API] Neo4j error details:', {
-        code: (error as any).code,
-        message: (error as any).message
+        code: neo4jError.code,
+        message: neo4jError.message
       });
+      
+      // Return specific error response based on Neo4j error code
+      if (neo4jError.code === 'Neo.ClientError.Schema.ConstraintValidationFailed') {
+        return NextResponse.json(
+          { error: 'Database constraint violation', details: neo4jError.message },
+          { status: 409 }
+        );
+      } else if (neo4jError.code.startsWith('Neo.ClientError')) {
+        return NextResponse.json(
+          { error: 'Database client error', details: neo4jError.message },
+          { status: 400 }
+        );
+      } else if (neo4jError.code.startsWith('Neo.TransientError')) {
+        return NextResponse.json(
+          { error: 'Temporary database error, please retry', details: neo4jError.message },
+          { status: 503 }
+        );
+      }
     }
     
     return NextResponse.json(
@@ -350,7 +398,7 @@ export async function PATCH(request: NextRequest) {
 }
 
 // DELETE /api/graph/provider/[id] - Delete a provider node by ID
-export async function DELETE(request: NextRequest) {
+export async function DELETE(request: NextRequest): Promise<NextResponse> {
   try {
     // Get ID from URL instead of params
     const url = new URL(request.url);
@@ -368,7 +416,7 @@ export async function DELETE(request: NextRequest) {
     }
 
     // Check if the node exists first
-    const node = await neo4jStorage.getNode(id);
+    const node = await providerStorage.getNode(id);
     
     if (!node) {
       console.warn('[API] ProviderNode not found for deletion:', id);
@@ -380,9 +428,10 @@ export async function DELETE(request: NextRequest) {
 
     // Use the providerService to delete the node
     await providerService.delete(id);
-
+    
     console.log('[API] Successfully deleted ProviderNode:', id);
 
+    // Return success response
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error('[API] Error deleting ProviderNode:', {
@@ -393,10 +442,29 @@ export async function DELETE(request: NextRequest) {
     
     // Check if it's a Neo4j-specific error
     if (error && typeof error === 'object' && 'code' in error) {
+      const neo4jError = error as { code: string; message: string };
       console.error('[API] Neo4j error details:', {
-        code: (error as any).code,
-        message: (error as any).message
+        code: neo4jError.code,
+        message: neo4jError.message
       });
+      
+      // Return specific error response based on Neo4j error code
+      if (neo4jError.code === 'Neo.ClientError.Schema.ConstraintValidationFailed') {
+        return NextResponse.json(
+          { error: 'Database constraint violation', details: neo4jError.message },
+          { status: 409 }
+        );
+      } else if (neo4jError.code.startsWith('Neo.ClientError')) {
+        return NextResponse.json(
+          { error: 'Database client error', details: neo4jError.message },
+          { status: 400 }
+        );
+      } else if (neo4jError.code.startsWith('Neo.TransientError')) {
+        return NextResponse.json(
+          { error: 'Temporary database error, please retry', details: neo4jError.message },
+          { status: 503 }
+        );
+      }
     }
     
     return NextResponse.json(

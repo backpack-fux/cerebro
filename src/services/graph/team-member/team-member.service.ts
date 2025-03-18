@@ -24,6 +24,12 @@ export class TeamMemberService {
       const updatedAt = createdAt;
       const title = params.title || 'Untitled Team Member';
       
+      // Ensure roles is an array, even if empty
+      const roles = params.roles || [];
+      
+      // Ensure skills is an array, even if empty
+      const skills = params.skills || [];
+      
       const node: RFTeamMemberNode = {
         id: crypto.randomUUID(),
         type: 'teamMember',
@@ -32,7 +38,7 @@ export class TeamMemberService {
           title: title,
           name: title, // Set name to title as required by ReactFlowNodeBase
           description: params.bio || '', // Use bio as description
-          roles: params.roles || [],
+          roles: roles,
           bio: params.bio || '',
           timezone: params.timezone,
           dailyRate: params.dailyRate,
@@ -40,13 +46,20 @@ export class TeamMemberService {
           daysPerWeek: params.daysPerWeek || 5,
           weeklyCapacity: (params.hoursPerDay || 8) * (params.daysPerWeek || 5),
           startDate: params.startDate,
-          skills: params.skills || [],
+          skills: skills,
           createdAt: createdAt,
           updatedAt: updatedAt,
         },
       };
       
-      const result = await this.storage.createNode('teamMember', node.data);
+      // Create a Neo4j-compatible version of the data
+      const neo4jData = {
+        ...node.data,
+        // Properties that need special handling will be handled by the transform function
+      };
+      
+      // For Neo4j storage, we're passing the raw node data and letting the transform handle serialization
+      const result = await this.storage.createNode('teamMember', neo4jData as RFTeamMemberNodeData);
       console.log('[TeamMemberService] Created team member node:', result);
       return result as RFTeamMemberNode;
     } catch (error) {
@@ -65,6 +78,8 @@ export class TeamMemberService {
     
     try {
       const { id, ...updateData } = params;
+      
+      // Remove any complex objects that should not be directly stored in Neo4j
       const result = await this.storage.updateNode(id, updateData as Partial<RFTeamMemberNodeData>);
       console.log('[TeamMemberService] Updated team member node:', result);
       return result as RFTeamMemberNode;
@@ -227,6 +242,121 @@ export class TeamMemberService {
       return rfEdges;
     } catch (error) {
       console.error('[TeamMemberService] Error getting edges for team member node:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Connect a team member to a team and update the team's roster
+   * @param teamMemberId The team member ID
+   * @param teamId The team ID
+   * @param allocation The allocation percentage (default 100)
+   * @param role The role in the team (default 'Developer')
+   * @returns The created edge
+   */
+  async connectToTeam(
+    teamMemberId: string, 
+    teamId: string, 
+    allocation: number = 100, 
+    role: string = 'Developer'
+  ): Promise<RFTeamMemberEdge> {
+    console.log(`[TeamMemberService] Connecting team member ${teamMemberId} to team ${teamId}`);
+    
+    try {
+      // 1. Get the team member to extract necessary information
+      const teamMember = await this.get(teamMemberId);
+      if (!teamMember) {
+        throw new Error(`Team member with ID ${teamMemberId} not found`);
+      }
+      
+      // 2. Create the edge between team member and team
+      const edge: RFTeamMemberEdge = {
+        id: `edge-${crypto.randomUUID()}`,
+        source: teamMemberId,
+        target: teamId,
+        type: 'source',
+        data: {
+          label: 'Team Member',
+          edgeType: 'source'
+        }
+      };
+      
+      const createdEdge = await this.createEdge(edge);
+      
+      // 3. Update the team member with the team ID and allocation
+      await this.update({
+        id: teamMemberId,
+        teamId: teamId,
+        allocation: allocation
+      });
+      
+      // 4. Import the team service to update the team's roster
+      // This is done here to avoid circular dependencies
+      const { teamService } = await import('@/services/graph/neo4j/neo4j.provider');
+      
+      // 5. Create a roster member object
+      const rosterMember: {
+        memberId: string;
+        allocation: number;
+        role: string;
+      } = {
+        memberId: teamMemberId,
+        allocation: allocation,
+        role: role
+      };
+      
+      // 6. Get the current team to access its roster
+      // Use neo4jStorage directly since we're not sure if teamService has a get method
+      const { neo4jStorage } = await import('@/services/graph/neo4j/neo4j.provider');
+      const teamNode = await neo4jStorage.getNode(teamId);
+      
+      if (!teamNode) {
+        throw new Error(`Team with ID ${teamId} not found`);
+      }
+      
+      // 7. Update the team's roster
+      // Parse the roster from the team node
+      let currentRoster: Array<{
+        memberId: string;
+        allocation: number;
+        role: string;
+      }> = [];
+      
+      try {
+        if (teamNode.data.roster) {
+          currentRoster = JSON.parse(teamNode.data.roster as string);
+        }
+      } catch (error) {
+        console.error('[TeamMemberService] Error parsing team roster:', error);
+        // Continue with empty roster if parsing fails
+      }
+      
+      // Check if the member is already in the roster
+      const existingMemberIndex = currentRoster.findIndex(m => m.memberId === teamMemberId);
+      
+      if (existingMemberIndex >= 0) {
+        // Update existing roster entry
+        currentRoster[existingMemberIndex] = {
+          ...currentRoster[existingMemberIndex],
+          allocation: allocation,
+          role: role
+        };
+      } else {
+        // Add new roster entry
+        currentRoster.push(rosterMember);
+      }
+      
+      // 8. Update the team with the new roster
+      await teamService.update({
+        id: teamId,
+        roster: currentRoster
+      });
+      
+      console.log(`[TeamMemberService] Successfully connected team member ${teamMemberId} to team ${teamId}`);
+      
+      return createdEdge;
+    } catch (error) {
+      console.error(`[TeamMemberService] Error connecting team member ${teamMemberId} to team ${teamId}:`, error);
       throw error;
     }
   }

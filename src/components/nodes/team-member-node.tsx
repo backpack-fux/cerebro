@@ -1,6 +1,17 @@
 "use client";
 
-import { Handle, Position, type NodeProps, Node } from "@xyflow/react";
+import React, { memo } from 'react';
+import { Handle, Position, NodeProps } from '@xyflow/react';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Slider } from '@/components/ui/slider';
+import { Textarea } from '@/components/ui/textarea';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Button } from '@/components/ui/button';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { RFTeamMemberNodeData, Role } from '@/services/graph/team-member/team-member.types';
+import { useValidation } from '@/contexts/validation-context';
+import { useTeamMemberNode } from '@/hooks/useTeamMemberNode';
 import { BaseNode } from '@/components/nodes/base-node';
 import { 
   NodeHeader,
@@ -8,631 +19,317 @@ import {
   NodeHeaderActions,
   NodeHeaderMenuAction,
 } from '@/components/nodes/node-header';
-import { DropdownMenuItem } from "@radix-ui/react-dropdown-menu";
-import { useCallback, useMemo, useEffect, useRef } from "react";
-import { useReactFlow, useNodeConnections } from "@xyflow/react";
-import { Textarea } from "@/components/ui/textarea";
-import { Label } from "@/components/ui/label";
-import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { useValidation } from '@/contexts/validation-context';
-import { cn } from '@/lib/utils';
-import { Checkbox } from "@/components/ui/checkbox";
-import { GraphApiClient } from '@/services/graph/neo4j/api-client';
-import { NodeType } from '@/services/graph/neo4j/api-urls';
-import { toast } from "sonner";
-import { 
-  RFTeamMemberNodeData, 
-  TeamMemberSummary, 
-  TIMEZONES,
-  DEFAULT_START_DATE,
-  EARLIEST_START_DATE
-} from '@/services/graph/team-member/team-member.types';
-import { BASE_ROLES } from '@/services/graph/shared/shared.types';
+import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
+import { RefreshCw } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
 
-export function TeamMemberNode({ 
-  id, 
-  data, 
-  selected 
-}: NodeProps) {
-  const { updateNodeData, setNodes, getNodes } = useReactFlow();
+// Common roles for team members
+const COMMON_ROLES: Role[] = [
+  'Developer',
+  'Designer',
+  'Product Manager',
+  'Project Manager',
+  'QA Engineer',
+  'DevOps Engineer',
+  'Data Scientist',
+  'UX Researcher',
+];
+
+// Define the component with explicit typing
+const TeamMemberNode = memo(({ id, data, selected }: NodeProps) => {
   const { addError, clearErrors, getErrors } = useValidation();
-  const connections = useNodeConnections({ id });
-
-  // Cast data to the correct type
-  const memberData = data as RFTeamMemberNodeData;
   
-  // Refs for debounce timers
-  const titleDebounceRef = useRef<NodeJS.Timeout | null>(null);
-  const bioDebounceRef = useRef<NodeJS.Timeout | null>(null);
-  const hoursDebounceRef = useRef<NodeJS.Timeout | null>(null);
-  const daysDebounceRef = useRef<NodeJS.Timeout | null>(null);
-  const rateDebounceRef = useRef<NodeJS.Timeout | null>(null);
-  const startDateDebounceRef = useRef<NodeJS.Timeout | null>(null);
-  const rolesDebounceRef = useRef<NodeJS.Timeout | null>(null);
-  const timezoneDebounceRef = useRef<NodeJS.Timeout | null>(null);
+  // Use the team member node hook to manage state and operations
+  const teamMember = useTeamMemberNode(id, data as RFTeamMemberNodeData, addError, clearErrors);
+  
+  // State for custom role input
+  const [customRole, setCustomRole] = React.useState('');
 
-  // Helper function to save data to backend
-  const saveToBackend = useCallback(async (updatedData: Partial<RFTeamMemberNodeData>) => {
-    try {
-      await GraphApiClient.updateNode('teamMember' as NodeType, id, updatedData);
-      console.log(`Updated team member ${id}:`, updatedData);
-    } catch (error) {
-      console.error(`Failed to update team member ${id}:`, error);
-      toast.error(`Failed to save changes`, {
-        description: `${error instanceof Error ? error.message : 'Unknown error'}`
-      });
+  const handleAddCustomRole = () => {
+    if (customRole && !teamMember.roles.includes(customRole)) {
+      teamMember.handleRolesChange(customRole, true);
+      setCustomRole('');
     }
-  }, [id]);
+  };
 
-  // Initialize with defaults if values are undefined
-  useEffect(() => {
-    if (memberData.hoursPerDay === undefined || 
-        memberData.daysPerWeek === undefined || 
-        !memberData.startDate) {
-      updateNodeData(id, {
-        ...memberData,
-        hoursPerDay: memberData.hoursPerDay ?? 8,
-        daysPerWeek: memberData.daysPerWeek ?? 5,
-        weeklyCapacity: (memberData.hoursPerDay ?? 8) * (memberData.daysPerWeek ?? 5),
-        startDate: memberData.startDate ?? DEFAULT_START_DATE,
-        // Ensure name is set if it's not already
-        name: memberData.name ?? memberData.title ?? 'Untitled Team Member',
-        // Ensure description is set if it's not already
-        description: memberData.description ?? memberData.bio ?? '',
-      });
-    }
-  }, [id, memberData, updateNodeData]);
-
-  // Calculate weekly capacity
-  const updateWeeklyCapacity = useCallback((hoursPerDay: number, daysPerWeek: number) => {
-    const updatedData: Partial<RFTeamMemberNodeData> = {
-      hoursPerDay,
-      daysPerWeek,
-      weeklyCapacity: hoursPerDay * daysPerWeek
-    };
-    updateNodeData(id, { ...memberData, ...updatedData });
-    
-    // Clear any existing debounce timer
-    if (hoursDebounceRef.current) {
-      clearTimeout(hoursDebounceRef.current);
-    }
-    if (daysDebounceRef.current) {
-      clearTimeout(daysDebounceRef.current);
-    }
-    
-    // Set a new debounce timer
-    const debounceTimer = setTimeout(async () => {
-      await saveToBackend(updatedData);
-    }, 1000); // 1 second debounce
-    
-    // Store the timer reference
-    hoursDebounceRef.current = debounceTimer;
-    daysDebounceRef.current = debounceTimer;
-  }, [id, memberData, updateNodeData, saveToBackend]);
-
-  // Validation handlers
-  const validateHoursPerDay = useCallback((hours: number) => {
-    clearErrors(id);
-    if (hours < 0 || hours > 24) {
-      addError(id, {
-        nodeId: id,
-        field: 'hoursPerDay',
-        message: 'Hours must be between 0 and 24'
-      });
-    }
-  }, [id, addError, clearErrors]);
-
-  const validateDaysPerWeek = useCallback((days: number) => {
-    clearErrors(id);
-    if (days < 0 || days > 7) {
-      addError(id, {
-        nodeId: id,
-        field: 'daysPerWeek',
-        message: 'Days must be between 0 and 7'
-      });
-    }
-  }, [id, addError, clearErrors]);
-
-  const validateDailyRate = useCallback((rate: number) => {
-    clearErrors(id);
-    if (rate < 0) {
-      addError(id, {
-        nodeId: id,
-        field: 'dailyRate',
-        message: 'Daily rate cannot be negative'
-      });
-    }
-  }, [id, addError, clearErrors]);
-
-  // Add validation handler for start date
-  const validateStartDate = useCallback((dateStr: string) => {
-    clearErrors(id);
-    const date = new Date(dateStr);
-    const earliest = new Date(EARLIEST_START_DATE);
-    
-    if (date < earliest) {
-      addError(id, {
-        nodeId: id,
-        field: 'startDate',
-        message: 'Start date cannot be earlier than January 1, 2020'
-      });
-    }
-  }, [id, addError, clearErrors]);
-
-  // Update the input handlers to include validation and backend saving
-  const handleHoursPerDayChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const hours = Math.min(Math.max(0, Number(e.target.value)), 24);
-    updateWeeklyCapacity(hours, memberData.daysPerWeek ?? 5);
-  }, [memberData.daysPerWeek, updateWeeklyCapacity]);
-
-  const handleDaysPerWeekChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const days = Math.min(Math.max(0, Number(e.target.value)), 7);
-    updateWeeklyCapacity(memberData.hoursPerDay ?? 8, days);
-  }, [memberData.hoursPerDay, updateWeeklyCapacity]);
-
-  const handleDailyRateChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const rate = parseFloat(e.target.value);
-    if (!isNaN(rate)) {
-      const updatedData: Partial<RFTeamMemberNodeData> = { dailyRate: rate };
-      updateNodeData(id, { ...memberData, ...updatedData });
-      
-      // Clear any existing debounce timer
-      if (rateDebounceRef.current) {
-        clearTimeout(rateDebounceRef.current);
-      }
-      
-      // Set a new debounce timer
-      rateDebounceRef.current = setTimeout(async () => {
-        await saveToBackend(updatedData);
-        rateDebounceRef.current = null;
-      }, 1000); // 1 second debounce
-    }
-  }, [id, memberData, updateNodeData, saveToBackend]);
-
-  // Update the start date handler
-  const handleStartDateChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const startDate = e.target.value || DEFAULT_START_DATE;
-    const updatedData: Partial<RFTeamMemberNodeData> = { startDate };
-    updateNodeData(id, { ...memberData, ...updatedData });
-    
-    // Clear any existing debounce timer
-    if (startDateDebounceRef.current) {
-      clearTimeout(startDateDebounceRef.current);
-    }
-    
-    // Set a new debounce timer
-    startDateDebounceRef.current = setTimeout(async () => {
-      await saveToBackend(updatedData);
-      startDateDebounceRef.current = null;
-    }, 1000); // 1 second debounce
-  }, [id, memberData, updateNodeData, saveToBackend]);
-
-  const handleDelete = useCallback(() => {
-    // Delete the node from the backend
-    GraphApiClient.deleteNode('teamMember' as NodeType, id)
-      .then(() => {
-        setNodes((nodes) => nodes.filter((node) => node.id !== id));
-        
-        // Also delete connected edges
-        const connectedEdges = getNodes().filter((node) => 
-          connections.some(conn => conn.source === node.id || conn.target === node.id)
-        );
-        
-        if (connectedEdges.length > 0) {
-          console.log('Deleting connected edges for team member:', connectedEdges);
-        }
-      })
-      .catch((error) => {
-        console.error('Failed to delete team member node:', error);
-        toast.error("Delete Failed: Failed to delete the team member node from the server.");
-      });
-  }, [id, setNodes, getNodes, connections]);
-
-  // Calculate member summary data
-  const memberSummary = useMemo<TeamMemberSummary>(() => ({
-    id,
-    weeklyCapacity: memberData.weeklyCapacity || 0,
-    dailyRate: memberData.dailyRate || 0,
-    roles: memberData.roles || [],
-    allocation: memberData.allocation || 0,
-    startDate: memberData.startDate
-  }), [
-    id,
-    memberData.weeklyCapacity,
-    memberData.dailyRate,
-    memberData.roles,
-    memberData.allocation,
-    memberData.startDate
-  ]);
-
-  // Add handler for roles with backend saving
-  const handleRolesChange = useCallback((role: string, checked: boolean) => {
-    const updatedRoles = checked 
-      ? [...(memberData.roles || []), role]
-      : (memberData.roles || []).filter(r => r !== role);
-    
-    const updatedData: Partial<RFTeamMemberNodeData> = { roles: updatedRoles };
-    updateNodeData(id, { ...memberData, ...updatedData });
-    
-    // Clear any existing debounce timer
-    if (rolesDebounceRef.current) {
-      clearTimeout(rolesDebounceRef.current);
-    }
-    
-    // Set a new debounce timer
-    rolesDebounceRef.current = setTimeout(async () => {
-      await saveToBackend(updatedData);
-      rolesDebounceRef.current = null;
-    }, 1000); // 1 second debounce
-  }, [id, memberData, updateNodeData, saveToBackend]);
-
-  // Update title handler to also update name for consistency and save to backend
-  const handleTitleChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const title = e.target.value;
-    const updatedData: Partial<RFTeamMemberNodeData> = { 
-      title,
-      name: title // Keep name in sync with title
-    };
-    updateNodeData(id, { ...memberData, ...updatedData });
-    
-    // Clear any existing debounce timer
-    if (titleDebounceRef.current) {
-      clearTimeout(titleDebounceRef.current);
-    }
-    
-    // Set a new debounce timer
-    titleDebounceRef.current = setTimeout(async () => {
-      await saveToBackend(updatedData);
-      titleDebounceRef.current = null;
-    }, 1000); // 1 second debounce
-  }, [id, memberData, updateNodeData, saveToBackend]);
-
-  // Update bio handler to also update description for consistency and save to backend
-  const handleBioChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    const bio = e.target.value;
-    const updatedData: Partial<RFTeamMemberNodeData> = { 
-      bio,
-      description: bio // Keep description in sync with bio
-    };
-    updateNodeData(id, { ...memberData, ...updatedData });
-    
-    // Clear any existing debounce timer
-    if (bioDebounceRef.current) {
-      clearTimeout(bioDebounceRef.current);
-    }
-    
-    // Set a new debounce timer
-    bioDebounceRef.current = setTimeout(async () => {
-      await saveToBackend(updatedData);
-      bioDebounceRef.current = null;
-    }, 1000); // 1 second debounce
-  }, [id, memberData, updateNodeData, saveToBackend]);
-
-  // Add handler for timezone with backend saving
-  const handleTimezoneChange = useCallback((timezone: string) => {
-    const updatedData: Partial<RFTeamMemberNodeData> = { timezone };
-    updateNodeData(id, { ...memberData, ...updatedData });
-    
-    // Clear any existing debounce timer
-    if (timezoneDebounceRef.current) {
-      clearTimeout(timezoneDebounceRef.current);
-    }
-    
-    // Set a new debounce timer
-    timezoneDebounceRef.current = setTimeout(async () => {
-      await saveToBackend(updatedData);
-      timezoneDebounceRef.current = null;
-    }, 1000); // 1 second debounce
-  }, [id, memberData, updateNodeData, saveToBackend]);
-
-  // Update connection handling to pass summary data
-  useEffect(() => {
-    const teamConnection = connections.find(conn => {
-      const node = getNodes().find(n => n.id === conn.target);
-      return node?.type === 'team';
-    });
-
-    if (teamConnection) {
-      const teamId = teamConnection.target;
-      if (teamId !== memberData.teamId) {
-        const updatedData: Partial<RFTeamMemberNodeData> = {
-          teamId,
-          allocation: 100,
-        };
-        updateNodeData(id, { ...memberData, ...updatedData });
-        
-        // Save team connection to backend
-        saveToBackend({
-          ...updatedData,
-          memberSummary
-        });
-      }
-    } else {
-      if (memberData.teamId) {
-        const updatedData: Partial<RFTeamMemberNodeData> = {
-          teamId: undefined,
-          allocation: undefined,
-        };
-        updateNodeData(id, { ...memberData, ...updatedData });
-        
-        // Save removal of team connection to backend
-        saveToBackend({
-          ...updatedData,
-          memberSummary: undefined
-        });
-      }
-    }
-  }, [
-    connections, 
-    memberData, 
-    id, 
-    updateNodeData, 
-    getNodes, 
-    memberSummary,
-    saveToBackend
-  ]);
-
-  // Clean up timers on unmount
-  useEffect(() => {
-    return () => {
-      if (titleDebounceRef.current) clearTimeout(titleDebounceRef.current);
-      if (bioDebounceRef.current) clearTimeout(bioDebounceRef.current);
-      if (hoursDebounceRef.current) clearTimeout(hoursDebounceRef.current);
-      if (daysDebounceRef.current) clearTimeout(daysDebounceRef.current);
-      if (rateDebounceRef.current) clearTimeout(rateDebounceRef.current);
-      if (startDateDebounceRef.current) clearTimeout(startDateDebounceRef.current);
-      if (rolesDebounceRef.current) clearTimeout(rolesDebounceRef.current);
-      if (timezoneDebounceRef.current) clearTimeout(timezoneDebounceRef.current);
-    };
-  }, []);
+  // Get validation errors
+  const errors = getErrors ? getErrors(id) : [];
+  const getErrorMessage = (field: string): string => {
+    const error = errors.find(e => e.field === field);
+    return error ? error.message : '';
+  };
 
   return (
-    <BaseNode selected={selected}>
+    <BaseNode selected={selected} className="w-[350px] min-h-[200px]">
+      <Handle type="source" position={Position.Top} id="source" />
+      <Handle type="target" position={Position.Bottom} id="target" />
+      
       <NodeHeader>
         <NodeHeaderTitle>
-          <input
-            value={memberData.title || ''}
-            onChange={handleTitleChange}
-            className="bg-transparent outline-none placeholder:text-muted-foreground"
-            placeholder="Team Member Name"
-          />
+          <div className="flex items-center gap-2">
+            <Badge 
+              variant="secondary" 
+              className={`cursor-pointer ${teamMember.getStatusColor(teamMember.status)}`}
+              onClick={teamMember.cycleStatus}
+            >
+              {teamMember.status}
+            </Badge>
+            <input
+              value={teamMember.title}
+              onChange={(e) => teamMember.handleTitleChange(e.target.value)}
+              className="bg-transparent outline-none w-full"
+              placeholder="Team Member Name"
+            />
+          </div>
         </NodeHeaderTitle>
         <NodeHeaderActions>
-          <NodeHeaderMenuAction label="Team member menu">
-            <DropdownMenuItem onSelect={handleDelete} className="cursor-pointer">
+          <button 
+            onClick={teamMember.refreshData}
+            className="p-1 rounded-md hover:bg-muted"
+            title="Refresh data"
+          >
+            <RefreshCw className="h-4 w-4" />
+          </button>
+          <NodeHeaderMenuAction label="Provider Actions">
+            <DropdownMenuItem 
+              className="text-destructive focus:text-destructive"
+              onClick={teamMember.handleDelete}
+            >
               Delete
             </DropdownMenuItem>
           </NodeHeaderMenuAction>
         </NodeHeaderActions>
       </NodeHeader>
 
-      <div className="px-3 pb-3 space-y-4">
-        {/* Capacity Section */}
-        <div className="grid grid-cols-2 gap-2">
-          <div className="space-y-2">
-            <Label>Hours per Day</Label>
+      <div className="px-3 space-y-4">
+        {/* Hours, Days, Rate */}
+        <div className="grid grid-cols-3 gap-2">
+          <div>
+            <Label htmlFor={`hours-${id}`}>Hours/Day</Label>
             <Input
+              id={`hours-${id}`}
               type="number"
-              value={memberData.hoursPerDay ?? 8}
-              onChange={handleHoursPerDayChange}
-              onBlur={(e) => validateHoursPerDay(Number(e.target.value))}
               min={0}
               max={24}
-              className={cn(
-                "bg-transparent",
-                getErrors(id).some(e => e.field === 'hoursPerDay') && 
-                "border-destructive"
-              )}
+              value={teamMember.hoursPerDay}
+              onChange={(e) => {
+                const value = parseFloat(e.target.value);
+                teamMember.handleHoursPerDayChange(value);
+                teamMember.validateHoursPerDay(value);
+              }}
+              className={getErrorMessage('hoursPerDay') ? 'border-red-500' : ''}
             />
-            {getErrors(id)
-              .filter(e => e.field === 'hoursPerDay')
-              .map(error => (
-                <span key={error.field} className="text-xs text-destructive">
-                  {error.message}
-                </span>
-              ))
-            }
+            {getErrorMessage('hoursPerDay') && (
+              <p className="text-xs text-red-500">{getErrorMessage('hoursPerDay')}</p>
+            )}
           </div>
-          <div className="space-y-2">
-            <Label>Days per Week</Label>
+          <div>
+            <Label htmlFor={`days-${id}`}>Days/Week</Label>
             <Input
+              id={`days-${id}`}
               type="number"
-              value={memberData.daysPerWeek ?? 5}
-              onChange={handleDaysPerWeekChange}
-              onBlur={(e) => validateDaysPerWeek(Number(e.target.value))}
               min={0}
               max={7}
-              className={cn(
-                "bg-transparent",
-                getErrors(id).some(e => e.field === 'daysPerWeek') && 
-                "border-destructive"
-              )}
+              value={teamMember.daysPerWeek}
+              onChange={(e) => {
+                const value = parseFloat(e.target.value);
+                teamMember.handleDaysPerWeekChange(value);
+                teamMember.validateDaysPerWeek(value);
+              }}
+              className={getErrorMessage('daysPerWeek') ? 'border-red-500' : ''}
             />
-            {getErrors(id)
-              .filter(e => e.field === 'daysPerWeek')
-              .map(error => (
-                <span key={error.field} className="text-xs text-destructive">
-                  {error.message}
-                </span>
-              ))
-            }
+            {getErrorMessage('daysPerWeek') && (
+              <p className="text-xs text-red-500">{getErrorMessage('daysPerWeek')}</p>
+            )}
           </div>
-        </div>
-
-        <div className="space-y-2">
-          <Label>Daily Rate</Label>
-          <div className="relative">
-            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">$</span>
+          <div>
+            <Label htmlFor={`rate-${id}`}>Daily Rate</Label>
             <Input
+              id={`rate-${id}`}
               type="number"
-              value={memberData.dailyRate ?? 350}
-              onChange={handleDailyRateChange}
-              onBlur={(e) => validateDailyRate(Number(e.target.value))}
-              className={cn(
-                "pl-7 bg-transparent",
-                getErrors(id).some(e => e.field === 'dailyRate') && 
-                "border-destructive"
-              )}
-              placeholder="0.00"
               min={0}
-              step={0.01}
+              value={teamMember.dailyRate}
+              onChange={(e) => {
+                const value = parseFloat(e.target.value);
+                teamMember.handleDailyRateChange(value);
+                teamMember.validateDailyRate(value);
+              }}
+              className={getErrorMessage('dailyRate') ? 'border-red-500' : ''}
             />
-            {getErrors(id)
-              .filter(e => e.field === 'dailyRate')
-              .map(error => (
-                <span key={error.field} className="text-xs text-destructive">
-                  {error.message}
-                </span>
-              ))
-            }
+            {getErrorMessage('dailyRate') && (
+              <p className="text-xs text-red-500">{getErrorMessage('dailyRate')}</p>
+            )}
           </div>
         </div>
 
-        {/* Weekly Capacity Display */}
-        <div className="space-y-2">
-          <div className="flex justify-between items-center">
+        {/* Weekly Capacity */}
+        <div>
+          <div className="flex justify-between">
             <Label>Weekly Capacity</Label>
-            <span className="text-sm font-mono">{memberData.weeklyCapacity || 0} hours</span>
+            <span className="text-sm">{teamMember.weeklyCapacity} hours</span>
+          </div>
+          <div className="h-2 w-full bg-gray-200 rounded-full mt-1">
+            <div
+              className="h-2 bg-primary rounded-full"
+              style={{ 
+                width: `${Math.min(100, (teamMember.weeklyCapacity / (8 * 5)) * 100)}%`,
+                maxWidth: '100%'
+              }}
+              title={`${teamMember.weeklyCapacity} hours (${teamMember.hoursPerDay} hours × ${teamMember.daysPerWeek} days)`}
+            ></div>
           </div>
         </div>
 
-        {/* Role & Timezone */}
-        <div className="grid grid-cols-2 gap-2">
-          <div className="space-y-2">
-            <Label>Roles</Label>
-            <div className="space-y-2">
-              {/* Base Roles */}
-              {BASE_ROLES.map((role) => (
-                <div key={role} className="flex items-center space-x-2">
-                  <Checkbox
-                    id={`role-${role}`}
-                    checked={(memberData.roles || []).includes(role)}
-                    onCheckedChange={(checked) => 
-                      handleRolesChange(role, checked as boolean)
-                    }
-                  />
-                  <label
-                    htmlFor={`role-${role}`}
-                    className="text-sm leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
-                  >
-                    {role}
-                  </label>
-                </div>
-              ))}
+        {/* Team Allocation */}
+        <div>
+          <div className="flex justify-between">
+            <Label>Team Allocation</Label>
+            <span className="text-sm font-medium">{teamMember.allocation}%</span>
+          </div>
+          <div className="relative mt-2">
+            <Slider
+              value={[teamMember.allocation]}
+              min={0}
+              max={100}
+              step={5}
+              onValueChange={(values) => teamMember.handleAllocationChange(values[0])}
+              className="mt-2"
+              aria-label="Team allocation percentage"
+            />
+            <div className="flex justify-between text-xs text-muted-foreground mt-1">
+              <span>0%</span>
+              <span>50%</span>
+              <span>100%</span>
+            </div>
+          </div>
+        </div>
 
-              {/* Custom Roles */}
-              {(memberData.roles || [])
-                .filter(role => !BASE_ROLES.includes(role as any))
-                .map(role => (
-                  <div key={role} className="flex items-center space-x-2 group">
-                    <Checkbox
-                      id={`role-${role}`}
-                      checked={true}
-                      onCheckedChange={(checked) => {
-                        if (!checked) handleRolesChange(role, false);
-                      }}
-                    />
-                    <label
-                      htmlFor={`role-${role}`}
-                      className="text-sm leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
-                    >
-                      {role}
-                    </label>
-                    <button 
-                      onClick={() => handleRolesChange(role, false)}
-                      className="ml-auto opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive"
+        {/* Effective Capacity (after allocation) */}
+        <div className="mt-3">
+          <div className="flex justify-between">
+            <Label>Effective Capacity</Label>
+            <span className="text-sm">{(teamMember.weeklyCapacity * teamMember.allocation / 100).toFixed(1)} hours</span>
+          </div>
+          <div className="h-2 w-full bg-gray-200 rounded-full mt-1">
+            <div
+              className="h-2 bg-secondary rounded-full"
+              style={{ 
+                width: `${Math.min(100, ((teamMember.weeklyCapacity * teamMember.allocation / 100) / (8 * 5)) * 100)}%`,
+                maxWidth: '100%'
+              }}
+              title={`${(teamMember.weeklyCapacity * teamMember.allocation / 100).toFixed(1)} effective hours (${teamMember.allocation}% of ${teamMember.weeklyCapacity} hours)`}
+            ></div>
+          </div>
+        </div>
+
+        {/* Roles */}
+        <div>
+          <Label className="mb-2 block">Roles</Label>
+          <div className="grid grid-cols-2 gap-2 mb-2">
+            {COMMON_ROLES.map((role) => (
+              <div key={role} className="flex items-center space-x-2">
+                <Checkbox
+                  id={`role-${role}-${id}`}
+                  checked={teamMember.roles.includes(role)}
+                  onCheckedChange={(checked) => teamMember.handleRolesChange(role, checked === true)}
+                />
+                <Label htmlFor={`role-${role}-${id}`} className="text-sm">
+                  {role}
+                </Label>
+              </div>
+            ))}
+          </div>
+          <div className="flex gap-2 mt-2">
+            <Input
+              placeholder="Add custom role"
+              value={customRole}
+              onChange={(e) => setCustomRole(e.target.value)}
+              className="flex-1"
+            />
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleAddCustomRole}
+              disabled={!customRole}
+            >
+              Add
+            </Button>
+          </div>
+          {teamMember.roles.filter(r => !COMMON_ROLES.includes(r)).length > 0 && (
+            <div className="mt-2">
+              <Label className="text-sm">Custom Roles:</Label>
+              <div className="flex flex-wrap gap-1 mt-1">
+                {teamMember.roles.filter(r => !COMMON_ROLES.includes(r)).map(role => (
+                  <div key={role} className="bg-muted text-xs px-2 py-1 rounded-md flex items-center">
+                    {role}
+                    <button
+                      className="ml-1 text-muted-foreground hover:text-foreground"
+                      onClick={() => teamMember.handleRolesChange(role, false)}
                     >
                       ×
                     </button>
                   </div>
                 ))}
-
-              {/* Add new role input */}
-              <Input
-                placeholder="Add custom role..."
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    const input = e.currentTarget;
-                    const newRole = input.value.trim();
-                    if (newRole && !(memberData.roles || []).includes(newRole)) {
-                      handleRolesChange(newRole, true);
-                      input.value = '';
-                    }
-                  }
-                }}
-                className="mt-2"
-              />
+              </div>
             </div>
-          </div>
-          <div className="space-y-2">
-            <Label>Timezone</Label>
-            <Select 
-              value={memberData.timezone || ''} 
-              onValueChange={handleTimezoneChange}
-            >
-              <SelectTrigger className="bg-transparent">
-                <SelectValue placeholder="Select timezone" />
-              </SelectTrigger>
-              <SelectContent>
-                {TIMEZONES.map((tz) => (
-                  <SelectItem key={tz} value={tz}>
-                    {tz}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+          )}
+        </div>
+
+        {/* Timezone */}
+        <div>
+          <Label htmlFor={`timezone-${id}`}>Timezone</Label>
+          <Select
+            value={teamMember.timezone}
+            onValueChange={teamMember.handleTimezoneChange}
+          >
+            <SelectTrigger id={`timezone-${id}`}>
+              <SelectValue placeholder="Select timezone" />
+            </SelectTrigger>
+            <SelectContent>
+              {teamMember.TIMEZONES.map((tz) => (
+                <SelectItem key={tz} value={tz}>
+                  {tz}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
 
         {/* Start Date */}
-        <div className="space-y-2">
-          <Label>Start Date</Label>
+        <div>
+          <Label htmlFor={`start-date-${id}`}>Start Date</Label>
           <Input
+            id={`start-date-${id}`}
             type="date"
-            value={memberData.startDate || DEFAULT_START_DATE}
-            onChange={handleStartDateChange}
-            onBlur={(e) => validateStartDate(e.target.value)}
-            min={EARLIEST_START_DATE}
-            max="2030-12-31"
-            className={cn(
-              "bg-transparent",
-              getErrors(id).some(e => e.field === 'startDate') && 
-              "border-destructive"
-            )}
+            value={teamMember.startDate}
+            min={teamMember.EARLIEST_START_DATE}
+            onChange={(e) => {
+              teamMember.handleStartDateChange(e.target.value);
+              teamMember.validateStartDate(e.target.value);
+            }}
+            className={getErrorMessage('startDate') ? 'border-red-500' : ''}
           />
-          {getErrors(id)
-            .filter(e => e.field === 'startDate')
-            .map(error => (
-              <span key={error.field} className="text-xs text-destructive">
-                {error.message}
-              </span>
-            ))
-          }
+          {getErrorMessage('startDate') && (
+            <p className="text-xs text-red-500">{getErrorMessage('startDate')}</p>
+          )}
         </div>
 
-        {/* Bio Section */}
-        <div className="space-y-2">
-          <Label>Bio</Label>
+        {/* Bio */}
+        <div>
+          <Label htmlFor={`bio-${id}`}>Bio</Label>
           <Textarea
-            value={memberData.bio || ''}
-            onChange={handleBioChange}
-            placeholder="Team member's bio..."
-            className="min-h-[80px] resize-y bg-transparent"
+            id={`bio-${id}`}
+            placeholder="Team member bio"
+            value={teamMember.bio}
+            onChange={(e) => teamMember.handleBioChange(e.target.value)}
+            rows={3}
           />
         </div>
       </div>
-
-      <Handle
-        type="source"
-        position={Position.Top}
-        id="source"
-      />
-      <Handle
-        type="target"
-        position={Position.Bottom}
-        id="target"
-      />
     </BaseNode>
   );
-}
+});
+
+TeamMemberNode.displayName = 'TeamMemberNode';
+
+export { TeamMemberNode };

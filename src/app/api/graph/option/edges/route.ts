@@ -6,11 +6,8 @@ import { RFOptionEdge } from '@/services/graph/option/option.types';
 export async function POST(req: NextRequest) {
   try {
     console.log('[API] Starting OptionEdge creation');
-    
-    // Parse the request body as RFOptionEdge
     const edge: RFOptionEdge = await req.json();
     
-    // Validate required fields
     if (!edge.source || !edge.target || !edge.type) {
       console.warn('[API] Invalid OptionEdge creation request: Missing required fields');
       return NextResponse.json(
@@ -19,14 +16,24 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Validate edge type
+    const validEdgeTypes = ['OPTION_TEAM', 'OPTION_MEMBER', 'OPTION_DEPENDENCY', 'TEAM_OPTION', 'MEMBER_OPTION'];
+    const normalizedType = edge.type.toUpperCase();
+    if (!validEdgeTypes.includes(normalizedType)) {
+      console.warn('[API] Invalid OptionEdge creation request: Invalid edge type');
+      return NextResponse.json(
+        { error: `Invalid edge type. Must be one of: ${validEdgeTypes.join(', ')}` },
+        { status: 400 }
+      );
+    }
+
     console.log('[API] Received OptionEdge creation request:', {
       source: edge.source,
       target: edge.target,
       type: edge.type,
-      data: edge.data,
+      data: edge.data
     });
 
-    // Use OptionService to create the edge
     const createdEdge = await optionService.createEdge(edge);
     
     console.log('[API] Successfully created OptionEdge:', {
@@ -34,33 +41,13 @@ export async function POST(req: NextRequest) {
       source: createdEdge.source,
       target: createdEdge.target,
       type: createdEdge.type,
-      data: createdEdge.data,
+      data: createdEdge.data
     });
 
-    // Return the created edge
     return NextResponse.json(createdEdge, { status: 201 });
   } catch (error) {
-    console.error('[API] Error creating OptionEdge:', {
-      error: error instanceof Error ? error.message : 'Unknown error',
-      stack: error instanceof Error ? error.stack : undefined,
-      type: error instanceof Error ? error.constructor.name : typeof error
-    });
-    
-    // Check if it's a Neo4j-specific error
-    if (error && typeof error === 'object' && 'code' in error) {
-      console.error('[API] Neo4j error details:', {
-        code: (error as any).code,
-        message: (error as any).message
-      });
-    }
-    
-    return NextResponse.json(
-      { 
-        error: 'Failed to create OptionEdge',
-        details: error instanceof Error ? error.message : 'Unknown error'
-      },
-      { status: 500 }
-    );
+    console.error('[API] Error creating OptionEdge:', error);
+    return NextResponse.json({ error: 'Failed to create OptionEdge' }, { status: 500 });
   }
 }
 
@@ -94,29 +81,9 @@ export async function GET(req: NextRequest) {
       edges: edges.map(e => ({ id: e.id, source: e.source, target: e.target, type: e.type }))
     });
 
-    // Return the edges
     return NextResponse.json(edges);
   } catch (error) {
-    console.error('[API] Error getting OptionEdges:', {
-      error: error instanceof Error ? error.message : 'Unknown error',
-      stack: error instanceof Error ? error.stack : undefined,
-      type: error instanceof Error ? error.constructor.name : typeof error
-    });
-    
-    // Check if it's a Neo4j-specific error
-    if (error && typeof error === 'object' && 'code' in error) {
-      console.error('[API] Neo4j error details:', {
-        code: (error as any).code,
-        message: (error as any).message
-      });
-    }
-    
-    return NextResponse.json(
-      { 
-        error: 'Failed to get OptionEdges',
-        details: error instanceof Error ? error.message : 'Unknown error'
-      },
-      { status: 500 }
-    );
+    console.error('[API] Error getting OptionEdges:', error);
+    return NextResponse.json({ error: 'Failed to get OptionEdges' }, { status: 500 });
   }
 } 

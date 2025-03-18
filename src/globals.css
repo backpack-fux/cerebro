@@ -44,6 +44,20 @@
   --radius-sm: calc(var(--radius) - 4px);
 }
 
+/* Custom styles for ReactFlow selection box */
+.react-flow__selection {
+  background-color: rgba(0, 89, 220, 0.15);
+  border: 2px solid rgba(0, 89, 220, 0.8);
+  border-radius: 4px;
+  pointer-events: none; /* Ensure the selection box doesn't interfere with interactions */
+  z-index: 10; /* Make sure it appears above nodes */
+}
+
+.react-flow__selection.selecting {
+  background-color: rgba(0, 89, 220, 0.25);
+  border-color: rgba(0, 89, 220, 1);
+}
+
 /*
   The default border color has changed to `currentColor` in Tailwind CSS v4,
   so we've added these compatibility styles to make sure everything still

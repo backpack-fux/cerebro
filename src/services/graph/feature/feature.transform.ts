@@ -1,9 +1,47 @@
 import { RFFeatureNode, RFFeatureNodeData, Neo4jFeatureNodeData, RFFeatureEdge, Neo4jFeatureEdge, MemberAllocation, TeamAllocation } from '@/services/graph/feature/feature.types';
 import { GraphEdge, GraphNode } from '../neo4j/graph.interface';
 import { Node as Neo4jNode, Relationship as Neo4jRelationship } from 'neo4j-driver';
+import { parseDataFromBackend } from '@/utils/utils';
 
 export function reactFlowToNeo4j(featureNode: RFFeatureNode): Neo4jFeatureNodeData {
   const data = featureNode.data as RFFeatureNodeData; // Cast to ensure type safety
+
+  // Check if teamAllocations is already a string to prevent double serialization
+  let teamAllocationsValue = undefined;
+  if (data.teamAllocations) {
+    if (typeof data.teamAllocations === 'string') {
+      // If it's already a string, check if it's valid JSON
+      try {
+        // Try to parse it to validate it's proper JSON
+        JSON.parse(data.teamAllocations);
+        // If it parses successfully, use it as is
+        teamAllocationsValue = data.teamAllocations;
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      } catch (_) {
+        // If it's not valid JSON, stringify it
+        teamAllocationsValue = JSON.stringify(data.teamAllocations);
+      }
+    } else {
+      // If it's an array, stringify it
+      teamAllocationsValue = JSON.stringify(data.teamAllocations);
+    }
+  }
+
+  // Similar checks for teamMembers and memberAllocations
+  const teamMembersValue = data.teamMembers ? 
+    (typeof data.teamMembers === 'string' ? 
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      ((() => { try { JSON.parse(data.teamMembers); return data.teamMembers; } catch (_) { return JSON.stringify(data.teamMembers); } })()) : 
+      JSON.stringify(data.teamMembers)) : 
+    undefined;
+
+  const memberAllocationsValue = data.memberAllocations ? 
+    (typeof data.memberAllocations === 'string' ? 
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      ((() => { try { JSON.parse(data.memberAllocations); return data.memberAllocations; } catch (_) { return JSON.stringify(data.memberAllocations); } })()) : 
+      JSON.stringify(data.memberAllocations)) : 
+    undefined;
+
   return {
     id: featureNode.id, // Use React Flow's string ID
     name: data.title || 'Untitled Feature', // Default fallback
@@ -13,9 +51,9 @@ export function reactFlowToNeo4j(featureNode: RFFeatureNode): Neo4jFeatureNodeDa
     cost: data.cost,
     duration: data.duration,
     timeUnit: data.timeUnit,
-    teamMembers: data.teamMembers ? JSON.stringify(data.teamMembers) : undefined,
-    memberAllocations: data.memberAllocations ? JSON.stringify(data.memberAllocations) : undefined,
-    teamAllocations: data.teamAllocations ? JSON.stringify(data.teamAllocations) : undefined,
+    teamMembers: teamMembersValue,
+    memberAllocations: memberAllocationsValue,
+    teamAllocations: teamAllocationsValue,
     status: data.status,
     createdAt: data.createdAt || new Date().toISOString(), // Default to now if not provided
     updatedAt: data.updatedAt || new Date().toISOString(), // Default to now if not provided
@@ -25,72 +63,31 @@ export function reactFlowToNeo4j(featureNode: RFFeatureNode): Neo4jFeatureNodeDa
 }
 
 export function neo4jToReactFlow(neo4jData: Neo4jFeatureNodeData): RFFeatureNode {
-  // Parse JSON strings back to objects
-  let teamMembers: string[] = [];
-  let memberAllocations: MemberAllocation[] = [];
-  let teamAllocations: TeamAllocation[] = [];
-
-  // Safely parse teamMembers
-  if (neo4jData.teamMembers) {
-    try {
-      if (typeof neo4jData.teamMembers === 'string') {
-        teamMembers = JSON.parse(neo4jData.teamMembers);
-      } else if (Array.isArray(neo4jData.teamMembers)) {
-        teamMembers = neo4jData.teamMembers;
-      }
-    } catch (error) {
-      console.error('Error parsing teamMembers JSON:', error);
-      teamMembers = [];
-    }
-  }
-
-  // Safely parse memberAllocations
-  if (neo4jData.memberAllocations) {
-    try {
-      if (typeof neo4jData.memberAllocations === 'string') {
-        memberAllocations = JSON.parse(neo4jData.memberAllocations);
-      } else if (Array.isArray(neo4jData.memberAllocations)) {
-        memberAllocations = neo4jData.memberAllocations;
-      }
-    } catch (error) {
-      console.error('Error parsing memberAllocations JSON:', error);
-      memberAllocations = [];
-    }
-  }
-
-  // Safely parse teamAllocations
-  if (neo4jData.teamAllocations) {
-    try {
-      if (typeof neo4jData.teamAllocations === 'string') {
-        teamAllocations = JSON.parse(neo4jData.teamAllocations);
-      } else if (Array.isArray(neo4jData.teamAllocations)) {
-        teamAllocations = neo4jData.teamAllocations;
-      }
-    } catch (error) {
-      console.error('Error parsing teamAllocations JSON:', error);
-      teamAllocations = [];
-    }
-  }
-
+  // Define JSON fields that need special handling
+  const jsonFields = ['teamMembers', 'memberAllocations', 'teamAllocations', 'availableBandwidth'];
+  
+  // Parse all JSON fields
+  const parsedData = parseDataFromBackend(neo4jData as unknown as Record<string, unknown>, jsonFields);
+  
   return {
     id: neo4jData.id,
-    type: 'feature', // Hardcoded for FeatureNode
+    type: 'feature',
     position: { x: neo4jData.positionX, y: neo4jData.positionY },
     data: {
       title: neo4jData.title,
       description: neo4jData.description,
-      name: neo4jData.name,
-      buildType: neo4jData.buildType as 'internal' | 'external' | undefined,
+      buildType: neo4jData.buildType,
       cost: neo4jData.cost,
       duration: neo4jData.duration,
-      timeUnit: neo4jData.timeUnit as 'days' | 'weeks' | undefined,
-      teamMembers: teamMembers,
-      memberAllocations: memberAllocations,
-      teamAllocations: teamAllocations,
+      timeUnit: neo4jData.timeUnit,
       status: neo4jData.status,
+      teamMembers: parsedData.teamMembers,
+      memberAllocations: parsedData.memberAllocations,
+      teamAllocations: parsedData.teamAllocations,
+      availableBandwidth: parsedData.availableBandwidth,
       createdAt: neo4jData.createdAt,
-      updatedAt: neo4jData.updatedAt,
-    } as RFFeatureNodeData,
+      updatedAt: neo4jData.updatedAt
+    } as RFFeatureNodeData
   };
 }
 

@@ -2,10 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { teamMemberService } from '@/services/graph/neo4j/neo4j.provider';
 
 // GET /api/graph/team-member/edges/[id] - Get a specific edge
-export async function GET(
-  req: NextRequest,
-  { params }: { params: { id: string } }
-) {
+export async function GET(req: NextRequest) {
   try {
     // Get ID from URL instead of params
     const url = new URL(req.url);
@@ -44,10 +41,7 @@ export async function GET(
 }
 
 // PATCH /api/graph/team-member/edges/[id] - Update a specific edge
-export async function PATCH(
-  req: NextRequest,
-  { params }: { params: { id: string } }
-) {
+export async function PATCH(req: NextRequest) {
   try {
     // Get ID from URL instead of params
     const url = new URL(req.url);
@@ -94,10 +88,7 @@ export async function PATCH(
 }
 
 // DELETE /api/graph/team-member/edges/[id] - Delete a specific edge
-export async function DELETE(
-  req: NextRequest,
-  { params }: { params: { id: string } }
-) {
+export async function DELETE(req: NextRequest) {
   try {
     // Get ID from URL instead of params
     const url = new URL(req.url);
@@ -111,7 +102,7 @@ export async function DELETE(
       await teamMemberService.deleteEdge(id);
       console.log(`[API] Successfully deleted TeamMemberEdge with ID: ${id}`);
       return new NextResponse(null, { status: 204 });
-    } catch (error) {
+    } catch {
       // If an error is thrown, assume the edge wasn't found or couldn't be deleted
       return NextResponse.json(
         { error: 'Edge not found or could not be deleted' },

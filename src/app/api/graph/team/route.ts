@@ -1,24 +1,22 @@
 // app/api/graph/team/route.ts
 import { NextRequest, NextResponse } from 'next/server';
-import { TeamService } from '@/services/graph/team/team.service';
 import { teamService } from '@/services/graph/neo4j/neo4j.provider';
-import { CreateTeamNodeParams, RFTeamNode, UpdateTeamNodeParams, RFTeamEdge, Season, RosterMember, Neo4jTeamNodeData } from '@/services/graph/team/team.types';
-import { neo4jToReactFlow } from '@/services/graph/team/team.transform';
-import { neo4jStorage } from '@/services/graph/neo4j/neo4j.provider';
+import { CreateTeamNodeParams, Season, RosterMember } from '@/services/graph/team/team.types';
 
 /**
  * Validates a Season object
  * @param season The season object to validate
  * @returns True if valid, false otherwise
  */
-function isValidSeason(season: any): season is Season {
+function isValidSeason(season: unknown): season is Season {
+  if (!season || typeof season !== 'object') return false;
+  
+  const s = season as Season;
   return (
-    season &&
-    typeof season === 'object' &&
-    typeof season.startDate === 'string' &&
-    typeof season.endDate === 'string' &&
-    typeof season.name === 'string' &&
-    (!season.goals || Array.isArray(season.goals))
+    typeof s.startDate === 'string' &&
+    typeof s.endDate === 'string' &&
+    typeof s.name === 'string' &&
+    (!s.goals || Array.isArray(s.goals))
   );
 }
 
@@ -27,13 +25,14 @@ function isValidSeason(season: any): season is Season {
  * @param member The roster member to validate
  * @returns True if valid, false otherwise
  */
-function isValidRosterMember(member: any): member is RosterMember {
+function isValidRosterMember(member: unknown): member is RosterMember {
+  if (!member || typeof member !== 'object') return false;
+  
+  const m = member as RosterMember;
   return (
-    member &&
-    typeof member === 'object' &&
-    typeof member.memberId === 'string' &&
-    typeof member.allocation === 'number' &&
-    typeof member.role === 'string'
+    typeof m.memberId === 'string' &&
+    typeof m.allocation === 'number' &&
+    typeof m.role === 'string'
   );
 }
 
@@ -42,7 +41,7 @@ function isValidRosterMember(member: any): member is RosterMember {
  * @param roster The roster array to validate
  * @returns True if valid, false otherwise
  */
-function isValidRoster(roster: any): roster is RosterMember[] {
+function isValidRoster(roster: unknown): roster is RosterMember[] {
   return Array.isArray(roster) && roster.every(isValidRosterMember);
 }
 
@@ -87,51 +86,11 @@ export async function POST(req: NextRequest) {
     // The teamService.create method already uses the transformation functions
     const createdNode = await teamService.create(params);
     
-    // Retrieve the node to get the complete data
-    const node = await neo4jStorage.getNode(createdNode.id);
-    
-    if (!node) {
-      console.error('[API] Failed to retrieve created node:', createdNode.id);
-      return NextResponse.json(
-        { error: 'Failed to retrieve created node' },
-        { status: 500 }
-      );
-    }
-    
-    // Transform the node to properly parse JSON strings
-    const transformedNode = neo4jToReactFlow(node.data as unknown as Neo4jTeamNodeData);
-    
-    // Ensure the ID is explicitly set in the response
-    transformedNode.id = createdNode.id;
-    
-    console.log('[API] Successfully created TeamNode:', {
-      id: transformedNode.id,
-      type: transformedNode.type,
-      position: transformedNode.position,
-      data: {
-        title: transformedNode.data.title,
-        description: transformedNode.data.description,
-        name: transformedNode.data.name,
-        season: transformedNode.data.season ? 'provided' : 'not provided',
-        roster: Array.isArray(transformedNode.data.roster) ? `${transformedNode.data.roster.length} members` : 'not provided',
-      }
-    });
+    console.log('[API] Successfully created TeamNode:', createdNode);
 
-    return NextResponse.json(transformedNode, { status: 201 });
+    return NextResponse.json(createdNode, { status: 201 });
   } catch (error) {
-    console.error('[API] Error creating TeamNode:', {
-      error: error instanceof Error ? error.message : 'Unknown error',
-      stack: error instanceof Error ? error.stack : undefined,
-      type: error instanceof Error ? error.constructor.name : typeof error
-    });
-    
-    if (error && typeof error === 'object' && 'code' in error) {
-      console.error('[API] Neo4j error details:', {
-        code: (error as any).code,
-        message: (error as any).message
-      });
-    }
-    
+    console.error('[API] Error creating TeamNode:', error);
     return NextResponse.json(
       { error: 'Failed to create TeamNode', details: error instanceof Error ? error.message : 'Unknown error' },
       { status: 500 }

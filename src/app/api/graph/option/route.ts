@@ -1,24 +1,30 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { OptionService } from '@/services/graph/option/option.service';
-import { neo4jStorage } from '@/services/graph/neo4j/neo4j.provider';
-import { CreateOptionNodeParams, RFOptionNode, Neo4jOptionNodeData, Goal, Risk, MemberAllocation, TeamAllocation } from '@/services/graph/option/option.types';
-import { neo4jToReactFlow } from '@/services/graph/option/option.transform';
-
-// Initialize the option service
-const optionService = new OptionService(neo4jStorage);
+import { optionService } from '@/services/graph/neo4j/neo4j.provider';
+import { 
+  Goal, 
+  Risk, 
+  MemberAllocation, 
+  TeamAllocation,
+  ImpactLevel,
+  SeverityLevel,
+  CreateOptionNodeParams,
+  OptionType
+} from '@/services/graph/option/option.types';
 
 /**
  * Validates a Goal object
  * @param goal The goal to validate
  * @returns True if valid, false otherwise
  */
-function isValidGoal(goal: any): goal is Goal {
+function isValidGoal(goal: unknown): goal is Goal {
+  if (!goal || typeof goal !== 'object') return false;
+  
+  const g = goal as Partial<Goal>;
   return (
-    goal &&
-    typeof goal === 'object' &&
-    typeof goal.id === 'string' &&
-    typeof goal.name === 'string' &&
-    typeof goal.description === 'string'
+    typeof g.id === 'string' &&
+    typeof g.description === 'string' &&
+    typeof g.impact === 'string' &&
+    ['high', 'medium', 'low'].includes(g.impact as ImpactLevel)
   );
 }
 
@@ -27,7 +33,7 @@ function isValidGoal(goal: any): goal is Goal {
  * @param goals The goals array to validate
  * @returns True if valid, false otherwise
  */
-function isValidGoals(goals: any): goals is Goal[] {
+function isValidGoals(goals: unknown): goals is Goal[] {
   return Array.isArray(goals) && goals.every(isValidGoal);
 }
 
@@ -36,15 +42,16 @@ function isValidGoals(goals: any): goals is Goal[] {
  * @param risk The risk to validate
  * @returns True if valid, false otherwise
  */
-function isValidRisk(risk: any): risk is Risk {
+function isValidRisk(risk: unknown): risk is Risk {
+  if (!risk || typeof risk !== 'object') return false;
+  
+  const r = risk as Partial<Risk>;
   return (
-    risk &&
-    typeof risk === 'object' &&
-    typeof risk.id === 'string' &&
-    typeof risk.name === 'string' &&
-    typeof risk.description === 'string' &&
-    typeof risk.impact === 'string' &&
-    typeof risk.likelihood === 'string'
+    typeof r.id === 'string' &&
+    typeof r.description === 'string' &&
+    typeof r.severity === 'string' &&
+    ['high', 'medium', 'low'].includes(r.severity as SeverityLevel) &&
+    (r.mitigation === undefined || typeof r.mitigation === 'string')
   );
 }
 
@@ -53,7 +60,7 @@ function isValidRisk(risk: any): risk is Risk {
  * @param risks The risks array to validate
  * @returns True if valid, false otherwise
  */
-function isValidRisks(risks: any): risks is Risk[] {
+function isValidRisks(risks: unknown): risks is Risk[] {
   return Array.isArray(risks) && risks.every(isValidRisk);
 }
 
@@ -62,12 +69,13 @@ function isValidRisks(risks: any): risks is Risk[] {
  * @param allocation The member allocation to validate
  * @returns True if valid, false otherwise
  */
-function isValidMemberAllocation(allocation: any): allocation is MemberAllocation {
+function isValidMemberAllocation(allocation: unknown): allocation is MemberAllocation {
+  if (!allocation || typeof allocation !== 'object') return false;
+  
+  const a = allocation as Partial<MemberAllocation>;
   return (
-    allocation &&
-    typeof allocation === 'object' &&
-    typeof allocation.memberId === 'string' &&
-    typeof allocation.timePercentage === 'number'
+    typeof a.memberId === 'string' &&
+    typeof a.timePercentage === 'number'
   );
 }
 
@@ -76,7 +84,7 @@ function isValidMemberAllocation(allocation: any): allocation is MemberAllocatio
  * @param allocations The allocations array to validate
  * @returns True if valid, false otherwise
  */
-function isValidMemberAllocations(allocations: any): allocations is MemberAllocation[] {
+function isValidMemberAllocations(allocations: unknown): allocations is MemberAllocation[] {
   return Array.isArray(allocations) && allocations.every(isValidMemberAllocation);
 }
 
@@ -85,15 +93,23 @@ function isValidMemberAllocations(allocations: any): allocations is MemberAlloca
  * @param allocation The team allocation to validate
  * @returns True if valid, false otherwise
  */
-function isValidTeamAllocation(allocation: any): allocation is TeamAllocation {
+function isValidTeamAllocation(allocation: unknown): allocation is TeamAllocation {
+  if (!allocation || typeof allocation !== 'object' || !('allocatedMembers' in allocation)) {
+    return false;
+  }
+
+  const a = allocation as Partial<TeamAllocation>;
+  const allocatedMembers = a.allocatedMembers;
+
   return (
-    allocation &&
-    typeof allocation === 'object' &&
-    typeof allocation.teamId === 'string' &&
-    typeof allocation.requestedHours === 'number' &&
-    Array.isArray(allocation.allocatedMembers) &&
-    allocation.allocatedMembers.every((member: any) => 
+    typeof a.teamId === 'string' &&
+    typeof a.requestedHours === 'number' &&
+    Array.isArray(allocatedMembers) &&
+    allocatedMembers.every((member): member is { memberId: string; hours: number } => 
+      member !== null &&
       typeof member === 'object' &&
+      'memberId' in member &&
+      'hours' in member &&
       typeof member.memberId === 'string' &&
       typeof member.hours === 'number'
     )
@@ -105,23 +121,63 @@ function isValidTeamAllocation(allocation: any): allocation is TeamAllocation {
  * @param allocations The allocations array to validate
  * @returns True if valid, false otherwise
  */
-function isValidTeamAllocations(allocations: any): allocations is TeamAllocation[] {
+function isValidTeamAllocations(allocations: unknown): allocations is TeamAllocation[] {
   return Array.isArray(allocations) && allocations.every(isValidTeamAllocation);
 }
 
+// POST /api/graph/option - Create a new option node
 export async function POST(req: NextRequest) {
   try {
     console.log('[API] Starting OptionNode creation');
-    const params: CreateOptionNodeParams = await req.json();
+    const requestBody = await req.json();
+    
+    console.log('[API] OptionNode creation request body:', JSON.stringify(requestBody));
+    
+    // Handle both formats: nested data object or direct properties
+    let nodeData: Partial<CreateOptionNodeParams> & {
+      goals?: Goal[];
+      risks?: Risk[];
+      memberAllocations?: MemberAllocation[];
+      teamAllocations?: TeamAllocation[];
+      positionX?: number;
+      positionY?: number;
+    };
+    
+    let position: { x: number, y: number } = { x: 0, y: 0 };
+    
+    if ('data' in requestBody && typeof requestBody.data === 'object') {
+      // Format: { data: { title, positionX, positionY, ... } }
+      nodeData = requestBody.data;
+    } else if ('title' in requestBody) {
+      // Format: { title, position, ... } - direct properties
+      nodeData = requestBody;
+      
+      // Handle position differently in this format
+      if ('position' in requestBody && typeof requestBody.position === 'object') {
+        position = requestBody.position;
+        // Add positionX and positionY for compatibility
+        nodeData.positionX = position.x;
+        nodeData.positionY = position.y;
+      }
+    } else {
+      console.warn('[API] Invalid OptionNode creation request: Invalid request body');
+      return NextResponse.json(
+        { error: 'Invalid request body', details: 'Request must include title and position data' },
+        { status: 400 }
+      );
+    }
     
     // Remove any complex objects from the params
     // These will be handled by the service after node creation
-    const { goals, risks, memberAllocations, teamAllocations, ...createParams } = params as any;
+    const { goals, risks, memberAllocations, teamAllocations, ...createParams } = nodeData;
     
-    if (!createParams.title || !createParams.position) {
+    // Check for required fields in either format
+    if (!createParams.title || 
+        ((!createParams.positionX || !createParams.positionY) && 
+         (!position || typeof position.x !== 'number' || typeof position.y !== 'number'))) {
       console.warn('[API] Invalid OptionNode creation request: Missing required fields');
       return NextResponse.json(
-        { error: 'Missing required fields: title and position are required' },
+        { error: 'Missing required fields', details: 'Title and position are required' },
         { status: 400 }
       );
     }
@@ -130,22 +186,31 @@ export async function POST(req: NextRequest) {
     if (createParams.optionType && !['customer', 'contract', 'partner'].includes(createParams.optionType)) {
       console.warn('[API] Invalid OptionNode creation request: Invalid optionType');
       return NextResponse.json(
-        { error: 'Invalid optionType. Must be one of: customer, contract, partner.' },
+        { error: 'Invalid optionType', details: 'Must be one of: customer, contract, partner' },
         { status: 400 }
       );
     }
 
-    console.log('[API] Received OptionNode creation request:', {
+    // Convert Neo4j position format to React Flow format
+    const finalPosition = {
+      x: createParams.positionX || position.x,
+      y: createParams.positionY || position.y
+    };
+
+    // Create params for the service
+    const serviceParams: CreateOptionNodeParams = {
       title: createParams.title,
       description: createParams.description,
-      position: createParams.position,
-      optionType: createParams.optionType,
+      optionType: createParams.optionType as OptionType | undefined,
       duration: createParams.duration,
-      status: createParams.status
-    });
+      status: createParams.status,
+      position: finalPosition
+    };
+
+    console.log('[API] Creating option node with params:', JSON.stringify(serviceParams));
 
     // Create the option node
-    const createdNode = await optionService.create(createParams);
+    const createdNode = await optionService.create(serviceParams);
     
     // If goals were provided, add them to the node
     if (goals && isValidGoals(goals)) {
@@ -184,40 +249,37 @@ export async function POST(req: NextRequest) {
     }
     
     // Retrieve the node to get the complete data
-    const node = await neo4jStorage.getNode(createdNode.id);
+    const node = await optionService.getById(createdNode.id);
     
     if (!node) {
-      console.error('[API] Failed to retrieve created node:', createdNode.id);
+      console.error('[API] Failed to retrieve created option node:', createdNode.id);
       return NextResponse.json(
-        { error: 'Failed to retrieve created node' },
+        { error: 'Failed to retrieve created node', details: 'Database query returned null' },
         { status: 500 }
       );
     }
     
-    // Transform the node to properly parse JSON strings
-    const transformedNode = neo4jToReactFlow(node.data as unknown as Neo4jOptionNodeData);
-    
-    // Ensure the ID is included in the response
-    transformedNode.id = createdNode.id;
+    // Ensure the ID is explicitly set in the response
+    node.id = createdNode.id;
     
     console.log('[API] Successfully created OptionNode:', {
-      id: transformedNode.id,
-      type: transformedNode.type,
-      position: transformedNode.position,
+      id: node.id,
+      type: node.type,
+      position: node.position,
       data: {
-        title: transformedNode.data.title,
-        description: transformedNode.data.description,
-        optionType: transformedNode.data.optionType,
-        duration: transformedNode.data.duration,
-        status: transformedNode.data.status,
-        goals: Array.isArray(transformedNode.data.goals) ? `${transformedNode.data.goals.length} goals` : 'not provided',
-        risks: Array.isArray(transformedNode.data.risks) ? `${transformedNode.data.risks.length} risks` : 'not provided',
-        memberAllocations: Array.isArray(transformedNode.data.memberAllocations) ? `${transformedNode.data.memberAllocations.length} allocations` : 'not provided',
-        teamAllocations: Array.isArray(transformedNode.data.teamAllocations) ? `${transformedNode.data.teamAllocations.length} allocations` : 'not provided'
+        title: node.data.title,
+        description: node.data.description,
+        optionType: node.data.optionType,
+        duration: node.data.duration,
+        status: node.data.status,
+        goals: Array.isArray(node.data.goals) ? `${node.data.goals.length} goals` : 'not provided',
+        risks: Array.isArray(node.data.risks) ? `${node.data.risks.length} risks` : 'not provided',
+        memberAllocations: Array.isArray(node.data.memberAllocations) ? `${node.data.memberAllocations.length} allocations` : 'not provided',
+        teamAllocations: Array.isArray(node.data.teamAllocations) ? `${node.data.teamAllocations.length} allocations` : 'not provided'
       }
     });
 
-    return NextResponse.json(transformedNode, { status: 201 });
+    return NextResponse.json(node, { status: 201 });
   } catch (error) {
     console.error('[API] Error creating OptionNode:', {
       error: error instanceof Error ? error.message : 'Unknown error',
@@ -226,9 +288,10 @@ export async function POST(req: NextRequest) {
     });
     
     if (error && typeof error === 'object' && 'code' in error) {
+      const neo4jError = error as { code: string; message: string };
       console.error('[API] Neo4j error details:', {
-        code: (error as any).code,
-        message: (error as any).message
+        code: neo4jError.code,
+        message: neo4jError.message
       });
     }
     

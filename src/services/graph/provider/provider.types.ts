@@ -82,7 +82,8 @@ export interface RFProviderNodeData extends ReactFlowNodeBase {
   position?: XYPosition;
 }
 
-export interface RFProviderNode extends Node<RFProviderNodeData> {}
+// Use a type alias instead of an empty interface
+export type RFProviderNode = Node<RFProviderNodeData>;
 
 // Service types for Neo4j operations
 export type CreateProviderNodeParams = {

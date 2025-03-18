@@ -1,6 +1,6 @@
 "use client";
 
-import { Handle, Position, type NodeProps, type Node } from "@xyflow/react";
+import { Handle, Position, type NodeProps } from "@xyflow/react";
 import { BaseNode } from '@/components/nodes/base-node';
 import { 
   NodeHeader,
@@ -9,19 +9,15 @@ import {
   NodeHeaderMenuAction,
 } from '@/components/nodes/node-header';
 import { DropdownMenuItem } from "@radix-ui/react-dropdown-menu";
-import { useReactFlow, useEdges } from "@xyflow/react";
-import { useCallback, useRef, useState, useEffect } from "react";
+import { useMemo, memo } from "react";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
-import { Plus, Trash } from "lucide-react";
+import { Plus, Trash, RefreshCw } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { useTeamAllocation } from "@/hooks/useTeamAllocation";
-import { useDurationInput } from "@/hooks/useDurationInput";
-import { Slider } from "@/components/ui/slider";
-import { useNodeStatus } from "@/hooks/useNodeStatus";
+
 import { 
   RFProviderNodeData, 
   ProviderCost, 
@@ -34,409 +30,306 @@ import {
   DDStatus,
   TierRange
 } from '@/services/graph/provider/provider.types';
-import { API_URLS } from '@/services/graph/neo4j/api-urls';
-import { toast } from "sonner";
+import { useProviderNode } from '@/hooks/useProviderNode';
+import { CostReceipt } from '@/components/shared/CostReceipt';
+import { TeamAllocation } from '@/components/shared/TeamAllocation';
+import { formatHours} from '@/utils/format-utils';
+import { formatMemberName } from '@/utils/node-utils';
+import type { TeamAllocation as ITeamAllocation } from '@/utils/types/allocation';
+import { useReactFlow } from "@xyflow/react";
+import { NodeStatus } from "@/hooks/useNodeStatus";
+import { MemberAllocationData as ImportedMemberAllocationData, AvailableMember } from '@/utils/types/allocation';
 
-export function ProviderNode({ id, data, selected }: NodeProps) {
-  // Cast data to the correct type for internal use
-  const typedData = data as RFProviderNodeData;
+// Define a local MemberAllocationData interface
+interface LocalMemberAllocationData {
+  memberId: string;
+  name: string;
+  hours: number;
+  cost?: number;
+  capacity: number;
+  allocation: number;
+  daysEquivalent: number;
+  percentage?: number;
+  memberCapacity?: number;
+  hourlyRate?: number;
+  current?: {
+    hours?: number;
+    cost?: number;
+  };
+}
+
+// Define the MemberCost interface
+interface MemberCost {
+  memberId: string;
+  name: string;
+  hours: number;
+  hourlyRate: number;
+  cost: number;
+}
+
+// Extend RFProviderNodeData to ensure status is of type NodeStatus
+interface ExtendedRFProviderNodeData extends RFProviderNodeData {
+  status?: NodeStatus;
+}
+
+// Use React.memo to prevent unnecessary re-renders
+export const ProviderNode = memo(function ProviderNode({ id, data, selected }: NodeProps) {
+  const { getNodes } = useReactFlow();
   
-  const { updateNodeData, setNodes, setEdges } = useReactFlow();
-  const edges = useEdges();
-  
-  // Refs for debounce timers
-  const titleDebounceRef = useRef<NodeJS.Timeout | null>(null);
-  const descriptionDebounceRef = useRef<NodeJS.Timeout | null>(null);
-  const costsDebounceRef = useRef<NodeJS.Timeout | null>(null);
-  const ddItemsDebounceRef = useRef<NodeJS.Timeout | null>(null);
-  const durationDebounceRef = useRef<NodeJS.Timeout | null>(null);
-  
-  const {
-    connectedTeams,
-    requestTeamAllocation,
-    costs,
-    CostSummary
-  } = useTeamAllocation(id, typedData);
-
-  const { status, getStatusColor, cycleStatus } = useNodeStatus(id, typedData, updateNodeData, {
-    canBeActive: true,
-    defaultStatus: 'planning'
-  });
-
-  // Save data to backend
-  const saveToBackend = async (field: string, value: any) => {
-    try {
-      const response = await fetch(`${API_URLS['provider']}/${id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ [field]: value }),
-      });
-
-      if (!response.ok) {
-        throw new Error(`Failed to update provider node: ${response.status} ${response.statusText}`);
-      }
-      
-      console.log(`Updated provider node ${id} ${field}`);
-    } catch (error) {
-      console.error(`Failed to update provider node ${id}:`, error);
-      toast.error(`Update Failed: Failed to save ${field} to the server.`);
+  // Create data with properly typed status
+  const typedData = useMemo(() => {
+    const result = { ...data };
+    // Convert status string to NodeStatus type
+    if (data.status) {
+      const validStatuses: Array<NodeStatus> = ['planning', 'in_progress', 'completed', 'active'];
+      result.status = validStatuses.includes(data.status as NodeStatus) 
+        ? data.status as NodeStatus 
+        : 'planning';
     }
+    return result as ExtendedRFProviderNodeData;
+  }, [data]);
+  
+  // Use our custom hook for provider node logic
+  const provider = useProviderNode(id, typedData);
+  
+  // Calculate project duration in days
+  const projectDurationDays = Number(typedData.duration) || 1;
+  
+  // Pre-calculate member allocations for display and cost calculation
+  const memberAllocations = useMemo(() => {
+    if (!provider.calculateMemberAllocations) return new Map();
+    
+    // Adapter function to match the expected type for calculateMemberAllocations
+    const formatMemberNameAdapter = (memberId: string, memberData?: { title?: string }): string => {
+      return formatMemberName(memberId, getNodes(), memberData);
+    };
+    
+    return provider.calculateMemberAllocations(
+      provider.connectedTeams,
+      provider.processedTeamAllocations,
+      projectDurationDays,
+      formatMemberNameAdapter
+    );
+  }, [
+    projectDurationDays,
+    provider,
+    getNodes
+  ]);
+  
+  // Convert MemberAllocationData[] to MemberCost[]
+  const convertAllocationsToCostArray = (allocations: LocalMemberAllocationData[]): MemberCost[] => {
+    return allocations.map(allocation => ({
+      memberId: allocation.memberId,
+      name: allocation.name || '',
+      hours: allocation.hours,
+      hourlyRate: allocation.hourlyRate || 0,
+      cost: allocation.cost || 0
+    }));
   };
-
-  // Save costs to backend
-  const saveCostsToBackend = async (costs: ProviderCost[]) => {
-    if (costsDebounceRef.current) clearTimeout(costsDebounceRef.current);
+  
+  // Convert memberAllocations to use the correct MemberCapacity type
+  const convertMemberAllocations = (allocations: Map<string, LocalMemberAllocationData>): Map<string, ImportedMemberAllocationData> => {
+    const result = new Map<string, ImportedMemberAllocationData>();
     
-    costsDebounceRef.current = setTimeout(async () => {
-      await saveToBackend('costs', costs);
-      costsDebounceRef.current = null;
-    }, 1000);
+    allocations.forEach((allocation, key) => {
+      const converted: ImportedMemberAllocationData = {
+        ...allocation,
+        memberCapacity: allocation.memberCapacity ? {
+          hoursPerDay: allocation.memberCapacity as number,
+          daysPerWeek: 5, // Default value
+        } : undefined,
+        cost: allocation.cost || 0, // Ensure cost is defined
+      };
+      result.set(key, converted);
+    });
+    
+    return result;
   };
-
-  // Save DD items to backend
-  const saveDDItemsToBackend = async (ddItems: DDItem[]) => {
-    if (ddItemsDebounceRef.current) clearTimeout(ddItemsDebounceRef.current);
-    
-    ddItemsDebounceRef.current = setTimeout(async () => {
-      await saveToBackend('ddItems', ddItems);
-      ddItemsDebounceRef.current = null;
-    }, 1000);
+  
+  // Adapter function to match the expected type for TeamAllocation's formatMemberName
+  const formatMemberNameForTeam = (id: string, member: AvailableMember): string => {
+    return member.name || formatMemberName(id, getNodes(), { title: member.name });
   };
-
-  // Save duration to backend
-  const saveDurationToBackend = async (duration: number) => {
-    if (durationDebounceRef.current) clearTimeout(durationDebounceRef.current);
-    
-    durationDebounceRef.current = setTimeout(async () => {
-      await saveToBackend('duration', duration);
-      durationDebounceRef.current = null;
-    }, 1000);
-  };
-
-  const handleTitleChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const newTitle = e.target.value;
-    updateNodeData(id, { ...typedData, title: newTitle });
-    
-    if (titleDebounceRef.current) clearTimeout(titleDebounceRef.current);
-    
-    titleDebounceRef.current = setTimeout(async () => {
-      await saveToBackend('title', newTitle);
-      titleDebounceRef.current = null;
-    }, 1000);
-  }, [id, typedData, updateNodeData]);
-
-  const handleDescriptionChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    const newDescription = e.target.value;
-    updateNodeData(id, { ...typedData, description: newDescription });
-    
-    if (descriptionDebounceRef.current) clearTimeout(descriptionDebounceRef.current);
-    
-    descriptionDebounceRef.current = setTimeout(async () => {
-      await saveToBackend('description', newDescription);
-      descriptionDebounceRef.current = null;
-    }, 1000);
-  }, [id, typedData, updateNodeData]);
-
-  const handleDelete = useCallback(() => {
-    // Delete the node from the backend
-    fetch(`${API_URLS['provider']}/${id}`, { method: 'DELETE' })
-      .then(() => {
-        setNodes((nodes) => nodes.filter((node) => node.id !== id));
-        
-        // Also delete connected edges
-        const connectedEdges = edges.filter((edge) => edge.source === id || edge.target === id);
-        connectedEdges.forEach((edge) => {
-          fetch(`${API_URLS['provider']}/edges/${edge.id}`, { method: 'DELETE' })
-            .catch((error) => console.error('Failed to delete edge:', error));
-        });
-      })
-      .catch((error) => {
-        console.error('Failed to delete provider node:', error);
-        toast.error("Delete Failed: Failed to delete the provider node from the server.");
-      });
-  }, [id, setNodes, edges]);
-
-  // Customize the duration input hook to save to backend
-  const duration = useDurationInput(id, typedData, (nodeId, updatedData) => {
-    updateNodeData(nodeId, updatedData);
-    if (updatedData.duration !== typedData.duration) {
-      saveDurationToBackend(updatedData.duration || 0);
+  
+  // Calculate cost summary
+  const costSummary = useMemo(() => {
+    if (!provider.calculateCostSummary) {
+      return { totalCost: 0, totalHours: 0, totalDays: 0, allocations: [] };
     }
-  }, {
-    maxDays: 90,
-    label: "Integration Duration",
-    fieldName: "duration",
-    tip: 'Estimated time to integrate with this provider'
-  });
-
-  // Handle allocation changes with backend saving
-  const handleAllocationChange = useCallback((memberId: string, percentage: number) => {
-    const teamId = connectedTeams.find(team => 
-      team.availableBandwidth.some(m => m.memberId === memberId)
-    )?.teamId;
-
-    if (!teamId) return;
-
-    // Update the allocation
-    const hoursRequested = (percentage / 100) * 8 * (typedData.duration || 1); // Convert % to hours
-    requestTeamAllocation(teamId, hoursRequested, [memberId]);
     
-    // The team allocation is saved by the requestTeamAllocation function
-  }, [connectedTeams, typedData.duration, requestTeamAllocation]);
-
-  const addCost = useCallback(() => {
-    const newCost: ProviderCost = {
-      id: `cost-${Date.now()}`,
-      name: '',
-      costType: 'fixed',
-      details: {
-        type: 'fixed',
-        amount: 0,
-        frequency: 'monthly'
-      }
-    };
-    const updatedCosts = [...(typedData.costs || []), newCost];
-    updateNodeData(id, { 
-      ...typedData, 
-      costs: updatedCosts
-    });
-    saveCostsToBackend(updatedCosts);
-  }, [id, typedData, updateNodeData]);
-
-  const updateCost = useCallback((costId: string, updates: Partial<ProviderCost>) => {
-    const updatedCosts = (typedData.costs || []).map(cost => 
-      cost.id === costId ? { ...cost, ...updates } : cost
-    );
-    updateNodeData(id, {
-      ...typedData,
-      costs: updatedCosts
-    });
-    saveCostsToBackend(updatedCosts);
-  }, [id, typedData, updateNodeData]);
-
-  const removeCost = useCallback((costId: string) => {
-    const updatedCosts = (typedData.costs || []).filter(cost => cost.id !== costId);
-    updateNodeData(id, {
-      ...typedData,
-      costs: updatedCosts
-    });
-    saveCostsToBackend(updatedCosts);
-  }, [id, typedData, updateNodeData]);
-
-  const addDDItem = useCallback(() => {
-    const newItem: DDItem = {
-      id: `dd-${Date.now()}`,
-      name: '',
-      status: 'pending'
-    };
-    const updatedItems = [...(typedData.ddItems || []), newItem];
-    updateNodeData(id, {
-      ...typedData,
-      ddItems: updatedItems
-    });
-    saveDDItemsToBackend(updatedItems);
-  }, [id, typedData, updateNodeData]);
-
-  const updateDDItem = useCallback((item: DDItem) => {
-    const updatedItems = (typedData.ddItems || []).map(i => 
-      i.id === item.id ? item : i
-    );
-    updateNodeData(id, {
-      ...typedData,
-      ddItems: updatedItems
-    });
-    saveDDItemsToBackend(updatedItems);
-  }, [id, typedData, updateNodeData]);
-
-  const removeDDItem = useCallback((itemId: string) => {
-    const updatedItems = (typedData.ddItems || []).filter(i => i.id !== itemId);
-    updateNodeData(id, {
-      ...typedData,
-      ddItems: updatedItems
-    });
-    saveDDItemsToBackend(updatedItems);
-  }, [id, typedData, updateNodeData]);
-
-  // Clean up debounce timers on unmount
-  useEffect(() => {
-    return () => {
-      if (titleDebounceRef.current) clearTimeout(titleDebounceRef.current);
-      if (descriptionDebounceRef.current) clearTimeout(descriptionDebounceRef.current);
-      if (costsDebounceRef.current) clearTimeout(costsDebounceRef.current);
-      if (ddItemsDebounceRef.current) clearTimeout(ddItemsDebounceRef.current);
-      if (durationDebounceRef.current) clearTimeout(durationDebounceRef.current);
-    };
-  }, []);
-
+    return provider.calculateCostSummary(memberAllocations);
+  }, [memberAllocations, provider]);
+  
   return (
-    <BaseNode selected={selected}>
+    <BaseNode selected={selected} className="w-[400px]">
+      <Handle type="source" position={Position.Top} id="source" />
+      <Handle type="target" position={Position.Bottom} id="target" />
+      
       <NodeHeader>
         <NodeHeaderTitle>
           <div className="flex items-center gap-2">
             <Badge 
               variant="secondary" 
-              className={`cursor-pointer ${getStatusColor(status)}`}
-              onClick={cycleStatus}
+              className={`cursor-pointer ${provider.getStatusColor(typedData.status || 'planning')}`}
+              onClick={provider.cycleStatus}
             >
-              {status}
+              {typedData.status || 'planning'}
             </Badge>
             <input
-              value={typedData.title}
-              onChange={handleTitleChange}
-              className="bg-transparent outline-none placeholder:text-muted-foreground"
-              placeholder="Provider Name"
+              value={provider.title}
+              onChange={(e) => provider.handleTitleChange(e.target.value)}
+              className="bg-transparent outline-none w-full"
+              placeholder="Provider Title"
             />
           </div>
         </NodeHeaderTitle>
         <NodeHeaderActions>
-          <NodeHeaderMenuAction label="Provider node menu">
-            <DropdownMenuItem onSelect={handleDelete} className="cursor-pointer">
+          <button 
+            onClick={provider.refreshData}
+            className="p-1 rounded-md hover:bg-muted"
+            title="Refresh data"
+          >
+            <RefreshCw className="h-4 w-4" />
+          </button>
+          <NodeHeaderMenuAction label="Provider Actions">
+            <DropdownMenuItem 
+              className="text-destructive focus:text-destructive"
+              onClick={provider.handleDelete}
+            >
               Delete
             </DropdownMenuItem>
-            {edges
-              .filter((edge) => edge.source === id || edge.target === id)
-              .map((edge) => (
-                <DropdownMenuItem
-                  key={edge.id}
-                  onSelect={() => {
-                    fetch(`${API_URLS['provider']}/edges/${edge.id}`, { method: 'DELETE' })
-                      .then(() => {
-                        setEdges((eds) => eds.filter((e) => e.id !== edge.id));
-                      })
-                      .catch((error) => console.error('Failed to delete edge:', error));
-                  }}
-                  className="cursor-pointer text-red-500"
-                >
-                  Disconnect {(edge.data?.label as string) || 'Edge'}
-                </DropdownMenuItem>
-              ))}
           </NodeHeaderMenuAction>
         </NodeHeaderActions>
       </NodeHeader>
 
-      <div className="px-3 pb-3 space-y-4">
-        {/* Duration Input */}
-        <div className="space-y-2">
-          <Label>{duration.config.label}</Label>
-          <div className="space-y-1">
-            <div className="relative">
-              <Input
-                value={duration.value || ''}
-                onChange={(e) => duration.handleDurationChange(e.target.value)}
-                onKeyDown={duration.handleDurationKeyDown}
-                className="bg-transparent pr-24"
-                placeholder="e.g. 12 or 2w"
-              />
-              <div className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
-                {duration.displayValue}
-              </div>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              {duration.config.tip} Max {duration.formatDuration(duration.config.maxDays)}
-            </p>
-          </div>
-        </div>
+      <div className="p-4 space-y-4">
+        <Textarea
+          value={provider.description}
+          onChange={(e) => provider.handleDescriptionChange(e.target.value)}
+          placeholder="Describe this provider..."
+          className="min-h-[80px] resize-none"
+        />
 
-        {/* Team Allocations Section */}
-        <div className="space-y-2">
-          <Label>Team Allocations</Label>
-          
-          {connectedTeams.length === 0 ? (
-            <div className="text-sm text-muted-foreground">
-              Connect to teams to allocate resources
-            </div>
-          ) : (
-            <div className="space-y-4">
-              {connectedTeams.map(team => (
-                <div key={team.teamId} className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="font-medium">{team.title}</span>
-                  </div>
-
-                  {/* Member Allocation Controls */}
-                  <div className="space-y-4">
-                    {team.availableBandwidth.map(member => {
-                      const allocation = typedData.teamAllocations
-                        ?.find(a => a.teamId === team.teamId)
-                        ?.allocatedMembers
-                        .find(m => m.memberId === member.memberId);
-                      
-                      const percentage = allocation 
-                        ? (allocation.hours / 8 / (typedData.duration || 1)) * 100 
-                        : 0;
-
-                      return (
-                        <div key={member.memberId} className="space-y-2">
-                          <div className="flex items-center justify-between text-sm">
-                            <span>{member.name}</span>
-                            <span className="text-muted-foreground">
-                              {percentage.toFixed(0)}% ({member.availableHours}h available)
-                            </span>
-                          </div>
-                          <Slider
-                            value={[percentage]}
-                            onValueChange={([value]) => handleAllocationChange(member.memberId, value)}
-                            max={100}
-                            step={1}
-                          />
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Cost Structures Section */}
         <div className="space-y-2">
           <div className="flex items-center justify-between">
-            <Label>Cost Structures</Label>
-            <Button variant="ghost" size="sm" onClick={addCost} className="h-6 px-2">
-              <Plus className="h-4 w-4" />
+            <Label>{provider.duration.config.label}</Label>
+            <Badge variant="outline" className="font-mono">
+              {provider.duration.displayValue}
+            </Badge>
+          </div>
+          <Input
+            type="text"
+            value={provider.duration.value || ''}
+            onChange={(e) => provider.duration.handleDurationChange(e.target.value)}
+            onKeyDown={provider.duration.handleDurationKeyDown}
+            className="bg-transparent"
+            placeholder="e.g. 12 or 2w"
+          />
+        </div>
+
+        {/* Cost Structure Section */}
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <Label>Cost Structure</Label>
+            <Button 
+              variant="outline" 
+              size="sm" 
+              onClick={provider.addCost}
+              className="h-7 px-2"
+            >
+              <Plus className="h-3.5 w-3.5 mr-1" />
+              Add Cost
             </Button>
           </div>
-
+          
           <div className="space-y-4">
-            {(typedData.costs || []).map(cost => (
-              <CostStructure
-                key={cost.id}
-                cost={cost}
-                onUpdate={(updates) => updateCost(cost.id, updates)}
-                onRemove={() => removeCost(cost.id)}
-              />
-            ))}
+            {provider.processedCosts.length === 0 ? (
+              <div className="text-sm text-muted-foreground">
+                No costs defined yet
+              </div>
+            ) : (
+              provider.processedCosts.map((cost) => (
+                <CostStructure 
+                  key={cost.id} 
+                  cost={cost} 
+                  onUpdate={(updates) => provider.updateCost(cost.id, updates)} 
+                  onRemove={() => provider.removeCost(cost.id)} 
+                />
+              ))
+            )}
           </div>
         </div>
 
         {/* Due Diligence Section */}
-        <DueDiligenceSection
-          items={typedData.ddItems || []}
-          onUpdate={updateDDItem}
-          onAdd={addDDItem}
-          onRemove={removeDDItem}
-        />
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <Label>Due Diligence</Label>
+            <Button 
+              variant="outline" 
+              size="sm" 
+              onClick={provider.addDDItem}
+              className="h-7 px-2"
+            >
+              <Plus className="h-3.5 w-3.5 mr-1" />
+              Add Item
+            </Button>
+          </div>
+          
+          <DueDiligenceSection 
+            items={provider.processedDDItems}
+            onUpdate={provider.updateDDItem}
+            onRemove={provider.removeDDItem}
+          />
+        </div>
 
-        {/* Cost Summary */}
-        {costs && costs.allocations.length > 0 && (
-          <CostSummary costs={costs} duration={typedData.duration} />
+        {/* Resource Allocation Section */}
+        <div className="space-y-2">
+          <Label className="flex items-center gap-2">
+            <span>Resource Allocation</span>
+            <Badge variant="outline" className="font-mono">
+              {formatHours(costSummary.totalHours)}
+            </Badge>
+          </Label>
+          
+          {provider.connectedTeams.length === 0 && (
+            <div className="text-sm text-muted-foreground">
+              Connect to teams to allocate resources
+            </div>
+          )}
+          
+          {provider.connectedTeams.map(team => (
+            <TeamAllocation
+              key={team.teamId}
+              team={team}
+              teamAllocation={provider.processedTeamAllocations.find((a: ITeamAllocation) => a.teamId === team.teamId)}
+              memberAllocations={convertMemberAllocations(memberAllocations)}
+              projectDurationDays={projectDurationDays}
+              formatMemberName={formatMemberNameForTeam}
+              onMemberValueChange={(teamId, memberId, hours) => {
+                provider.handleAllocationChangeLocal(teamId, memberId, hours);
+              }}
+              onMemberValueCommit={(teamId, memberId, hours) => {
+                provider.handleAllocationCommit(teamId, memberId, hours);
+              }}
+            />
+          ))}
+        </div>
+
+        {/* Cost Receipt Section */}
+        {costSummary && costSummary.allocations.length > 0 && (
+          <CostReceipt
+            allocations={convertAllocationsToCostArray(costSummary.allocations)}
+            totalCost={costSummary.totalCost}
+            totalHours={costSummary.totalHours}
+            totalDays={costSummary.totalDays}
+          />
         )}
-
-        <Textarea
-          value={typedData.description || ''}
-          onChange={handleDescriptionChange}
-          placeholder="Describe this provider..."
-          className="min-h-[80px] resize-y bg-transparent"
-        />
       </div>
-
-      <Handle type="target" position={Position.Bottom} id="target" />
-      <Handle type="source" position={Position.Top} id="source" />
     </BaseNode>
   );
-}
+});
 
+// Cost Structure Component
 function CostStructure({ 
   cost, 
   onUpdate, 
@@ -447,83 +340,102 @@ function CostStructure({
   onRemove: () => void;
 }) {
   const handleTypeChange = (type: CostType) => {
-    console.log('Changing cost type to:', type);
-    const newDetails = {
-      fixed: { type: 'fixed', amount: 0, frequency: 'monthly' },
-      unit: { type: 'unit', unitPrice: 0, unitType: '' },
-      revenue: { type: 'revenue', percentage: 0 },
-      tiered: { type: 'tiered', unitType: '', tiers: [{ min: 0, unitPrice: 0 }] }
-    }[type] as ProviderCost['details'];
-
-    console.log('New cost details:', newDetails);
-    onUpdate({ costType: type, details: newDetails });
+    let details: FixedCost | UnitCost | RevenueCost | TieredCost;
+    
+    switch (type) {
+      case 'fixed':
+        details = { type: 'fixed', amount: 0, frequency: 'monthly' };
+        break;
+      case 'unit':
+        details = { type: 'unit', unitPrice: 0, unitType: 'user' };
+        break;
+      case 'revenue':
+        details = { type: 'revenue', percentage: 0 };
+        break;
+      case 'tiered':
+        details = { type: 'tiered', unitType: 'user', tiers: [{ min: 0, unitPrice: 0 }] };
+        break;
+      default:
+        details = { type: 'fixed', amount: 0, frequency: 'monthly' };
+    }
+    
+    onUpdate({ costType: type, details });
   };
-
+  
   return (
-    <div className="space-y-3 p-3 bg-muted/30 rounded-lg">
-      <div className="flex items-start justify-between gap-2">
-        <div className="space-y-2 flex-1">
-          <Input
-            value={cost.name}
-            onChange={(e) => onUpdate({ name: e.target.value })}
-            placeholder="Cost name"
-            className="bg-transparent"
-          />
-          <Select
-            value={cost.costType}
-            onValueChange={handleTypeChange}
-          >
-            <SelectTrigger className="w-[180px] bg-transparent">
-              <SelectValue placeholder="Select cost type" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="fixed">Fixed Cost</SelectItem>
-              <SelectItem value="unit">Per Unit</SelectItem>
-              <SelectItem value="revenue">Revenue Share</SelectItem>
-              <SelectItem value="tiered">Tiered Pricing</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-        <Button
-          variant="ghost"
-          size="sm"
+    <div className="space-y-3 border rounded-md p-3">
+      <div className="flex items-center justify-between">
+        <Input
+          value={cost.name}
+          onChange={(e) => onUpdate({ name: e.target.value })}
+          className="bg-transparent border-none h-7 p-0 text-sm font-medium"
+          placeholder="Cost Name"
+        />
+        <Button 
+          variant="ghost" 
+          size="sm" 
           onClick={onRemove}
-          className="h-6 px-2"
+          className="h-7 w-7 p-0"
         >
-          <Trash className="h-4 w-4" />
+          <Trash className="h-3.5 w-3.5" />
         </Button>
       </div>
-
-      {/* Render different forms based on cost type */}
-      {cost.costType === 'fixed' && (
-        <FixedCostForm
-          details={cost.details as FixedCost}
-          onUpdate={(details) => onUpdate({ details })}
-        />
-      )}
-      {cost.costType === 'unit' && (
-        <UnitCostForm
-          details={cost.details as UnitCost}
-          onUpdate={(details) => onUpdate({ details })}
-        />
-      )}
-      {cost.costType === 'revenue' && (
-        <RevenueCostForm
-          details={cost.details as RevenueCost}
-          onUpdate={(details) => onUpdate({ details })}
-        />
-      )}
-      {cost.costType === 'tiered' && (
-        <TieredCostForm
-          details={cost.details as TieredCost}
-          onUpdate={(details) => onUpdate({ details })}
-        />
-      )}
+      
+      <div className="space-y-3">
+        <div className="grid grid-cols-2 gap-2">
+          <div className="space-y-1">
+            <Label className="text-xs">Type</Label>
+            <Select
+              value={cost.costType}
+              onValueChange={(value) => handleTypeChange(value as CostType)}
+            >
+              <SelectTrigger className="h-8">
+                <SelectValue placeholder="Select type" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="fixed">Fixed Cost</SelectItem>
+                <SelectItem value="unit">Per Unit</SelectItem>
+                <SelectItem value="revenue">Revenue Share</SelectItem>
+                <SelectItem value="tiered">Tiered Pricing</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+        
+        {/* Render the appropriate form based on cost type */}
+        {cost.costType === 'fixed' && (
+          <FixedCostForm 
+            details={cost.details as FixedCost} 
+            onUpdate={(details) => onUpdate({ details })} 
+          />
+        )}
+        
+        {cost.costType === 'unit' && (
+          <UnitCostForm 
+            details={cost.details as UnitCost} 
+            onUpdate={(details) => onUpdate({ details })} 
+          />
+        )}
+        
+        {cost.costType === 'revenue' && (
+          <RevenueCostForm 
+            details={cost.details as RevenueCost} 
+            onUpdate={(details) => onUpdate({ details })} 
+          />
+        )}
+        
+        {cost.costType === 'tiered' && (
+          <TieredCostForm 
+            details={cost.details as TieredCost} 
+            onUpdate={(details) => onUpdate({ details })} 
+          />
+        )}
+      </div>
     </div>
   );
 }
 
-// Individual cost type forms
+// Fixed Cost Form
 function FixedCostForm({ 
   details, 
   onUpdate 
@@ -532,15 +444,20 @@ function FixedCostForm({
   onUpdate: (details: FixedCost) => void;
 }) {
   const handleAmountChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const amount = parseFloat(e.target.value) || 0;
-    console.log('Updating fixed cost amount:', amount);
-    onUpdate({ ...details, amount });
+    const amount = parseFloat(e.target.value);
+    if (!isNaN(amount)) {
+      onUpdate({ ...details, amount });
+    }
   };
-
+  
+  const handleFrequencyChange = (frequency: 'monthly' | 'annual') => {
+    onUpdate({ ...details, frequency });
+  };
+  
   return (
-    <div className="space-y-2">
-      <div className="flex gap-2">
-        <div className="flex-1">
+    <div className="space-y-3">
+      <div className="grid grid-cols-2 gap-2">
+        <div className="space-y-1">
           <Label className="text-xs">Amount</Label>
           <div className="relative">
             <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
@@ -548,21 +465,22 @@ function FixedCostForm({
             </span>
             <Input
               type="number"
-              value={details.amount}
+              value={details.amount || ''}
               onChange={handleAmountChange}
-              className="pl-7 bg-transparent"
+              className="pl-7 h-8"
               placeholder="0.00"
             />
           </div>
         </div>
-        <div>
+        
+        <div className="space-y-1">
           <Label className="text-xs">Frequency</Label>
           <Select
             value={details.frequency}
-            onValueChange={(frequency) => onUpdate({ ...details, frequency: frequency as 'monthly' | 'annual' })}
+            onValueChange={handleFrequencyChange}
           >
-            <SelectTrigger className="w-[120px] bg-transparent">
-              <SelectValue />
+            <SelectTrigger className="h-8">
+              <SelectValue placeholder="Select frequency" />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="monthly">Monthly</SelectItem>
@@ -575,6 +493,7 @@ function FixedCostForm({
   );
 }
 
+// Unit Cost Form
 function UnitCostForm({ 
   details, 
   onUpdate 
@@ -582,53 +501,43 @@ function UnitCostForm({
   details: UnitCost;
   onUpdate: (details: UnitCost) => void;
 }) {
+  const handleUnitPriceChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const unitPrice = parseFloat(e.target.value);
+    if (!isNaN(unitPrice)) {
+      onUpdate({ ...details, unitPrice });
+    }
+  };
+  
+  const handleUnitTypeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    onUpdate({ ...details, unitType: e.target.value });
+  };
+  
   return (
-    <div className="space-y-2">
-      <div className="flex gap-2">
-        <div className="flex-1">
-          <Label className="text-xs">Unit Price</Label>
+    <div className="space-y-3">
+      <div className="grid grid-cols-2 gap-2">
+        <div className="space-y-1">
+          <Label className="text-xs">Price per Unit</Label>
           <div className="relative">
             <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
               $
             </span>
             <Input
               type="number"
-              value={details.unitPrice}
-              onChange={(e) => onUpdate({ ...details, unitPrice: parseFloat(e.target.value) || 0 })}
-              className="pl-7 bg-transparent"
+              value={details.unitPrice || ''}
+              onChange={handleUnitPriceChange}
+              className="pl-7 h-8"
               placeholder="0.00"
             />
           </div>
         </div>
-        <div className="flex-1">
+        
+        <div className="space-y-1">
           <Label className="text-xs">Unit Type</Label>
           <Input
-            value={details.unitType}
-            onChange={(e) => onUpdate({ ...details, unitType: e.target.value })}
-            className="bg-transparent"
-            placeholder="e.g., transaction, account"
-          />
-        </div>
-      </div>
-      <div className="flex gap-2">
-        <div className="flex-1">
-          <Label className="text-xs">Minimum Units (Optional)</Label>
-          <Input
-            type="number"
-            value={details.minimumUnits || ''}
-            onChange={(e) => onUpdate({ ...details, minimumUnits: parseFloat(e.target.value) || undefined })}
-            className="bg-transparent"
-            placeholder="No minimum"
-          />
-        </div>
-        <div className="flex-1">
-          <Label className="text-xs">Maximum Units (Optional)</Label>
-          <Input
-            type="number"
-            value={details.maximumUnits || ''}
-            onChange={(e) => onUpdate({ ...details, maximumUnits: parseFloat(e.target.value) || undefined })}
-            className="bg-transparent"
-            placeholder="No maximum"
+            value={details.unitType || ''}
+            onChange={handleUnitTypeChange}
+            className="h-8"
+            placeholder="e.g. user, transaction"
           />
         </div>
       </div>
@@ -636,6 +545,7 @@ function UnitCostForm({
   );
 }
 
+// Revenue Cost Form
 function RevenueCostForm({ 
   details, 
   onUpdate 
@@ -643,17 +553,24 @@ function RevenueCostForm({
   details: RevenueCost;
   onUpdate: (details: RevenueCost) => void;
 }) {
+  const handlePercentageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const percentage = parseFloat(e.target.value);
+    if (!isNaN(percentage)) {
+      onUpdate({ ...details, percentage });
+    }
+  };
+  
   return (
-    <div className="space-y-2">
-      <div className="flex gap-2">
-        <div className="flex-1">
+    <div className="space-y-3">
+      <div className="grid grid-cols-2 gap-2">
+        <div className="space-y-1">
           <Label className="text-xs">Revenue Percentage</Label>
           <div className="relative">
             <Input
               type="number"
-              value={details.percentage}
-              onChange={(e) => onUpdate({ ...details, percentage: parseFloat(e.target.value) || 0 })}
-              className="pr-8 bg-transparent"
+              value={details.percentage || ''}
+              onChange={handlePercentageChange}
+              className="pr-8 h-8"
               placeholder="0.00"
               min={0}
               max={100}
@@ -664,26 +581,12 @@ function RevenueCostForm({
             </span>
           </div>
         </div>
-        <div className="flex-1">
-          <Label className="text-xs">Monthly Minimum (Optional)</Label>
-          <div className="relative">
-            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
-              $
-            </span>
-            <Input
-              type="number"
-              value={details.minimumMonthly || ''}
-              onChange={(e) => onUpdate({ ...details, minimumMonthly: parseFloat(e.target.value) || undefined })}
-              className="pl-7 bg-transparent"
-              placeholder="No minimum"
-            />
-          </div>
-        </div>
       </div>
     </div>
   );
 }
 
+// Tiered Cost Form
 function TieredCostForm({ 
   details, 
   onUpdate 
@@ -693,170 +596,143 @@ function TieredCostForm({
 }) {
   const addTier = () => {
     const lastTier = details.tiers[details.tiers.length - 1];
-    const newTier: TierRange = {
-      min: lastTier.max || lastTier.min + 1,
-      unitPrice: lastTier.unitPrice
-    };
-    onUpdate({
-      ...details,
-      tiers: [...details.tiers, newTier]
-    });
+    const newMin = lastTier ? lastTier.min + 100 : 0;
+    
+    const updatedTiers = [
+      ...details.tiers,
+      { min: newMin, unitPrice: 0 }
+    ];
+    
+    onUpdate({ ...details, tiers: updatedTiers });
   };
-
+  
   const removeTier = (index: number) => {
-    onUpdate({
-      ...details,
-      tiers: details.tiers.filter((_, i) => i !== index)
-    });
+    const updatedTiers = details.tiers.filter((_, i) => i !== index);
+    onUpdate({ ...details, tiers: updatedTiers });
   };
-
+  
+  const updateTier = (index: number, updates: Partial<TierRange>) => {
+    const updatedTiers = details.tiers.map((tier, i) => 
+      i === index ? { ...tier, ...updates } : tier
+    );
+    
+    onUpdate({ ...details, tiers: updatedTiers });
+  };
+  
+  const handleUnitTypeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    onUpdate({ ...details, unitType: e.target.value });
+  };
+  
   return (
     <div className="space-y-3">
-      <div className="flex gap-2">
-        <div className="flex-1">
-          <Label className="text-xs">Unit Type</Label>
-          <Input
-            value={details.unitType}
-            onChange={(e) => onUpdate({ ...details, unitType: e.target.value })}
-            className="bg-transparent"
-            placeholder="e.g., transaction, account"
-          />
-        </div>
-        <div>
-          <Label className="text-xs">Monthly Minimum (Optional)</Label>
-          <div className="relative">
-            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
-              $
-            </span>
-            <Input
-              type="number"
-              value={details.minimumMonthly || ''}
-              onChange={(e) => onUpdate({ ...details, minimumMonthly: parseFloat(e.target.value) || undefined })}
-              className="pl-7 bg-transparent"
-              placeholder="No minimum"
-            />
-          </div>
-        </div>
+      <div className="space-y-1">
+        <Label className="text-xs">Unit Type</Label>
+        <Input
+          value={details.unitType || ''}
+          onChange={handleUnitTypeChange}
+          className="h-8"
+          placeholder="e.g. user, transaction"
+        />
       </div>
-
+      
       <div className="space-y-2">
         <div className="flex items-center justify-between">
           <Label className="text-xs">Pricing Tiers</Label>
-          <Button
-            variant="ghost"
-            size="sm"
+          <Button 
+            variant="outline" 
+            size="sm" 
             onClick={addTier}
             className="h-6 px-2"
           >
-            <Plus className="h-4 w-4" />
+            <Plus className="h-3 w-3 mr-1" />
+            Add Tier
           </Button>
         </div>
-
-        {details.tiers.map((tier, index) => (
-          <div key={index} className="flex gap-2 items-end">
-            <div className="flex-1">
-              <Label className="text-xs">Min {details.unitType}s</Label>
-              <Input
-                type="number"
-                value={tier.min}
-                onChange={(e) => {
-                  const newTiers = [...details.tiers];
-                  newTiers[index] = { ...tier, min: parseFloat(e.target.value) || 0 };
-                  onUpdate({ ...details, tiers: newTiers });
-                }}
-                className="bg-transparent"
-              />
-            </div>
-            <div className="flex-1">
-              <Label className="text-xs">Max {details.unitType}s (Optional)</Label>
-              <Input
-                type="number"
-                value={tier.max || ''}
-                onChange={(e) => {
-                  const newTiers = [...details.tiers];
-                  newTiers[index] = { ...tier, max: parseFloat(e.target.value) || undefined };
-                  onUpdate({ ...details, tiers: newTiers });
-                }}
-                className="bg-transparent"
-                placeholder="∞"
-              />
-            </div>
-            <div className="flex-1">
-              <Label className="text-xs">Price per Unit</Label>
-              <div className="relative">
-                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
-                  $
-                </span>
-                <Input
-                  type="number"
-                  value={tier.unitPrice}
-                  onChange={(e) => {
-                    const newTiers = [...details.tiers];
-                    newTiers[index] = { ...tier, unitPrice: parseFloat(e.target.value) || 0 };
-                    onUpdate({ ...details, tiers: newTiers });
-                  }}
-                  className="pl-7 bg-transparent"
-                />
+        
+        <div className="space-y-2">
+          {details.tiers.map((tier, index) => (
+            <div key={index} className="flex items-center gap-2">
+              <div className="flex-1 grid grid-cols-2 gap-2">
+                <div className="space-y-1">
+                  <Label className="text-xs">Min {details.unitType || 'units'}</Label>
+                  <Input
+                    type="number"
+                    value={tier.min}
+                    onChange={(e) => updateTier(index, { min: parseInt(e.target.value) })}
+                    className="h-7"
+                    min={0}
+                  />
+                </div>
+                
+                <div className="space-y-1">
+                  <Label className="text-xs">Price per Unit</Label>
+                  <div className="relative">
+                    <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
+                      $
+                    </span>
+                    <Input
+                      type="number"
+                      value={tier.unitPrice}
+                      onChange={(e) => updateTier(index, { unitPrice: parseFloat(e.target.value) })}
+                      className="pl-5 h-7"
+                      min={0}
+                      step={0.01}
+                    />
+                  </div>
+                </div>
               </div>
+              
+              {details.tiers.length > 1 && (
+                <Button 
+                  variant="ghost" 
+                  size="sm" 
+                  onClick={() => removeTier(index)}
+                  className="h-7 w-7 p-0 self-end"
+                >
+                  <Trash className="h-3 w-3" />
+                </Button>
+              )}
             </div>
-            {index > 0 && (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => removeTier(index)}
-                className="h-10 px-2"
-              >
-                <Trash className="h-4 w-4" />
-              </Button>
-            )}
-          </div>
-        ))}
+          ))}
+        </div>
       </div>
     </div>
   );
 }
 
+// Due Diligence Section
 function DueDiligenceSection({
   items,
   onUpdate,
-  onAdd,
   onRemove
 }: {
   items: DDItem[];
   onUpdate: (item: DDItem) => void;
-  onAdd: () => void;
   onRemove: (id: string) => void;
 }) {
   return (
     <div className="space-y-2">
-      <div className="flex items-center justify-between">
-        <Label>Due Diligence</Label>
-        <Button 
-          variant="ghost" 
-          size="sm" 
-          onClick={onAdd}
-          className="h-6 px-2"
-        >
-          <Plus className="h-4 w-4" />
-        </Button>
-      </div>
-
-      <div className="space-y-3">
-        {items.map(item => (
-          <div key={item.id} className="space-y-2 p-3 bg-muted/30 rounded-lg">
-            <div className="flex items-start justify-between gap-2">
+      {items.length === 0 ? (
+        <div className="text-sm text-muted-foreground">
+          No due diligence items yet
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {items.map((item) => (
+            <div key={item.id} className="flex items-start gap-2 p-2 rounded-md bg-muted/30">
               <Input
-                value={item.name}
+                value={item.name || ''}
                 onChange={(e) => onUpdate({ ...item, name: e.target.value })}
-                placeholder="DD item name"
-                className="bg-transparent"
+                className="flex-1 h-8 bg-transparent"
+                placeholder="Due diligence item..."
               />
+              
               <Select
                 value={item.status}
-                onValueChange={(status) => onUpdate({ ...item, status: status as DDStatus })}
+                onValueChange={(value) => onUpdate({ ...item, status: value as DDStatus })}
               >
-                <SelectTrigger className="w-[130px] bg-transparent">
-                  <SelectValue />
+                <SelectTrigger className="w-[100px] h-8">
+                  <SelectValue placeholder="Status" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="pending">Pending</SelectItem>
@@ -865,35 +741,21 @@ function DueDiligenceSection({
                   <SelectItem value="blocked">Blocked</SelectItem>
                 </SelectContent>
               </Select>
-              <Button
-                variant="ghost"
-                size="sm"
+              
+              <Button 
+                variant="ghost" 
+                size="sm" 
                 onClick={() => onRemove(item.id)}
-                className="h-6 px-2"
+                className="h-8 w-8 p-0"
               >
-                <Trash className="h-4 w-4" />
+                <Trash className="h-3.5 w-3.5" />
               </Button>
             </div>
-            <Textarea
-              value={item.notes}
-              onChange={(e) => onUpdate({ ...item, notes: e.target.value })}
-              placeholder="Additional notes..."
-              className="min-h-[60px] text-sm bg-transparent"
-            />
-            <div className="flex gap-2">
-              <div className="flex-1">
-                <Label className="text-xs">Due Date</Label>
-                <Input
-                  type="date"
-                  value={item.dueDate}
-                  onChange={(e) => onUpdate({ ...item, dueDate: e.target.value })}
-                  className="bg-transparent"
-                />
-              </div>
-            </div>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
+
+export default ProviderNode;

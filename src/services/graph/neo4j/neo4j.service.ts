@@ -48,9 +48,9 @@ export class Neo4jGraphStorage<T> implements IGraphStorage<T> {
   const session = this.driver.session();
   try {
     const result = await session.run(CYPHER_QUERIES.GET_FULL_GRAPH);
-    const nodes: GraphNode<any>[] = [];
+    const nodes: GraphNode<unknown>[] = [];
     const edges: GraphEdge[] = [];
-    const nodeMap = new Map<string, GraphNode<any>>();
+    const nodeMap = new Map<string, GraphNode<unknown>>();
 
     result.records.forEach(record => {
       const node = record.get('n') as Neo4jNode;
@@ -102,19 +102,22 @@ export class Neo4jGraphStorage<T> implements IGraphStorage<T> {
     }
   }
 
-  async getNodesByType(type: NodeType): Promise<GraphNode<any>[]> {
+  async getNodesByType(type: NodeType): Promise<GraphNode<unknown>[]> {
     const session = this.driver.session();
     try {
       // Replace TYPE_PLACEHOLDER with the sanitized type
       const query = CYPHER_QUERIES.GET_NODES_BY_TYPE.replace('TYPE_PLACEHOLDER', sanitizeNodeType(type));
       const result = await session.run(query);
 
-      return result.records
+      // First map to transform nodes, then filter out nulls with a non-null assertion
+      const nodes = result.records
         .map(record => {
-          const node = record.get('n') as Neo4jNode<any>;
+          const node = record.get('n') as Neo4jNode;
           return this.transformNode(node);
         })
-        .filter((node): node is GraphNode<any> => node !== null);
+        .filter((node): node is NonNullable<typeof node> => node !== null);
+      
+      return nodes as GraphNode<unknown>[];
     } finally {
       await session.close();
     }
@@ -157,16 +160,58 @@ export class Neo4jGraphStorage<T> implements IGraphStorage<T> {
       
       // Remove position from properties to avoid Neo4j error with complex objects
       const cleanProperties = { ...properties };
-      if ((cleanProperties as any).position) {
-        delete (cleanProperties as any).position;
+      const propertiesWithPosition = cleanProperties as Record<string, unknown>;
+      if ('position' in propertiesWithPosition) {
+        delete propertiesWithPosition.position;
       }
+      
+      // Process properties to ensure all complex objects are stringified
+      // Neo4j only accepts primitive types or arrays of primitive types
+      const processedProperties: Record<string, unknown> = {};
+      
+      for (const [key, value] of Object.entries(cleanProperties)) {
+        if (value === null || value === undefined) {
+          processedProperties[key] = value;
+        } else if (
+          typeof value === 'string' || 
+          typeof value === 'number' || 
+          typeof value === 'boolean' ||
+          value instanceof Date
+        ) {
+          // Primitive types can be stored directly
+          processedProperties[key] = value;
+        } else if (Array.isArray(value)) {
+          // Check if array contains complex objects
+          const hasComplexObjects = value.some(item => 
+            item !== null && 
+            typeof item === 'object' && 
+            !(item instanceof Date)
+          );
+          
+          if (hasComplexObjects) {
+            // If array contains complex objects, stringify the whole array
+            processedProperties[key] = JSON.stringify(value);
+          } else {
+            // Arrays of primitives can be stored directly
+            processedProperties[key] = value;
+          }
+        } else if (typeof value === 'object') {
+          // All other objects need to be stringified
+          processedProperties[key] = JSON.stringify(value);
+        } else {
+          // Fallback for any other types
+          processedProperties[key] = String(value);
+        }
+      }
+      
+      console.log(`[Neo4jService] Processed properties for node ${nodeId}:`, processedProperties);
       
       const result = await session.run(CYPHER_QUERIES.UPDATE_NODE, {
         id: nodeId,
         updatedAt: now,
         positionX,
         positionY,
-        properties: cleanProperties,
+        properties: processedProperties,
       });
   
       const node = result.records[0].get('n') as Neo4jNode;
@@ -225,10 +270,16 @@ export class Neo4jGraphStorage<T> implements IGraphStorage<T> {
   async getEdges(nodeId: ReactFlowId, type?: string): Promise<GraphEdge[]> {
     const session = this.driver.session();
     try {
+      // Ensure type is explicitly null if undefined to avoid Neo4j parameter errors
+      const params = { 
+        nodeId, 
+        type: type === undefined ? null : type 
+      };
+      
       // Use the centralized query from CYPHER_QUERIES
       const result = await session.run(
         CYPHER_QUERIES.GET_EDGES,
-        { nodeId, type }
+        params
       );
 
       return result.records

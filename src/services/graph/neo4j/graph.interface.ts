@@ -10,26 +10,26 @@ export interface GraphNode<T> {
   type: NodeType;
   data: T & { position?: XYPosition };
   position: XYPosition
-}''
+}
 
 export interface GraphEdge {
   id: string;
   from: ReactFlowId;
   to: ReactFlowId;
   type: RelationshipType;
-  properties?: Record<string, any>;
+  properties?: Record<string, unknown>;
 }
 
 export interface GraphData {
-  nodes: GraphNode<any>[];
+  nodes: GraphNode<unknown>[];
   edges: GraphEdge[];
 }
 
-export interface IGraphStorage<T = any> {
+export interface IGraphStorage<T = unknown> {
   // Core node operations
   getFullGraph(): Promise<GraphData>;
   createNode<N extends T>(type: NodeType, properties: N): Promise<GraphNode<N>>; // Strict properties for creation
-  getNodesByType(type: NodeType): Promise<GraphNode<any>[]>; // Generic return for flexibility
+  getNodesByType(type: NodeType): Promise<GraphNode<unknown>[]>; // Generic return for flexibility
   getNode(nodeId: ReactFlowId): Promise<GraphNode<T> | null>;
   updateNode(nodeId: ReactFlowId, properties: Partial<T>): Promise<GraphNode<T>>; // Partial for updates
   deleteNode(nodeId: ReactFlowId): Promise<void>;

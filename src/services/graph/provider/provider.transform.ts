@@ -9,17 +9,59 @@ import { Node as Neo4jNode, Relationship as Neo4jRelationship } from 'neo4j-driv
  * @returns The parsed JSON object or the default value
  */
 function safeJsonParse<T>(jsonString: string | undefined, defaultValue: T): T {
-  if (!jsonString) return defaultValue;
+  console.log('🔍 safeJsonParse called with:', { 
+    jsonString, 
+    type: typeof jsonString,
+    defaultValueType: typeof defaultValue,
+    isDefaultArray: Array.isArray(defaultValue)
+  });
+  
+  // If it's already the correct type, return it directly
+  if (typeof jsonString !== 'string') {
+    if (Array.isArray(defaultValue) && Array.isArray(jsonString)) {
+      console.log('✅ safeJsonParse: Input is already an array, returning directly');
+      return jsonString as unknown as T;
+    }
+    console.log('⚠️ safeJsonParse: Input is not a string and not matching default type, returning default', {
+      inputType: typeof jsonString,
+      defaultType: typeof defaultValue
+    });
+    return defaultValue;
+  }
+  
+  if (!jsonString || jsonString.trim() === '') {
+    console.log('⚠️ safeJsonParse: Empty string provided', { jsonString });
+    return defaultValue;
+  }
   
   // Check if the string is a valid JSON before attempting to parse
-  if (typeof jsonString !== 'string' || !jsonString.trim().startsWith('{') && !jsonString.trim().startsWith('[')) {
+  if (!jsonString.trim().startsWith('{') && !jsonString.trim().startsWith('[')) {
+    console.warn('⚠️ safeJsonParse: Invalid JSON format', { 
+      jsonString, 
+      type: typeof jsonString,
+      firstChar: jsonString.trim()[0] || 'empty string'
+    });
     return defaultValue;
   }
   
   try {
-    return JSON.parse(jsonString) as T;
+    const parsed = JSON.parse(jsonString) as T;
+    console.log('✅ safeJsonParse: Successfully parsed JSON', { 
+      parsed,
+      type: typeof parsed,
+      isArray: Array.isArray(parsed),
+      length: Array.isArray(parsed) ? parsed.length : undefined
+    });
+    
+    // Ensure we return an array if the default is an array
+    if (Array.isArray(defaultValue) && !Array.isArray(parsed)) {
+      console.warn('⚠️ safeJsonParse: Parsed result is not an array but default is, returning default');
+      return defaultValue;
+    }
+    
+    return parsed;
   } catch (e) {
-    console.warn('Failed to parse JSON string:', e);
+    console.warn('❌ safeJsonParse: Failed to parse JSON string:', e, { jsonString });
     return defaultValue;
   }
 }
@@ -44,10 +86,48 @@ export function reactFlowToNeo4j(providerNode: RFProviderNode): Neo4jProviderNod
 }
 
 export function neo4jToReactFlow(neo4jData: Neo4jProviderNodeData): RFProviderNode {
+  // Add a very visible debug log
+  console.log('🔍 NEO4J TO REACT FLOW TRANSFORM:', { 
+    id: neo4jData.id,
+    costs: neo4jData.costs,
+    ddItems: neo4jData.ddItems,
+    teamAllocations: neo4jData.teamAllocations
+  });
+
   // Parse JSON strings back to objects using the safe parser
   const costs = safeJsonParse<ProviderCost[]>(neo4jData.costs, []);
   const ddItems = safeJsonParse<DDItem[]>(neo4jData.ddItems, []);
-  const teamAllocations = safeJsonParse<TeamAllocation[]>(neo4jData.teamAllocations, []);
+  
+  // Enhanced handling for teamAllocations to ensure it's always an array
+  let teamAllocations: TeamAllocation[] = [];
+  
+  // If it's already an array, use it directly
+  if (Array.isArray(neo4jData.teamAllocations)) {
+    console.log('✅ teamAllocations is already an array:', neo4jData.teamAllocations);
+    teamAllocations = neo4jData.teamAllocations;
+  }
+  // If it's a string, try to parse it
+  else if (typeof neo4jData.teamAllocations === 'string') {
+    try {
+      const parsed = JSON.parse(neo4jData.teamAllocations);
+      if (Array.isArray(parsed)) {
+        console.log('✅ Successfully parsed teamAllocations string to array:', parsed);
+        teamAllocations = parsed;
+      } else {
+        console.warn('⚠️ Parsed teamAllocations is not an array, using empty array instead');
+      }
+    } catch (e) {
+      console.warn('❌ Failed to parse teamAllocations string, using empty array instead:', e);
+    }
+  } else {
+    console.log('⚠️ teamAllocations is neither an array nor a string, using empty array');
+  }
+  
+  console.log('🔄 Final teamAllocations after transformation:', {
+    teamAllocations,
+    isArray: Array.isArray(teamAllocations),
+    length: teamAllocations.length
+  });
 
   return {
     id: neo4jData.id,
@@ -107,6 +187,13 @@ export function neo4jToReactFlowEdge(neo4jEdge: Neo4jProviderEdge): RFProviderEd
 }
 
 export function transformProviderNode(node: Neo4jNode): GraphNode<RFProviderNodeData> | null {
+  console.log('🔍 transformProviderNode called with node:', { 
+    id: node?.properties?.id,
+    labels: node?.labels,
+    hasProperties: !!node?.properties,
+    propertyKeys: node?.properties ? Object.keys(node.properties) : []
+  });
+  
   if (!node?.properties) return null;
 
   // Check if this is a provider node by looking at labels
@@ -127,10 +214,66 @@ export function transformProviderNode(node: Neo4jNode): GraphNode<RFProviderNode
     ...properties 
   } = node.properties;
 
+  console.log('🔍 Provider node properties extracted:', { 
+    id,
+    costs,
+    costsType: typeof costs,
+    ddItems,
+    ddItemsType: typeof ddItems,
+    teamAllocations,
+    teamAllocationsType: typeof teamAllocations,
+    otherProperties: Object.keys(properties)
+  });
+
   // Parse JSON strings back to objects using the safe parser
   const costsData = safeJsonParse<ProviderCost[]>(costs as string, []);
   const ddItemsData = safeJsonParse<DDItem[]>(ddItems as string, []);
-  const teamAllocationsData = safeJsonParse<TeamAllocation[]>(teamAllocations as string, []);
+  
+  // Enhanced handling for teamAllocations to ensure it's always an array
+  let teamAllocationsData: TeamAllocation[] = [];
+  
+  // If it's already an array, use it directly
+  if (Array.isArray(teamAllocations)) {
+    console.log('✅ teamAllocations is already an array:', teamAllocations);
+    teamAllocationsData = teamAllocations as TeamAllocation[];
+  }
+  // If it's a string, try to parse it
+  else if (typeof teamAllocations === 'string') {
+    try {
+      const parsed = JSON.parse(teamAllocations);
+      if (Array.isArray(parsed)) {
+        console.log('✅ Successfully parsed teamAllocations string to array:', parsed);
+        teamAllocationsData = parsed;
+      } else {
+        console.warn('⚠️ Parsed teamAllocations is not an array, using empty array instead');
+      }
+    } catch (e) {
+      console.warn('❌ Failed to parse teamAllocations string, using empty array instead:', e);
+    }
+  } else {
+    console.log('⚠️ teamAllocations is neither an array nor a string, using empty array');
+  }
+  
+  console.log('🔄 Final teamAllocations after transformation:', {
+    teamAllocationsData,
+    isArray: Array.isArray(teamAllocationsData),
+    length: teamAllocationsData.length
+  });
+
+  console.log('🔍 Provider node data after parsing:', { 
+    costsData,
+    costsDataType: typeof costsData,
+    costsIsArray: Array.isArray(costsData),
+    costsLength: Array.isArray(costsData) ? costsData.length : undefined,
+    ddItemsData,
+    ddItemsDataType: typeof ddItemsData,
+    ddItemsIsArray: Array.isArray(ddItemsData),
+    ddItemsLength: Array.isArray(ddItemsData) ? ddItemsData.length : undefined,
+    teamAllocationsData,
+    teamAllocationsDataType: typeof teamAllocationsData,
+    teamAllocationsIsArray: Array.isArray(teamAllocationsData),
+    teamAllocationsLength: Array.isArray(teamAllocationsData) ? teamAllocationsData.length : undefined
+  });
 
   return {
     id: id as string,

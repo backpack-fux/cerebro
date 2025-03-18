@@ -33,7 +33,7 @@ import { transformOptionNode, transformOptionEdge } from '@/services/graph/optio
 import { transformProviderNode, transformProviderEdge } from '@/services/graph/provider/provider.transform';
 
 // Generic transform functions for any node/edge type (could be dynamic or default)
-function transformNode(node: Neo4jNode): GraphNode<any> | null {
+function transformNode(node: Neo4jNode): GraphNode<Record<string, unknown>> | null {
   if (!node?.properties) return null;
 
   // Get the raw type from Neo4j
@@ -56,7 +56,7 @@ function transformNode(node: Neo4jNode): GraphNode<any> | null {
       x: typeof positionX === 'number' ? positionX : 0,
       y: typeof positionY === 'number' ? positionY : 0,
     },
-    data: properties as any, // Generic, could be refined with dynamic type detection
+    data: properties as Record<string, unknown>,
   };
 }
 
@@ -81,8 +81,8 @@ export function createNeo4jStorage<T>(
   return new Neo4jGraphStorage<T>(config, transformNode, transformEdge);
 }
 
-// Create a generic Neo4j storage instance
-export const neo4jStorage = createNeo4jStorage<any>(
+// Create a generic Neo4j storage instance - only use this where you explicitly cast the type
+export const neo4jStorage = createNeo4jStorage<Record<string, unknown>>(
   neo4jConfig,
   transformNode,
   transformEdge
@@ -117,14 +117,14 @@ export function createProviderService(storage: IGraphStorage<RFProviderNodeData>
   return new ProviderService(storage);
 }
 
-// Create service instances with the generic Neo4j storage
-export const metaService = createMetaService(neo4jStorage as IGraphStorage<RFMetaNodeData>);
-export const milestoneService = createMilestoneService(neo4jStorage as IGraphStorage<RFMilestoneNodeData>);
-export const teamMemberService = createTeamMemberService(neo4jStorage as IGraphStorage<RFTeamMemberNodeData>);
-export const teamService = createTeamService(neo4jStorage as IGraphStorage<RFTeamNodeData>);
-export const featureService = createFeatureService(neo4jStorage as IGraphStorage<RFFeatureNodeData>);
-export const optionService = createOptionService(neo4jStorage as IGraphStorage<RFOptionNodeData>);
-export const providerService = createProviderService(neo4jStorage as IGraphStorage<RFProviderNodeData>);
+// Create service instances with type-specific storage
+export const metaService = createMetaService(createMetaStorage());
+export const milestoneService = createMilestoneService(createMilestoneStorage());
+export const teamMemberService = createTeamMemberService(createTeamMemberStorage());
+export const teamService = createTeamService(createTeamStorage());
+export const featureService = createFeatureService(createFeatureStorage());
+export const optionService = createOptionService(createOptionStorage());
+export const providerService = createProviderService(createProviderStorage());
 
 // Create specialized Neo4j storage instances for each node type
 export function createMetaStorage(): IGraphStorage<RFMetaNodeData> {

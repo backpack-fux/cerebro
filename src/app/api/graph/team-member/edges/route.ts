@@ -26,8 +26,38 @@ export async function POST(req: NextRequest) {
       data: edge.data,
     });
 
-    // Use TeamMemberService to create the edge
-    const createdEdge = await teamMemberService.createEdge(edge);
+    // Check if this is a team member to team connection
+    // We can determine this by checking if the target node is a team node
+    let createdEdge;
+    
+    try {
+      const { neo4jStorage } = await import('@/services/graph/neo4j/neo4j.provider');
+      const targetNode = await neo4jStorage.getNode(edge.target);
+      
+      // If the target node is a team node, use the connectToTeam method
+      if (targetNode && targetNode.type === 'team') {
+        console.log('[API] Detected team member to team connection, using connectToTeam method');
+        
+        // Extract allocation and role from edge data if available
+        const allocation = edge.data?.allocation ?? 100;
+        const role = edge.data?.role ?? 'Developer';
+        
+        // Use the connectToTeam method to handle both edge creation and roster update
+        createdEdge = await teamMemberService.connectToTeam(
+          edge.source,
+          edge.target,
+          allocation,
+          role
+        );
+      } else {
+        // For other edge types, use the regular createEdge method
+        createdEdge = await teamMemberService.createEdge(edge);
+      }
+    } catch (error) {
+      console.error('[API] Error checking node type:', error);
+      // Fall back to regular edge creation
+      createdEdge = await teamMemberService.createEdge(edge);
+    }
     
     console.log('[API] Successfully created TeamMemberEdge:', {
       id: createdEdge.id,

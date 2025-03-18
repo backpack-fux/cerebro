@@ -34,7 +34,7 @@ export interface RFTeamNodeData extends ReactFlowNodeBase {
   position?: XYPosition;
 }
 
-export interface RFTeamNode extends Node<RFTeamNodeData> {}
+export type RFTeamNode = Node<RFTeamNodeData>;
 
 // Service types for Neo4j operations
 export type CreateTeamNodeParams = {

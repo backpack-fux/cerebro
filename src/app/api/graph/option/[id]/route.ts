@@ -1,24 +1,31 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { OptionService } from '@/services/graph/option/option.service';
-import { neo4jStorage } from '@/services/graph/neo4j/neo4j.provider';
-import { UpdateOptionNodeParams, Neo4jOptionNodeData, Goal, Risk, MemberAllocation, TeamAllocation } from '@/services/graph/option/option.types';
+import { createOptionStorage, createOptionService } from '@/services/graph/neo4j/neo4j.provider';
+import { UpdateOptionNodeParams, Neo4jOptionNodeData, Goal, Risk, MemberAllocation, TeamAllocation, ImpactLevel, SeverityLevel } from '@/services/graph/option/option.types';
 import { neo4jToReactFlow } from '@/services/graph/option/option.transform';
 
-// Initialize the option service
-const optionService = new OptionService(neo4jStorage);
+interface Neo4jError {
+  code: string;
+  message: string;
+}
+
+// Initialize the option service with the correct storage type
+const optionStorage = createOptionStorage();
+const optionService = createOptionService(optionStorage);
 
 /**
  * Validates a Goal object
  * @param goal The goal to validate
  * @returns True if valid, false otherwise
  */
-function isValidGoal(goal: any): goal is Goal {
+function isValidGoal(goal: unknown): goal is Goal {
+  if (!goal || typeof goal !== 'object') return false;
+  
+  const goalObj = goal as Partial<Goal>;
   return (
-    goal &&
-    typeof goal === 'object' &&
-    typeof goal.id === 'string' &&
-    typeof goal.name === 'string' &&
-    typeof goal.description === 'string'
+    typeof goalObj.id === 'string' &&
+    typeof goalObj.description === 'string' &&
+    typeof goalObj.impact === 'string' &&
+    ['high', 'medium', 'low'].includes(goalObj.impact as ImpactLevel)
   );
 }
 
@@ -27,7 +34,7 @@ function isValidGoal(goal: any): goal is Goal {
  * @param goals The goals array to validate
  * @returns True if valid, false otherwise
  */
-function isValidGoals(goals: any): goals is Goal[] {
+function isValidGoals(goals: unknown): goals is Goal[] {
   return Array.isArray(goals) && goals.every(isValidGoal);
 }
 
@@ -36,15 +43,16 @@ function isValidGoals(goals: any): goals is Goal[] {
  * @param risk The risk to validate
  * @returns True if valid, false otherwise
  */
-function isValidRisk(risk: any): risk is Risk {
+function isValidRisk(risk: unknown): risk is Risk {
+  if (!risk || typeof risk !== 'object') return false;
+  
+  const riskObj = risk as Partial<Risk>;
   return (
-    risk &&
-    typeof risk === 'object' &&
-    typeof risk.id === 'string' &&
-    typeof risk.name === 'string' &&
-    typeof risk.description === 'string' &&
-    typeof risk.impact === 'string' &&
-    typeof risk.likelihood === 'string'
+    typeof riskObj.id === 'string' &&
+    typeof riskObj.description === 'string' &&
+    typeof riskObj.severity === 'string' &&
+    ['high', 'medium', 'low'].includes(riskObj.severity as SeverityLevel) &&
+    (riskObj.mitigation === undefined || typeof riskObj.mitigation === 'string')
   );
 }
 
@@ -53,7 +61,7 @@ function isValidRisk(risk: any): risk is Risk {
  * @param risks The risks array to validate
  * @returns True if valid, false otherwise
  */
-function isValidRisks(risks: any): risks is Risk[] {
+function isValidRisks(risks: unknown): risks is Risk[] {
   return Array.isArray(risks) && risks.every(isValidRisk);
 }
 
@@ -62,12 +70,13 @@ function isValidRisks(risks: any): risks is Risk[] {
  * @param allocation The member allocation to validate
  * @returns True if valid, false otherwise
  */
-function isValidMemberAllocation(allocation: any): allocation is MemberAllocation {
+function isValidMemberAllocation(allocation: unknown): allocation is MemberAllocation {
+  if (!allocation || typeof allocation !== 'object') return false;
+  
+  const memberAlloc = allocation as Partial<MemberAllocation>;
   return (
-    allocation &&
-    typeof allocation === 'object' &&
-    typeof allocation.memberId === 'string' &&
-    typeof allocation.timePercentage === 'number'
+    typeof memberAlloc.memberId === 'string' &&
+    typeof memberAlloc.timePercentage === 'number'
   );
 }
 
@@ -76,8 +85,15 @@ function isValidMemberAllocation(allocation: any): allocation is MemberAllocatio
  * @param allocations The allocations array to validate
  * @returns True if valid, false otherwise
  */
-function isValidMemberAllocations(allocations: any): allocations is MemberAllocation[] {
+function isValidMemberAllocations(allocations: unknown): allocations is MemberAllocation[] {
   return Array.isArray(allocations) && allocations.every(isValidMemberAllocation);
+}
+
+interface AllocatedMember {
+  memberId: string;
+  name?: string;
+  hours: number;
+  availableHours?: number;
 }
 
 /**
@@ -85,18 +101,23 @@ function isValidMemberAllocations(allocations: any): allocations is MemberAlloca
  * @param allocation The team allocation to validate
  * @returns True if valid, false otherwise
  */
-function isValidTeamAllocation(allocation: any): allocation is TeamAllocation {
-  return (
-    allocation &&
-    typeof allocation === 'object' &&
-    typeof allocation.teamId === 'string' &&
-    typeof allocation.requestedHours === 'number' &&
-    Array.isArray(allocation.allocatedMembers) &&
-    allocation.allocatedMembers.every((member: any) => 
-      typeof member === 'object' &&
-      typeof member.memberId === 'string' &&
-      typeof member.hours === 'number'
-    )
+function isValidTeamAllocation(allocation: unknown): allocation is TeamAllocation {
+  if (!allocation || typeof allocation !== 'object') return false;
+  
+  const teamAlloc = allocation as Partial<TeamAllocation>;
+  if (!teamAlloc.teamId || !teamAlloc.requestedHours || !teamAlloc.allocatedMembers) return false;
+  
+  if (typeof teamAlloc.teamId !== 'string' || typeof teamAlloc.requestedHours !== 'number') return false;
+  
+  if (!Array.isArray(teamAlloc.allocatedMembers)) return false;
+  
+  return teamAlloc.allocatedMembers.every((member): member is AllocatedMember => 
+    member !== null &&
+    typeof member === 'object' &&
+    typeof member.memberId === 'string' &&
+    typeof member.hours === 'number' &&
+    (member.name === undefined || typeof member.name === 'string') &&
+    (member.availableHours === undefined || typeof member.availableHours === 'number')
   );
 }
 
@@ -105,7 +126,7 @@ function isValidTeamAllocation(allocation: any): allocation is TeamAllocation {
  * @param allocations The allocations array to validate
  * @returns True if valid, false otherwise
  */
-function isValidTeamAllocations(allocations: any): allocations is TeamAllocation[] {
+function isValidTeamAllocations(allocations: unknown): allocations is TeamAllocation[] {
   return Array.isArray(allocations) && allocations.every(isValidTeamAllocation);
 }
 
@@ -128,7 +149,7 @@ export async function GET(request: NextRequest) {
     }
 
     // Use the neo4jStorage to get the node
-    const rawNode = await neo4jStorage.getNode(id);
+    const rawNode = await optionStorage.getNode(id);
     
     if (!rawNode) {
       console.warn('[API] OptionNode not found:', id);
@@ -178,11 +199,10 @@ export async function GET(request: NextRequest) {
       type: error instanceof Error ? error.constructor.name : typeof error
     });
     
-    // Check if it's a Neo4j-specific error
     if (error && typeof error === 'object' && 'code' in error) {
       console.error('[API] Neo4j error details:', {
-        code: (error as any).code,
-        message: (error as any).message
+        code: (error as Neo4jError).code,
+        message: (error as Neo4jError).message
       });
     }
     
@@ -261,97 +281,10 @@ export async function PATCH(request: NextRequest) {
         { status: 400 }
       );
     }
-    
-    // Check if the node exists first
-    const node = await neo4jStorage.getNode(id);
-    
-    if (!node) {
-      console.warn('[API] OptionNode not found for update:', id);
-      return NextResponse.json(
-        { error: 'OptionNode not found' },
-        { status: 404 }
-      );
-    }
-
-    // Convert complex objects to JSON strings
-    const cleanUpdateData: any = { ...updateData };
-    if (cleanUpdateData.goals) {
-      cleanUpdateData.goals = JSON.stringify(cleanUpdateData.goals);
-    }
-    if (cleanUpdateData.risks) {
-      cleanUpdateData.risks = JSON.stringify(cleanUpdateData.risks);
-    }
-    if (cleanUpdateData.memberAllocations) {
-      cleanUpdateData.memberAllocations = JSON.stringify(cleanUpdateData.memberAllocations);
-    }
-    if (cleanUpdateData.teamAllocations) {
-      cleanUpdateData.teamAllocations = JSON.stringify(cleanUpdateData.teamAllocations);
-    }
-    if (cleanUpdateData.teamMembers) {
-      cleanUpdateData.teamMembers = JSON.stringify(cleanUpdateData.teamMembers);
-    }
-
-    console.log('[API] Updating OptionNode with data:', {
-      id: updateData.id,
-      position: updateData.position,
-      title: updateData.title,
-      description: updateData.description,
-      optionType: updateData.optionType,
-      duration: updateData.duration,
-      status: updateData.status,
-      goals: updateData.goals ? `${updateData.goals.length} goals` : 'not provided',
-      risks: updateData.risks ? `${updateData.risks.length} risks` : 'not provided',
-      memberAllocations: updateData.memberAllocations ? `${updateData.memberAllocations.length} allocations` : 'not provided',
-      teamAllocations: updateData.teamAllocations ? `${updateData.teamAllocations.length} allocations` : 'not provided'
-    });
 
     // Use the optionService to update the node
-    const updatedNode = await optionService.update(cleanUpdateData);
+    const updatedNode = await optionService.update(updateData);
     
-    // Ensure complex objects are properly parsed
-    if (typeof updatedNode.data.goals === 'string') {
-      try {
-        updatedNode.data.goals = JSON.parse(updatedNode.data.goals);
-      } catch (e) {
-        updatedNode.data.goals = [];
-      }
-    }
-    
-    if (typeof updatedNode.data.risks === 'string') {
-      try {
-        updatedNode.data.risks = JSON.parse(updatedNode.data.risks);
-      } catch (e) {
-        updatedNode.data.risks = [];
-      }
-    }
-    
-    if (typeof updatedNode.data.memberAllocations === 'string') {
-      try {
-        updatedNode.data.memberAllocations = JSON.parse(updatedNode.data.memberAllocations);
-      } catch (e) {
-        updatedNode.data.memberAllocations = [];
-      }
-    }
-    
-    if (typeof updatedNode.data.teamAllocations === 'string') {
-      try {
-        updatedNode.data.teamAllocations = JSON.parse(updatedNode.data.teamAllocations);
-      } catch (e) {
-        updatedNode.data.teamAllocations = [];
-      }
-    }
-    
-    if (typeof updatedNode.data.teamMembers === 'string') {
-      try {
-        updatedNode.data.teamMembers = JSON.parse(updatedNode.data.teamMembers);
-      } catch (e) {
-        updatedNode.data.teamMembers = [];
-      }
-    }
-
-    // Ensure the ID is included in the response
-    updatedNode.id = id;
-
     console.log('[API] Successfully updated OptionNode:', {
       id: updatedNode.id,
       type: updatedNode.type,
@@ -368,6 +301,7 @@ export async function PATCH(request: NextRequest) {
       }
     });
 
+    // Return the updated node
     return NextResponse.json(updatedNode);
   } catch (error) {
     console.error('[API] Error updating OptionNode:', {
@@ -376,11 +310,10 @@ export async function PATCH(request: NextRequest) {
       type: error instanceof Error ? error.constructor.name : typeof error
     });
     
-    // Check if it's a Neo4j-specific error
     if (error && typeof error === 'object' && 'code' in error) {
       console.error('[API] Neo4j error details:', {
-        code: (error as any).code,
-        message: (error as any).message
+        code: (error as Neo4jError).code,
+        message: (error as Neo4jError).message
       });
     }
     
@@ -409,22 +342,12 @@ export async function DELETE(request: NextRequest) {
       );
     }
 
-    // Check if the node exists first
-    const node = await neo4jStorage.getNode(id);
-    
-    if (!node) {
-      console.warn('[API] OptionNode not found for deletion:', id);
-      return NextResponse.json(
-        { error: 'OptionNode not found' },
-        { status: 404 }
-      );
-    }
-
     // Use the optionService to delete the node
     await optionService.delete(id);
-
+    
     console.log('[API] Successfully deleted OptionNode:', id);
 
+    // Return success response
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error('[API] Error deleting OptionNode:', {
@@ -433,11 +356,10 @@ export async function DELETE(request: NextRequest) {
       type: error instanceof Error ? error.constructor.name : typeof error
     });
     
-    // Check if it's a Neo4j-specific error
     if (error && typeof error === 'object' && 'code' in error) {
       console.error('[API] Neo4j error details:', {
-        code: (error as any).code,
-        message: (error as any).message
+        code: (error as Neo4jError).code,
+        message: (error as Neo4jError).message
       });
     }
     

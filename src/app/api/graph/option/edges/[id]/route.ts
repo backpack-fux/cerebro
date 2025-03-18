@@ -38,18 +38,8 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json(edge);
   } catch (error) {
-    console.error('[API] Error getting OptionEdge:', {
-      error: error instanceof Error ? error.message : 'Unknown error',
-      stack: error instanceof Error ? error.stack : undefined,
-    });
-    
-    return NextResponse.json(
-      { 
-        error: 'Failed to get OptionEdge',
-        message: error instanceof Error ? error.message : 'Unknown error'
-      },
-      { status: 500 }
-    );
+    console.error('[API] Error getting OptionEdge:', error);
+    return NextResponse.json({ error: 'Failed to get OptionEdge' }, { status: 500 });
   }
 }
 
@@ -75,7 +65,7 @@ export async function PATCH(req: NextRequest) {
     try {
       updates = await req.json();
     } catch (error) {
-      console.warn('[API] Invalid JSON in request body');
+      console.warn('[API] Invalid JSON in request body:', error);
       return NextResponse.json(
         { error: 'Invalid JSON in request body' },
         { status: 400 }
@@ -103,18 +93,8 @@ export async function PATCH(req: NextRequest) {
 
     return NextResponse.json(edge);
   } catch (error) {
-    console.error('[API] Error updating OptionEdge:', {
-      error: error instanceof Error ? error.message : 'Unknown error',
-      stack: error instanceof Error ? error.stack : undefined,
-    });
-    
-    return NextResponse.json(
-      { 
-        error: 'Failed to update OptionEdge',
-        message: error instanceof Error ? error.message : 'Unknown error'
-      },
-      { status: 500 }
-    );
+    console.error('[API] Error updating OptionEdge:', error);
+    return NextResponse.json({ error: 'Failed to update OptionEdge' }, { status: 500 });
   }
 }
 
@@ -152,17 +132,7 @@ export async function DELETE(req: NextRequest) {
 
     return new NextResponse(null, { status: 204 });
   } catch (error) {
-    console.error('[API] Error deleting OptionEdge:', {
-      error: error instanceof Error ? error.message : 'Unknown error',
-      stack: error instanceof Error ? error.stack : undefined,
-    });
-    
-    return NextResponse.json(
-      { 
-        error: 'Failed to delete OptionEdge',
-        message: error instanceof Error ? error.message : 'Unknown error'
-      },
-      { status: 500 }
-    );
+    console.error('[API] Error deleting OptionEdge:', error);
+    return NextResponse.json({ error: 'Failed to delete OptionEdge' }, { status: 500 });
   }
 } 

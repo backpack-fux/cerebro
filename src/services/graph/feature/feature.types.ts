@@ -16,8 +16,16 @@ export interface MemberAllocation {
 // Team allocation type for feature nodes
 export interface TeamAllocation {
   teamId: string;
+  teamName?: string;
   requestedHours: number;
-  allocatedMembers: { memberId: string; hours: number }[];
+  allocatedMembers: Array<{
+    memberId: string;
+    name?: string;
+    hours: number;
+    availableHours?: number;
+  }>;
+  teamBandwidth?: number;
+  availableBandwidth?: number;
 }
 
 // Available bandwidth type for feature nodes
@@ -42,7 +50,7 @@ export interface RFFeatureNodeData extends ReactFlowNodeBase {
   position?: XYPosition;
 }
 
-export interface RFFeatureNode extends Node<RFFeatureNodeData> {}
+export type RFFeatureNode = Node<RFFeatureNodeData>;
 
 // Service types for Neo4j operations
 export type CreateFeatureNodeParams = {
@@ -95,13 +103,20 @@ export interface Neo4jFeatureNodeData {
 
 // EDGE TYPES HERE
 export interface RFFeatureEdge extends RFEdge {
+  id: string;
   source: string;
   target: string;
-  data?: {
-    label?: string; // Optional label for display in UI
-    edgeType?: string; // Original edge type from Neo4j
-    allocation?: number; // Allocation percentage or hours
-    // Add other metadata as needed
+  type: string;
+  data: {
+    label?: string;
+    edgeType?: string;
+    allocation?: number;
+    requestedHours?: number;
+    allocatedMembers?: Array<{
+      memberId: string;
+      name?: string;
+      hours: number;
+    }>;
   };
 }
 

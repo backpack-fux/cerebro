@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { teamMemberService } from '@/services/graph/neo4j/neo4j.provider';
-import { RFTeamMemberNode, CreateTeamMemberNodeParams } from '@/services/graph/team-member/team-member.types';
+import { CreateTeamMemberNodeParams } from '@/services/graph/team-member/team-member.types';
 
 // POST /api/graph/team-member - Create a new team member node
 export async function POST(req: NextRequest) {
@@ -51,11 +51,7 @@ export async function POST(req: NextRequest) {
     // Return the created node
     return NextResponse.json(createdNode, { status: 201 });
   } catch (error) {
-    console.error('[API] Error creating TeamMember:', {
-      error: error instanceof Error ? error.message : 'Unknown error',
-      stack: error instanceof Error ? error.stack : undefined,
-      type: error instanceof Error ? error.constructor.name : typeof error
-    });
+    console.error('[API] Error creating TeamMember:', error);
     
     return NextResponse.json(
       { error: 'Failed to create TeamMember' },
@@ -65,7 +61,7 @@ export async function POST(req: NextRequest) {
 }
 
 // GET /api/graph/team-member - Get all team member nodes
-export async function GET(req: NextRequest) {
+export async function GET() {
   try {
     console.log('[API] Getting all TeamMembers');
     
@@ -75,9 +71,7 @@ export async function GET(req: NextRequest) {
     
     return NextResponse.json(nodes);
   } catch (error) {
-    console.error('[API] Error getting TeamMembers:', {
-      error: error instanceof Error ? error.message : 'Unknown error',
-    });
+    console.error('[API] Error getting TeamMembers:', error);
     
     return NextResponse.json(
       { error: 'Failed to get TeamMembers' },

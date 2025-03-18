@@ -1,18 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { FeatureService } from '@/services/graph/feature/feature.service';
-import { neo4jStorage } from '@/services/graph/neo4j/neo4j.provider';
+import { featureService } from '@/services/graph/neo4j/neo4j.provider';
 import { UpdateFeatureNodeParams, Neo4jFeatureNodeData, MemberAllocation, TeamAllocation } from '@/services/graph/feature/feature.types';
 import { neo4jToReactFlow } from '@/services/graph/feature/feature.transform';
-
-// Initialize the feature service
-const featureService = new FeatureService(neo4jStorage);
 
 /**
  * Validates a MemberAllocation object
  * @param allocation The member allocation to validate
  * @returns True if valid, false otherwise
  */
-function isValidMemberAllocation(allocation: any): allocation is MemberAllocation {
+function isValidMemberAllocation(allocation: MemberAllocation): allocation is MemberAllocation {
   return (
     allocation &&
     typeof allocation === 'object' &&
@@ -26,7 +22,7 @@ function isValidMemberAllocation(allocation: any): allocation is MemberAllocatio
  * @param allocations The allocations array to validate
  * @returns True if valid, false otherwise
  */
-function isValidMemberAllocations(allocations: any): allocations is MemberAllocation[] {
+function isValidMemberAllocations(allocations: MemberAllocation[]): allocations is MemberAllocation[] {
   return Array.isArray(allocations) && allocations.every(isValidMemberAllocation);
 }
 
@@ -35,14 +31,14 @@ function isValidMemberAllocations(allocations: any): allocations is MemberAlloca
  * @param allocation The team allocation to validate
  * @returns True if valid, false otherwise
  */
-function isValidTeamAllocation(allocation: any): allocation is TeamAllocation {
+function isValidTeamAllocation(allocation: TeamAllocation): allocation is TeamAllocation {
   return (
     allocation &&
     typeof allocation === 'object' &&
     typeof allocation.teamId === 'string' &&
     typeof allocation.requestedHours === 'number' &&
     Array.isArray(allocation.allocatedMembers) &&
-    allocation.allocatedMembers.every((member: any) => 
+    allocation.allocatedMembers.every((member: { memberId: string; hours: number }) => 
       typeof member === 'object' &&
       typeof member.memberId === 'string' &&
       typeof member.hours === 'number'
@@ -55,7 +51,7 @@ function isValidTeamAllocation(allocation: any): allocation is TeamAllocation {
  * @param allocations The allocations array to validate
  * @returns True if valid, false otherwise
  */
-function isValidTeamAllocations(allocations: any): allocations is TeamAllocation[] {
+function isValidTeamAllocations(allocations: TeamAllocation[]): allocations is TeamAllocation[] {
   return Array.isArray(allocations) && allocations.every(isValidTeamAllocation);
 }
 
@@ -78,7 +74,7 @@ export async function GET(request: NextRequest) {
     }
 
     // Use the neo4jStorage to get the node
-    const rawNode = await neo4jStorage.getNode(id);
+    const rawNode = await featureService.getNode(id);
     
     if (!rawNode) {
       console.warn('[API] FeatureNode not found:', id);
@@ -127,9 +123,10 @@ export async function GET(request: NextRequest) {
     
     // Check if it's a Neo4j-specific error
     if (error && typeof error === 'object' && 'code' in error) {
+      const neo4jError = error as { code: string; message: string };
       console.error('[API] Neo4j error details:', {
-        code: (error as any).code,
-        message: (error as any).message
+        code: neo4jError.code,
+        message: neo4jError.message
       });
     }
     
@@ -201,7 +198,7 @@ export async function PATCH(request: NextRequest) {
     }
     
     // Check if the node exists first
-    const node = await neo4jStorage.getNode(id);
+    const node = await featureService.getById(id);
     
     if (!node) {
       console.warn('[API] FeatureNode not found for update:', id);
@@ -232,7 +229,7 @@ export async function PATCH(request: NextRequest) {
     if (typeof updatedNode.data.teamMembers === 'string') {
       try {
         updatedNode.data.teamMembers = JSON.parse(updatedNode.data.teamMembers);
-      } catch (e) {
+      } catch {
         updatedNode.data.teamMembers = [];
       }
     }
@@ -240,7 +237,7 @@ export async function PATCH(request: NextRequest) {
     if (typeof updatedNode.data.memberAllocations === 'string') {
       try {
         updatedNode.data.memberAllocations = JSON.parse(updatedNode.data.memberAllocations);
-      } catch (e) {
+      } catch {
         updatedNode.data.memberAllocations = [];
       }
     }
@@ -248,7 +245,7 @@ export async function PATCH(request: NextRequest) {
     if (typeof updatedNode.data.teamAllocations === 'string') {
       try {
         updatedNode.data.teamAllocations = JSON.parse(updatedNode.data.teamAllocations);
-      } catch (e) {
+      } catch {
         updatedNode.data.teamAllocations = [];
       }
     }
@@ -280,9 +277,10 @@ export async function PATCH(request: NextRequest) {
     
     // Check if it's a Neo4j-specific error
     if (error && typeof error === 'object' && 'code' in error) {
+      const neo4jError = error as { code: string; message: string };
       console.error('[API] Neo4j error details:', {
-        code: (error as any).code,
-        message: (error as any).message
+        code: neo4jError.code,
+        message: neo4jError.message
       });
     }
     
@@ -312,7 +310,7 @@ export async function DELETE(request: NextRequest) {
     }
 
     // Check if the node exists first
-    const node = await neo4jStorage.getNode(id);
+    const node = await featureService.getById(id);
     
     if (!node) {
       console.warn('[API] FeatureNode not found for deletion:', id);
@@ -338,9 +336,10 @@ export async function DELETE(request: NextRequest) {
     
     // Check if it's a Neo4j-specific error
     if (error && typeof error === 'object' && 'code' in error) {
+      const neo4jError = error as { code: string; message: string };
       console.error('[API] Neo4j error details:', {
-        code: (error as any).code,
-        message: (error as any).message
+        code: neo4jError.code,
+        message: neo4jError.message
       });
     }
     
