@@ -3,10 +3,7 @@ import { teamMemberService } from '@/services/graph/neo4j/neo4j.provider';
 import { UpdateTeamMemberNodeParams } from '@/services/graph/team-member/team-member.types';
 
 // GET /api/graph/team-member/[id] - Get a specific team member node
-export async function GET(
-  req: NextRequest,
-  { params }: { params: { id: string } }
-) {
+export async function GET(req: NextRequest) {
   try {
     // Get ID from URL instead of params
     const url = new URL(req.url);
@@ -51,10 +48,7 @@ export async function GET(
 }
 
 // PATCH /api/graph/team-member/[id] - Update a specific team member node
-export async function PATCH(
-  req: NextRequest,
-  { params }: { params: { id: string } }
-) {
+export async function PATCH(req: NextRequest) {
   try {
     // Get ID from URL instead of params
     const url = new URL(req.url);
@@ -112,10 +106,7 @@ export async function PATCH(
 }
 
 // DELETE /api/graph/team-member/[id] - Delete a specific team member node
-export async function DELETE(
-  req: NextRequest,
-  { params }: { params: { id: string } }
-) {
+export async function DELETE(req: NextRequest) {
   try {
     // Get ID from URL instead of params
     const url = new URL(req.url);
@@ -136,7 +127,7 @@ export async function DELETE(
       await teamMemberService.delete(id);
       console.log(`[API] Successfully deleted TeamMember with ID: ${id}`);
       return new NextResponse(null, { status: 204 });
-    } catch (error) {
+    } catch {
       // If an error is thrown, assume the node wasn't found or couldn't be deleted
       return NextResponse.json(
         { error: 'TeamMember not found or could not be deleted' },

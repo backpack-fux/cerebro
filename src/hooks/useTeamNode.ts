@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useReactFlow, useNodeConnections, useEdges } from "@xyflow/react";
+import { useReactFlow, useNodeConnections, useEdges, Node } from "@xyflow/react";
 import { toast } from "sonner";
 import { GraphApiClient } from '@/services/graph/neo4j/api-client';
 import { NodeType } from '@/services/graph/neo4j/api-urls';
@@ -18,12 +18,16 @@ import { NodeUpdateType } from '@/services/graph/observer/node-observer';
 /**
  * Type guard for team member nodes
  */
-function isTeamMemberNode(node: any): node is { id: string, data: RFTeamMemberNodeData } {
+function isTeamMemberNode(node: unknown): node is Node<RFTeamMemberNodeData> {
+  if (!node) return false;
+  
+  const typedNode = node as { id?: string; type?: string; data?: Record<string, unknown> };
+  
   return Boolean(
-    node?.type === 'teamMember' && 
-    node.data && 
-    typeof node.data.title === 'string' && 
-    typeof node.data.weeklyCapacity === 'number'
+    typedNode.type === 'teamMember' && 
+    typedNode.data && 
+    typeof typedNode.data.title === 'string' && 
+    typeof typedNode.data.weeklyCapacity === 'number'
   );
 }
 
@@ -39,8 +43,8 @@ export function useTeamNode(id: string, data: RFTeamNodeData) {
   // Add the node observer hook
   const { publishUpdate, publishManifestUpdate, subscribeBasedOnManifest } = useNodeObserver<RFTeamNodeData>(id, 'team');
   
-  // Define JSON fields that need special handling
-  const jsonFields = ['roster', 'seasons', 'season'];
+  // Define JSON fields that need special handling with useMemo to prevent recreation
+  const jsonFields = useMemo(() => ['roster', 'seasons', 'season'], []);
   
   // Parse complex objects if they are strings
   const parsedData = useMemo(() => {
@@ -180,22 +184,6 @@ export function useTeamNode(id: string, data: RFTeamNodeData) {
     }
   }, [parsedData.season]);
   
-  // Helper function to validate date strings
-  function isValidDateString(dateString: string): boolean {
-    if (!dateString) return false;
-    
-    try {
-      // Try to create a date and check if it's valid
-      const date = new Date(dateString);
-      const valid = !isNaN(date.getTime());
-      console.log(`[TeamNode] Date validation: "${dateString}" is ${valid ? 'valid' : 'invalid'}`);
-      return valid;
-    } catch (error) {
-      console.error(`[TeamNode] Date validation error for "${dateString}":`, error);
-      return false;
-    }
-  }
-
   // Watch for changes in roster allocations from work nodes
   useEffect(() => {
     const interval = setInterval(() => {
@@ -250,7 +238,7 @@ export function useTeamNode(id: string, data: RFTeamNodeData) {
       const teamMember = teamMembers.find(tm => tm.id === member.memberId);
       if (!teamMember) return sum;
 
-      const memberTotal = memberAllocations.reduce((memberSum: number, allocation: any) => {
+      const memberTotal = memberAllocations.reduce((memberSum: number, allocation: { nodeId: string; percentage: number }) => {
         const weeklyCapacity = Number(teamMember.data.weeklyCapacity);
         // Calculate the effective capacity for this team member
         const effectiveCapacity = calculateEffectiveCapacity(weeklyCapacity, member.allocation);
@@ -306,59 +294,6 @@ export function useTeamNode(id: string, data: RFTeamNodeData) {
       source: 'drag-stop'
     });
   }, [id, publishUpdate, parsedData, processedRoster, bandwidth]);
-
-  // Save roster to backend with debouncing
-  const saveRosterToBackend = useCallback(async (roster: RosterMember[]) => {
-    if (rosterDebounceRef.current) clearTimeout(rosterDebounceRef.current);
-    
-    rosterDebounceRef.current = setTimeout(async () => {
-      try {
-        // Ensure roster is an array
-        if (!Array.isArray(roster)) {
-          console.error('[TeamNode] Invalid roster format, expected array:', roster);
-          toast.error('Invalid roster format');
-          return;
-        }
-        
-        console.log('[TeamNode] Original roster:', JSON.stringify(roster));
-        
-        // Validate and clean each roster member to ensure it has the required properties
-        const validRoster = roster.map(member => {
-          // Ensure role is a string (lowercase for consistency)
-          let role = "developer"; // Default role
-          if (member.role) {
-            role = typeof member.role === 'string' ? member.role.toLowerCase() : "developer";
-          }
-          
-          // Ensure required fields are present and have correct types
-          const cleanedMember = {
-            memberId: member.memberId,
-            allocation: typeof member.allocation === 'number' ? member.allocation : 80,
-            role: role, // Always use the cleaned role
-            // Optional fields
-            ...(member.startDate ? { startDate: member.startDate } : {}),
-            ...(member.endDate ? { endDate: member.endDate } : {}),
-            // Only include allocations if it's a valid array
-            ...(Array.isArray(member.allocations) ? { allocations: member.allocations } : {})
-          };
-          
-          console.log('[TeamNode] Cleaned member:', JSON.stringify(cleanedMember));
-          return cleanedMember;
-        });
-        
-        console.log('[TeamNode] Saving roster to backend:', validRoster);
-        console.log('[TeamNode] Stringified roster:', JSON.stringify(validRoster));
-        
-        // Ensure we're sending an array, not a string
-        // The prepareDataForBackend function will handle the stringification
-        await saveToBackend({ roster: validRoster });
-      } catch (error) {
-        console.error('[TeamNode] Error saving roster:', error);
-        toast.error('Failed to update team roster');
-      }
-      rosterDebounceRef.current = null;
-    }, 1000);
-  }, [saveToBackend]);
 
   // Save season to backend with debouncing
   const saveSeasonToBackend = useCallback(async (season: Season) => {
@@ -613,7 +548,7 @@ export function useTeamNode(id: string, data: RFTeamNodeData) {
         const newMember: RosterMember = {
           memberId: memberNode.id,
           // Get the role from the member node or default to "Developer"
-          role: (memberNode.data as any).roles?.[0] || "Developer",
+          role: (memberNode.data as RFTeamMemberNodeData).roles?.[0] || "Developer",
           // Start with a default allocation of 80%
           allocation: 80,
           startDate: new Date().toISOString().split('T')[0],

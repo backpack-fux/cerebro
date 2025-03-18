@@ -1,6 +1,21 @@
 // src/services/graph/neo4j/api-client.ts
 import { API_URLS, NodeType } from '@/services/graph/neo4j/api-urls';
 
+// Generic type for node data
+export type NodeData = Record<string, unknown>;
+
+// Edge data type
+export type EdgeData = {
+  id?: string;
+  source?: string;
+  target?: string;
+  from?: string;
+  to?: string;
+  type?: string;
+  data?: Record<string, unknown>;
+  properties?: Record<string, unknown>;
+};
+
 // Maintain a set of blacklisted node IDs that consistently return 404
 // This helps prevent infinite API request loops
 const blacklistedNodeIds: Set<string> = new Set();
@@ -80,7 +95,7 @@ export class GraphApiClient {
     }
   }
   
-  static async createNode(nodeType: NodeType, params: any): Promise<any> {
+  static async createNode(nodeType: NodeType, params: NodeData): Promise<NodeData> {
     const response = await fetch(API_URLS[nodeType], {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -95,7 +110,7 @@ export class GraphApiClient {
     return response.json();
   }
 
-  static async updateNode(nodeType: NodeType, id: string, params: any): Promise<any> {
+  static async updateNode(nodeType: NodeType, id: string, params: NodeData): Promise<NodeData> {
     // Skip request if node is blacklisted
     if (this.isNodeBlacklisted(id)) {
       console.warn(`🚫 Skipping update request for blacklisted node ${id}`);
@@ -114,13 +129,20 @@ export class GraphApiClient {
         // If it's an array, we need to ensure it's properly formatted
         else if (Array.isArray(params.teamAllocations)) {
           // Validate that each allocation has the required fields
-          const isValid = params.teamAllocations.every((allocation: any) => 
-            allocation && 
-            typeof allocation === 'object' && 
-            typeof allocation.teamId === 'string' && 
-            typeof allocation.requestedHours === 'number' && 
-            Array.isArray(allocation.allocatedMembers)
-          );
+          type TeamAllocation = {
+            teamId: string;
+            requestedHours: number;
+            allocatedMembers: unknown[];
+          };
+          
+          const isValid = params.teamAllocations.every((allocation: unknown) => {
+            const teamAlloc = allocation as TeamAllocation;
+            return teamAlloc && 
+              typeof teamAlloc === 'object' && 
+              typeof teamAlloc.teamId === 'string' && 
+              typeof teamAlloc.requestedHours === 'number' && 
+              Array.isArray(teamAlloc.allocatedMembers);
+          });
           
           if (!isValid) {
             console.error('[GraphApiClient] Invalid teamAllocations array:', params.teamAllocations);
@@ -183,7 +205,7 @@ export class GraphApiClient {
     }
   }
 
-  static async createEdge(nodeType: NodeType, edge: any): Promise<any> {
+  static async createEdge(nodeType: NodeType, edge: EdgeData): Promise<EdgeData> {
     const response = await fetch(`${API_URLS[nodeType]}/edges`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -227,7 +249,7 @@ export class GraphApiClient {
   }
   
   // Add method to fetch node data with blacklist support
-  static async getNode(nodeType: NodeType, id: string): Promise<any> {
+  static async getNode(nodeType: NodeType, id: string): Promise<NodeData> {
     // Skip request if node is blacklisted
     if (this.isNodeBlacklisted(id)) {
       console.warn(`🚫 Skipping get request for blacklisted node ${id}`);

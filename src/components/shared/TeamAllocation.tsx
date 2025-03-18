@@ -5,7 +5,6 @@ import { Badge } from "@/components/ui/badge";
 import { formatHours } from "@/utils/utils";
 import { MemberAllocation, MemberAllocationData } from "./MemberAllocation";
 import { useAllocationEngine } from '@/hooks/useAllocationEngine';
-import { calculateEffectiveCapacity } from '@/utils/allocation/capacity';
 import { AvailableMember } from '@/utils/types/allocation';
 import type { TeamAllocation as ITeamAllocation } from '@/utils/types/allocation';
 
@@ -26,7 +25,7 @@ export interface TeamAllocationProps {
   teamAllocation?: ITeamAllocation;
   memberAllocations: Map<string, MemberAllocationData>;
   projectDurationDays: number;
-  formatMemberName: (id: string, member: any) => string;
+  formatMemberName: (id: string, member: AvailableMember) => string;
   onMemberValueChange: (teamId: string, memberId: string, hours: number) => void;
   onMemberValueCommit: (teamId: string, memberId: string, hours: number) => void;
   timeframe?: {
@@ -49,7 +48,7 @@ export const TeamAllocation: React.FC<TeamAllocationProps> = ({
   onMemberValueCommit,
   timeframe
 }) => {
-  const { memberAllocations: allMemberAllocations, checkMemberAvailability, teamMembers } = useAllocationEngine();
+  const { teamMembers } = useAllocationEngine();
   const allocatedMembers = teamAllocation?.allocatedMembers || [];
   const totalTeamHours = allocatedMembers.reduce((sum, m) => sum + m.hours, 0);
   
@@ -66,7 +65,7 @@ export const TeamAllocation: React.FC<TeamAllocationProps> = ({
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-1">
           <Users2 className="h-4 w-4 text-muted-foreground" />
-          <span className="font-medium">{team.name || formatMemberName(team.teamId, team)}</span>
+          <span className="font-medium">{team.name || formatMemberName(team.teamId, team.availableBandwidth[0])}</span>
         </div>
         <Badge variant="secondary">
           {formatHours(totalTeamHours)} total

@@ -28,7 +28,7 @@ export enum NodeUpdateType {
    */
   export type NodeUpdateCallback = (
     publisherId: string, 
-    data: any, 
+    data: unknown, 
     metadata: NodeUpdateMetadata
   ) => void;
   
@@ -49,7 +49,7 @@ export enum NodeUpdateType {
     /**
      * Log debug information if debug mode is enabled
      */
-    private debug(...args: any[]) {
+    private debug(...args: unknown[]) {
       if (this.debugMode) {
         console.log('[NodeObserver]', ...args);
       }
@@ -131,7 +131,7 @@ export enum NodeUpdateType {
     /**
      * Publish an update to all subscribers
      */
-    publish(publisherId: string, data: any, metadata: Partial<NodeUpdateMetadata> = {}) {
+    publish(publisherId: string, data: unknown, metadata: Partial<NodeUpdateMetadata> = {}) {
       const publisherMap = this.subscribers.get(publisherId);
       if (!publisherMap) return;
       

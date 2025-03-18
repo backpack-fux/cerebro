@@ -6,7 +6,7 @@
  */
 
 import { integrateWithOptionNode } from '../observer/team-resource-integration';
-import { RFOptionNode } from './option.types';
+import { RFOptionNode, RFOptionNodeData } from './option.types';
 
 // Map to store option-team integrations
 const optionTeamIntegrations = new Map<string, Map<string, ReturnType<typeof integrateWithOptionNode>>>();
@@ -22,7 +22,7 @@ const optionTeamIntegrations = new Map<string, Map<string, ReturnType<typeof int
 export function connectOptionToTeam(
   optionNode: RFOptionNode,
   teamId: string,
-  onUpdate: (data: any) => void
+  onUpdate: (data: Partial<RFOptionNodeData>) => void
 ) {
   const optionId = optionNode.id;
   
@@ -134,7 +134,7 @@ export function updateOptionResourceAllocation(
  * @param optionId The ID of the option node
  * @param teamId The ID of the team
  * @param memberId The ID of the team member
- * @param memberData The team member data
+ * @param memberData The team member data containing capacity and availability information
  * @param projectDurationDays The project duration in days
  * @returns The available hours for the member
  */
@@ -142,7 +142,13 @@ export function getOptionMemberAvailableHours(
   optionId: string,
   teamId: string,
   memberId: string,
-  memberData: any,
+  memberData: {
+    weeklyCapacity?: number;
+    hoursPerDay?: number;
+    daysPerWeek?: number;
+    allocation?: number;
+    [key: string]: unknown;
+  },
   projectDurationDays: number
 ) {
   // Check if this option has integrations

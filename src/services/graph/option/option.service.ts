@@ -610,7 +610,23 @@ export class OptionService {
   /**
    * Handle team resource updates from the observer
    */
-  private async handleTeamResourceUpdate(optionId: string, teamId: string, data: any) {
+  private async handleTeamResourceUpdate(
+    optionId: string, 
+    teamId: string, 
+    data: {
+      teamBandwidth?: number;
+      availableBandwidth?: number;
+      memberResources?: Array<{
+        memberId: string;
+        weeklyCapacity?: number;
+        hoursPerDay?: number;
+        daysPerWeek?: number;
+        allocation?: number;
+        [key: string]: unknown;
+      }>;
+      [key: string]: unknown;
+    }
+  ) {
     console.log(`[OptionService] Received resource update for option ${optionId} from team ${teamId}`);
     
     try {
@@ -650,7 +666,7 @@ export class OptionService {
           // Update each member's available hours
           for (let i = 0; i < allocatedMembers.length; i++) {
             const member = allocatedMembers[i];
-            const memberResource = data.memberResources.find((m: any) => m.memberId === member.memberId);
+            const memberResource = data.memberResources.find((m) => m.memberId === member.memberId);
             
             if (memberResource) {
               // Calculate available hours for this member

@@ -31,39 +31,125 @@ import {
   TierRange
 } from '@/services/graph/provider/provider.types';
 import { useProviderNode } from '@/hooks/useProviderNode';
-import { useReactFlow } from "@xyflow/react";
 import { CostReceipt } from '@/components/shared/CostReceipt';
 import { TeamAllocation } from '@/components/shared/TeamAllocation';
 import { formatHours} from '@/utils/format-utils';
 import { formatMemberName } from '@/utils/node-utils';
 import type { TeamAllocation as ITeamAllocation } from '@/utils/types/allocation';
+import { useReactFlow } from "@xyflow/react";
+import { NodeStatus } from "@/hooks/useNodeStatus";
+import { MemberAllocationData as ImportedMemberAllocationData, AvailableMember } from '@/utils/types/allocation';
+
+// Define a local MemberAllocationData interface
+interface LocalMemberAllocationData {
+  memberId: string;
+  name: string;
+  hours: number;
+  cost?: number;
+  capacity: number;
+  allocation: number;
+  daysEquivalent: number;
+  percentage?: number;
+  memberCapacity?: number;
+  hourlyRate?: number;
+  current?: {
+    hours?: number;
+    cost?: number;
+  };
+}
+
+// Define the MemberCost interface
+interface MemberCost {
+  memberId: string;
+  name: string;
+  hours: number;
+  hourlyRate: number;
+  cost: number;
+}
+
+// Extend RFProviderNodeData to ensure status is of type NodeStatus
+interface ExtendedRFProviderNodeData extends RFProviderNodeData {
+  status?: NodeStatus;
+}
 
 // Use React.memo to prevent unnecessary re-renders
 export const ProviderNode = memo(function ProviderNode({ id, data, selected }: NodeProps) {
-  // Use our custom hook for provider node logic
-  const provider = useProviderNode(id, data as RFProviderNodeData);
   const { getNodes } = useReactFlow();
   
+  // Create data with properly typed status
+  const typedData = useMemo(() => {
+    const result = { ...data };
+    // Convert status string to NodeStatus type
+    if (data.status) {
+      const validStatuses: Array<NodeStatus> = ['planning', 'in_progress', 'completed', 'active'];
+      result.status = validStatuses.includes(data.status as NodeStatus) 
+        ? data.status as NodeStatus 
+        : 'planning';
+    }
+    return result as ExtendedRFProviderNodeData;
+  }, [data]);
+  
+  // Use our custom hook for provider node logic
+  const provider = useProviderNode(id, typedData);
+  
   // Calculate project duration in days
-  const projectDurationDays = Number(data.duration) || 1;
+  const projectDurationDays = Number(typedData.duration) || 1;
   
   // Pre-calculate member allocations for display and cost calculation
   const memberAllocations = useMemo(() => {
     if (!provider.calculateMemberAllocations) return new Map();
     
+    // Adapter function to match the expected type for calculateMemberAllocations
+    const formatMemberNameAdapter = (memberId: string, memberData?: { title?: string }): string => {
+      return formatMemberName(memberId, getNodes(), memberData);
+    };
+    
     return provider.calculateMemberAllocations(
       provider.connectedTeams,
       provider.processedTeamAllocations,
       projectDurationDays,
-      formatMemberName
+      formatMemberNameAdapter
     );
   }, [
-    provider.connectedTeams, 
-    provider.processedTeamAllocations, 
-    projectDurationDays, 
-    formatMemberName,
-    provider.calculateMemberAllocations
+    projectDurationDays,
+    provider,
+    getNodes
   ]);
+  
+  // Convert MemberAllocationData[] to MemberCost[]
+  const convertAllocationsToCostArray = (allocations: LocalMemberAllocationData[]): MemberCost[] => {
+    return allocations.map(allocation => ({
+      memberId: allocation.memberId,
+      name: allocation.name || '',
+      hours: allocation.hours,
+      hourlyRate: allocation.hourlyRate || 0,
+      cost: allocation.cost || 0
+    }));
+  };
+  
+  // Convert memberAllocations to use the correct MemberCapacity type
+  const convertMemberAllocations = (allocations: Map<string, LocalMemberAllocationData>): Map<string, ImportedMemberAllocationData> => {
+    const result = new Map<string, ImportedMemberAllocationData>();
+    
+    allocations.forEach((allocation, key) => {
+      const converted: ImportedMemberAllocationData = {
+        ...allocation,
+        memberCapacity: allocation.memberCapacity ? {
+          hoursPerDay: allocation.memberCapacity as number,
+          daysPerWeek: 5, // Default value
+        } : undefined,
+        cost: allocation.cost || 0, // Ensure cost is defined
+      };
+      result.set(key, converted);
+    });
+    
+    return result;
+  };
+  
+  // Adapter function to match the expected type for TeamAllocation's formatMemberName
+  const formatMemberNameForTeam = (id: string, member: AvailableMember): string => {
+    return member.name || formatMemberName(id, getNodes(), { title: member.name });
+  };
   
   // Calculate cost summary
   const costSummary = useMemo(() => {
@@ -72,7 +158,7 @@ export const ProviderNode = memo(function ProviderNode({ id, data, selected }: N
     }
     
     return provider.calculateCostSummary(memberAllocations);
-  }, [memberAllocations, provider.calculateCostSummary]);
+  }, [memberAllocations, provider]);
   
   return (
     <BaseNode selected={selected} className="w-[400px]">
@@ -84,10 +170,10 @@ export const ProviderNode = memo(function ProviderNode({ id, data, selected }: N
           <div className="flex items-center gap-2">
             <Badge 
               variant="secondary" 
-              className={`cursor-pointer ${provider.getStatusColor(provider.status)}`}
+              className={`cursor-pointer ${provider.getStatusColor(typedData.status || 'planning')}`}
               onClick={provider.cycleStatus}
             >
-              {provider.status}
+              {typedData.status || 'planning'}
             </Badge>
             <input
               value={provider.title}
@@ -192,7 +278,6 @@ export const ProviderNode = memo(function ProviderNode({ id, data, selected }: N
           <DueDiligenceSection 
             items={provider.processedDDItems}
             onUpdate={provider.updateDDItem}
-            onAdd={provider.addDDItem}
             onRemove={provider.removeDDItem}
           />
         </div>
@@ -217,9 +302,9 @@ export const ProviderNode = memo(function ProviderNode({ id, data, selected }: N
               key={team.teamId}
               team={team}
               teamAllocation={provider.processedTeamAllocations.find((a: ITeamAllocation) => a.teamId === team.teamId)}
-              memberAllocations={memberAllocations}
+              memberAllocations={convertMemberAllocations(memberAllocations)}
               projectDurationDays={projectDurationDays}
-              formatMemberName={formatMemberName}
+              formatMemberName={formatMemberNameForTeam}
               onMemberValueChange={(teamId, memberId, hours) => {
                 provider.handleAllocationChangeLocal(teamId, memberId, hours);
               }}
@@ -231,9 +316,9 @@ export const ProviderNode = memo(function ProviderNode({ id, data, selected }: N
         </div>
 
         {/* Cost Receipt Section */}
-        {costSummary.allocations.length > 0 && (
-          <CostReceipt 
-            allocations={costSummary.allocations}
+        {costSummary && costSummary.allocations.length > 0 && (
+          <CostReceipt
+            allocations={convertAllocationsToCostArray(costSummary.allocations)}
             totalCost={costSummary.totalCost}
             totalHours={costSummary.totalHours}
             totalDays={costSummary.totalDays}
@@ -619,12 +704,10 @@ function TieredCostForm({
 function DueDiligenceSection({
   items,
   onUpdate,
-  onAdd,
   onRemove
 }: {
   items: DDItem[];
   onUpdate: (item: DDItem) => void;
-  onAdd: () => void;
   onRemove: (id: string) => void;
 }) {
   return (

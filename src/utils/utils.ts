@@ -23,6 +23,27 @@ export interface AllocationResult {
   minimumDurationNeeded?: number;
 }
 
+// Define TeamAllocation interface for type safety
+export interface TeamAllocation {
+  teamId: string;
+  requestedHours?: number;
+  allocatedHours?: number;
+  allocatedMembers?: MemberAllocation[];
+}
+
+// Define MemberAllocation interface for type safety
+export interface MemberAllocation {
+  memberId: string;
+  hours: number;
+}
+
+// Define Node interface for type safety
+export interface FlowNode {
+  id: string;
+  type: string;
+  data: Record<string, unknown>;
+}
+
 /**
  * Calculate a team member's weekly capacity in hours
  */
@@ -176,7 +197,7 @@ export function formatDays(days: number): string {
  * @param teamAllocations The team allocations data which might be a string or array
  * @returns Array of team allocations
  */
-export function parseTeamAllocations(teamAllocations: any): any[] {
+export function parseTeamAllocations(teamAllocations: unknown): TeamAllocation[] {
   console.log('🔍 parseTeamAllocations called with:', { 
     teamAllocations, 
     type: typeof teamAllocations,
@@ -188,7 +209,7 @@ export function parseTeamAllocations(teamAllocations: any): any[] {
     console.log('✅ parseTeamAllocations: Input is already an array', {
       length: teamAllocations.length
     });
-    return teamAllocations;
+    return teamAllocations as TeamAllocation[];
   }
   
   // If it's a string, try to parse it
@@ -199,7 +220,7 @@ export function parseTeamAllocations(teamAllocations: any): any[] {
         console.log('✅ parseTeamAllocations: Successfully parsed string to array', {
           length: parsed.length
         });
-        return parsed;
+        return parsed as TeamAllocation[];
       } else {
         console.warn('⚠️ parseTeamAllocations: Parsed result is not an array', {
           parsed,
@@ -207,9 +228,8 @@ export function parseTeamAllocations(teamAllocations: any): any[] {
         });
         return [];
       }
-    } catch (e) {
+    } catch {
       console.warn('❌ parseTeamAllocations: Failed to parse string', {
-        error: e,
         teamAllocations
       });
       return [];
@@ -236,14 +256,14 @@ export function parseTeamAllocations(teamAllocations: any): any[] {
  * @param allNodes All nodes in the flow
  * @returns Total hours allocated to this member across all features
  */
-export function getMemberTotalAllocations(memberId: string, allNodes: any[]): number {
+export function getMemberTotalAllocations(memberId: string, allNodes: FlowNode[]): number {
   return allNodes
     .filter(node => node.type === 'feature' && node.data.teamAllocations)
     .reduce((total, node) => {
       const teamAllocations = parseTeamAllocations(node.data.teamAllocations);
       const memberAllocation = teamAllocations
         .flatMap(ta => ta.allocatedMembers || [])
-        .find((m: any) => m.memberId === memberId);
+        .find((m) => m.memberId === memberId);
       
       return total + (memberAllocation?.hours || 0);
     }, 0);
@@ -255,12 +275,12 @@ export function getMemberTotalAllocations(memberId: string, allNodes: any[]): nu
  * @param jsonFields Array of field names that should be stringified if they are objects
  * @returns A new object with complex fields stringified for backend storage
  */
-export function prepareDataForBackend<T extends Record<string, any>>(
+export function prepareDataForBackend<T extends Record<string, unknown>>(
   data: Partial<T>,
   jsonFields: string[]
-): Record<string, any> {
+): Record<string, unknown> {
   // Create a copy of the data
-  const apiData: Record<string, any> = { ...data };
+  const apiData: Record<string, unknown> = { ...data };
   
   console.log(`[prepareDataForBackend] Original data:`, JSON.stringify(data));
   console.log(`[prepareDataForBackend] JSON fields:`, jsonFields);
@@ -280,10 +300,10 @@ export function prepareDataForBackend<T extends Record<string, any>>(
       if (typeof apiData[field] === 'string') {
         try {
           // Try to parse it to validate it's proper JSON
-          JSON.parse(apiData[field]);
+          JSON.parse(apiData[field] as string);
           // If it parses successfully, it's already a JSON string, so keep it as is
           console.log(`[prepareDataForBackend] Field ${field} is already a valid JSON string, keeping as is`);
-        } catch (error) {
+        } catch {
           // If it's not valid JSON, stringify it
           console.log(`[prepareDataForBackend] Field ${field} is a string but not valid JSON, stringifying`);
           apiData[field] = JSON.stringify(apiData[field]);
@@ -293,8 +313,8 @@ export function prepareDataForBackend<T extends Record<string, any>>(
         try {
           apiData[field] = JSON.stringify(apiData[field]);
           console.log(`[prepareDataForBackend] Stringified ${field}:`, apiData[field]);
-        } catch (error) {
-          console.error(`[prepareDataForBackend] Error stringifying ${field}:`, error);
+        } catch {
+          console.error(`[prepareDataForBackend] Error stringifying ${field}`);
           // Keep the original value if stringification fails
         }
       }
@@ -311,12 +331,12 @@ export function prepareDataForBackend<T extends Record<string, any>>(
  * @param jsonFields Array of field names that should be parsed if they are strings
  * @returns A new object with string fields parsed into objects
  */
-export function parseDataFromBackend<T extends Record<string, any>>(
+export function parseDataFromBackend<T extends Record<string, unknown>>(
   data: Partial<T>,
   jsonFields: string[]
-): Record<string, any> {
+): Record<string, unknown> {
   // Create a copy of the data
-  const parsedData: Record<string, any> = { ...data };
+  const parsedData: Record<string, unknown> = { ...data };
   
   // Process each JSON field
   for (const field of jsonFields) {
@@ -325,7 +345,7 @@ export function parseDataFromBackend<T extends Record<string, any>>(
         // Try to parse the string as JSON
         const parsed = JSON.parse(parsedData[field] as string);
         parsedData[field] = parsed;
-      } catch (error) {
+      } catch {
         // If parsing fails, set to a sensible default based on field name
         if (field.includes('roster') || field.includes('Allocations') || field.includes('Members')) {
           parsedData[field] = [];
@@ -359,7 +379,7 @@ export function parseJsonIfString<T>(value: unknown, defaultValue: T): T {
   
   try {
     return JSON.parse(value) as T;
-  } catch (e) {
+  } catch {
     return defaultValue;
   }
 }

@@ -2,32 +2,56 @@ import { NextRequest, NextResponse } from 'next/server';
 import { metaService } from '@/services/graph/neo4j/neo4j.provider';
 import { RFMetaEdge } from '@/services/graph/meta/meta.types';
 
+interface Neo4jError {
+  code: string;
+  message: string;
+}
+
+/**
+ * Validates an RFMetaEdge object
+ * @param edge The edge to validate
+ * @returns True if valid, false otherwise
+ */
+function isValidRFMetaEdge(edge: unknown): edge is RFMetaEdge {
+  if (!edge || typeof edge !== 'object') return false;
+  
+  const e = edge as Partial<RFMetaEdge>;
+  return (
+    typeof e.id === 'string' &&
+    typeof e.source === 'string' &&
+    typeof e.target === 'string' &&
+    typeof e.type === 'string' &&
+    (!e.data || typeof e.data === 'object')
+  );
+}
+
 // POST /api/graph/meta/edges - Create a new edge between meta nodes
 export async function POST(req: NextRequest) {
   try {
     console.log('[API] Starting MetaEdge creation');
     
-    // Parse the request body as RFMetaEdge
-    const edge: RFMetaEdge = await req.json();
+    // Parse the request body
+    const body = await req.json();
     
-    // Validate required fields
-    if (!edge.source || !edge.target || !edge.type) {
-      console.warn('[API] Invalid MetaEdge creation request: Missing required fields');
+    // Validate the edge using type guard
+    if (!isValidRFMetaEdge(body)) {
+      console.warn('[API] Invalid MetaEdge creation request: Invalid parameters');
       return NextResponse.json(
-        { error: 'Missing required fields: source, target, and type are required' },
+        { error: 'Invalid parameters: id, source, target, and type are required' },
         { status: 400 }
       );
     }
 
     console.log('[API] Received MetaEdge creation request:', {
-      source: edge.source,
-      target: edge.target,
-      type: edge.type,
-      data: edge.data,
+      id: body.id,
+      source: body.source,
+      target: body.target,
+      type: body.type,
+      data: body.data,
     });
 
     // Use MetaService to create the edge
-    const createdEdge = await metaService.createEdge(edge);
+    const createdEdge = await metaService.createEdge(body);
     
     console.log('[API] Successfully created MetaEdge:', {
       id: createdEdge.id,
@@ -49,8 +73,8 @@ export async function POST(req: NextRequest) {
     // Check if it's a Neo4j-specific error
     if (error && typeof error === 'object' && 'code' in error) {
       console.error('[API] Neo4j error details:', {
-        code: (error as any).code,
-        message: (error as any).message
+        code: (error as Neo4jError).code,
+        message: (error as Neo4jError).message
       });
     }
     
@@ -110,16 +134,15 @@ export async function GET(req: NextRequest) {
       type: error instanceof Error ? error.constructor.name : typeof error
     });
     
-    // Check if it's a Neo4j-specific error
     if (error && typeof error === 'object' && 'code' in error) {
       console.error('[API] Neo4j error details:', {
-        code: (error as any).code,
-        message: (error as any).message
+        code: (error as Neo4jError).code,
+        message: (error as Neo4jError).message
       });
     }
     
     return NextResponse.json(
-      { error: 'Failed to get MetaEdges' },
+      { error: 'Failed to get MetaEdges', details: error instanceof Error ? error.message : 'Unknown error' },
       { status: 500 }
     );
   }

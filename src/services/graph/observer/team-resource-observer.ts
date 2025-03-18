@@ -46,6 +46,14 @@ export interface ResourceAllocationResponse {
 }
 
 /**
+ * Interface for team data
+ */
+interface TeamData {
+  roster?: string | unknown[];
+  [key: string]: unknown;
+}
+
+/**
  * Team member resource data
  */
 interface TeamMemberResource {
@@ -96,7 +104,7 @@ export class TeamResourceObserver {
   /**
    * Log debug information if debug mode is enabled
    */
-  private debug(...args: any[]) {
+  private debug(...args: unknown[]) {
     if (this.debugMode) {
       console.log('[TeamResourceObserver]', ...args);
     }
@@ -105,14 +113,14 @@ export class TeamResourceObserver {
   /**
    * Initialize team resources when a team node is created or updated
    */
-  initializeTeamResources(teamId: string, teamData: any) {
+  initializeTeamResources(teamId: string, teamData: TeamData) {
     // Parse team roster to get member data
-    let roster: any[] = [];
+    let roster: Array<{ memberId: string; allocation?: number }> = [];
     try {
       if (typeof teamData.roster === 'string') {
         roster = JSON.parse(teamData.roster);
       } else if (Array.isArray(teamData.roster)) {
-        roster = teamData.roster;
+        roster = teamData.roster as Array<{ memberId: string; allocation?: number }>;
       }
     } catch (error) {
       console.error('Error parsing team roster:', error);
@@ -120,7 +128,7 @@ export class TeamResourceObserver {
     }
 
     // Calculate total team bandwidth
-    const totalBandwidth = roster.reduce((sum: number, member: any) => sum + (member.allocation || 0), 0);
+    const totalBandwidth = roster.reduce((sum: number, member) => sum + (member.allocation || 0), 0);
     
     // Initialize member allocations
     const memberAllocations = new Map<string, TeamMemberResource>();
@@ -163,12 +171,12 @@ export class TeamResourceObserver {
   /**
    * Handle updates from team nodes
    */
-  private handleTeamUpdate(teamId: string, data: any, metadata: NodeUpdateMetadata) {
+  private handleTeamUpdate(teamId: string, data: unknown, metadata: NodeUpdateMetadata) {
     this.debug(`Received update from team ${teamId}`, metadata);
     
     // If team data has changed, reinitialize resources
     if (metadata.updateType === NodeUpdateType.CONTENT) {
-      this.initializeTeamResources(teamId, data);
+      this.initializeTeamResources(teamId, data as TeamData);
     }
   }
 
@@ -195,7 +203,7 @@ export class TeamResourceObserver {
     // Check if allocation is possible
     const allocatedMembers: ResourceAllocationResponse['allocatedMembers'] = [];
     let allocationPossible = true;
-    let conflictsWith: string[] = [];
+    const conflictsWith: string[] = [];
 
     // Process each member allocation
     memberAllocations.forEach(allocation => {
@@ -249,7 +257,7 @@ export class TeamResourceObserver {
       // Recalculate available bandwidth
       const usedBandwidth = Array.from(teamResources.memberAllocations.values())
         .reduce((sum: number, member: TeamMemberResource) => sum + (member.allocatedHours > 0 ? 1 : 0), 0);
-      
+
       teamResources.availableBandwidth = teamResources.totalBandwidth - usedBandwidth;
 
       this.debug(`Allocation successful for work node ${workNodeId} on team ${teamId}`, {
@@ -294,7 +302,7 @@ export class TeamResourceObserver {
     }
 
     // Remove allocations for this work node
-    teamResources.memberAllocations.forEach((memberResource, memberId) => {
+    teamResources.memberAllocations.forEach((memberResource) => {
       const allocation = memberResource.allocations.get(workNodeId) || 0;
       if (allocation > 0) {
         memberResource.allocations.delete(workNodeId);

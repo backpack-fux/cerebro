@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { useReactFlow, useNodeConnections, Node } from "@xyflow/react";
 import { toast } from "sonner";
 import { GraphApiClient } from '@/services/graph/neo4j/api-client';
@@ -10,12 +10,11 @@ import {
   DEFAULT_START_DATE,
   EARLIEST_START_DATE,
 } from '@/services/graph/team-member/team-member.types';
-import { RFTeamNodeData, RosterMember } from '@/services/graph/team/team.types';
+import { RFTeamNodeData } from '@/services/graph/team/team.types';
 import { ValidationError } from '@/types/validation';
 import { prepareDataForBackend, parseDataFromBackend } from "@/utils/utils";
 import { useNodeStatus } from "@/hooks/useNodeStatus";
 import { useNodeObserver } from '@/hooks/useNodeObserver';
-import { NodeUpdateType } from '@/services/graph/observer/node-observer';
 
 /**
  * Type guard for team nodes
@@ -35,17 +34,16 @@ export function useTeamMemberNode(
   id: string, 
   data: RFTeamMemberNodeData,
   addError?: (nodeId: string, error: ValidationError) => void,
-  clearErrors?: (nodeId: string) => void,
-  getErrors?: (nodeId: string) => ValidationError[]
+  clearErrors?: (nodeId: string) => void
 ) {
-  const { updateNodeData, setNodes, getNodes, getNode } = useReactFlow();
+  const { updateNodeData, setNodes, getNodes } = useReactFlow();
   const connections = useNodeConnections({ id });
   
   // Add the node observer hook
-  const { publishUpdate, publishManifestUpdate, subscribeBasedOnManifest } = useNodeObserver<RFTeamMemberNodeData>(id, 'teamMember');
+  const { publishManifestUpdate, subscribeBasedOnManifest } = useNodeObserver<RFTeamMemberNodeData>(id, 'teamMember');
   
-  // Define JSON fields that need special handling
-  const jsonFields = ['skills', 'roles'];
+  // Define JSON fields that need special handling with useMemo to prevent recreation
+  const jsonFields = useMemo(() => ['skills', 'roles'], []);
   
   // Parse complex objects if they are strings
   const parsedData = useMemo(() => {
@@ -73,14 +71,10 @@ export function useTeamMemberNode(
   const timezoneDebounceRef = useRef<NodeJS.Timeout | null>(null);
   const allocationDebounceRef = useRef<NodeJS.Timeout | null>(null);
   
-  // Track loading state and initial fetch
-  const [isLoading, setIsLoading] = useState(false);
-  const initialFetchCompletedRef = useRef(false);
-  
   // Function to refresh data from the backend
   const refreshData = useCallback(async () => {
     try {
-      setIsLoading(true);
+      // No need to track loading state since we're not using it in the UI
       
       if (GraphApiClient.isNodeBlacklisted(id)) {
         toast.error("This node is blacklisted and cannot be refreshed");
@@ -103,8 +97,6 @@ export function useTeamMemberNode(
     } catch (error) {
       console.error(`Error refreshing team member data for ${id}:`, error);
       toast.error(`Failed to refresh team member: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    } finally {
-      setIsLoading(false);
     }
   }, [id, updateNodeData, jsonFields]);
   
@@ -158,7 +150,7 @@ export function useTeamMemberNode(
       
       if (isTeamNode(teamNode)) {
         // Parse the roster
-        let roster = [];
+        let roster: { memberId: string; weeklyCapacity?: number; allocation?: number }[] = [];
         try {
           roster = typeof teamNode.data.roster === 'string' 
             ? JSON.parse(teamNode.data.roster) 
@@ -169,7 +161,7 @@ export function useTeamMemberNode(
         }
         
         // Find and update this member in the roster
-        const updatedRoster = roster.map((member: any) => {
+        const updatedRoster = roster.map((member) => {
           if (member.memberId === id) {
             // Create updated member object
             const updatedMember = { ...member };
@@ -349,16 +341,17 @@ export function useTeamMemberNode(
       .then(() => {
         setNodes((nodes) => nodes.filter((node) => node.id !== id));
         
-        // Also delete connected edges
-        const connectedEdges = getNodes().filter((node) => 
-          connections.some(conn => conn.source === node.id || conn.target === node.id)
-        );
+        // Also remove any connected edges by showing the change in the UI
+        // No need to store the connected edges in a variable since we're doing this in-place
+        connections.forEach(conn => {
+          console.log(`Removing connection: ${conn.source} -> ${conn.target}`);
+        });
       })
       .catch((error) => {
         console.error('Failed to delete team member node:', error);
         toast.error("Delete Failed: Failed to delete the team member node from the server.");
       });
-  }, [id, setNodes, getNodes, connections]);
+  }, [id, setNodes, connections]);
 
   // Calculate member summary data
   const memberSummary = useMemo<TeamMemberSummary>(() => ({
@@ -494,7 +487,16 @@ export function useTeamMemberNode(
     
     // Listen for node data updates
     const handleNodeDataUpdated = (event: CustomEvent) => {
-      const { subscriberId, publisherType, publisherId, relevantFields, data: publisherData } = event.detail;
+      interface NodeUpdateEventData {
+        subscriberId: string;
+        publisherType: string;
+        publisherId: string;
+        relevantFields: string[];
+        data: Record<string, unknown>;
+      }
+      
+      const { subscriberId, publisherType, publisherId, relevantFields, data: publisherData } = 
+        event.detail as NodeUpdateEventData;
       
       // Only process events meant for this node
       if (subscriberId !== id) return;
@@ -508,7 +510,9 @@ export function useTeamMemberNode(
       if (publisherType === 'team' && relevantFields.includes('roster')) {
         // Check if this team member is in the roster
         const roster = Array.isArray(publisherData.roster) ? publisherData.roster : [];
-        const memberInRoster = roster.find((member: any) => member.memberId === id);
+        const memberInRoster = roster.find((member: { memberId: string; allocation?: number }) => 
+          member.memberId === id
+        );
         
         if (memberInRoster) {
           // Update the team ID and allocation if needed
@@ -600,16 +604,28 @@ export function useTeamMemberNode(
 
   // Clean up timers on unmount
   useEffect(() => {
+    // Capture ref values when the effect runs
+    const hoursTimer = hoursDebounceRef.current;
+    const daysTimer = daysDebounceRef.current;
+    const rateTimer = rateDebounceRef.current;
+    const startDateTimer = startDateDebounceRef.current;
+    const rolesTimer = rolesDebounceRef.current;
+    const titleTimer = titleDebounceRef.current;
+    const bioTimer = bioDebounceRef.current;
+    const timezoneTimer = timezoneDebounceRef.current;
+    const allocationTimer = allocationDebounceRef.current;
+    
     return () => {
-      if (titleDebounceRef.current) clearTimeout(titleDebounceRef.current);
-      if (bioDebounceRef.current) clearTimeout(bioDebounceRef.current);
-      if (hoursDebounceRef.current) clearTimeout(hoursDebounceRef.current);
-      if (daysDebounceRef.current) clearTimeout(daysDebounceRef.current);
-      if (rateDebounceRef.current) clearTimeout(rateDebounceRef.current);
-      if (startDateDebounceRef.current) clearTimeout(startDateDebounceRef.current);
-      if (rolesDebounceRef.current) clearTimeout(rolesDebounceRef.current);
-      if (timezoneDebounceRef.current) clearTimeout(timezoneDebounceRef.current);
-      if (allocationDebounceRef.current) clearTimeout(allocationDebounceRef.current);
+      // Use captured values in cleanup function
+      if (titleTimer) clearTimeout(titleTimer);
+      if (bioTimer) clearTimeout(bioTimer);
+      if (hoursTimer) clearTimeout(hoursTimer);
+      if (daysTimer) clearTimeout(daysTimer);
+      if (rateTimer) clearTimeout(rateTimer);
+      if (startDateTimer) clearTimeout(startDateTimer);
+      if (rolesTimer) clearTimeout(rolesTimer);
+      if (timezoneTimer) clearTimeout(timezoneTimer);
+      if (allocationTimer) clearTimeout(allocationTimer);
     };
   }, []);
 

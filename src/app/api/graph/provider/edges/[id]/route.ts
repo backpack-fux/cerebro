@@ -74,7 +74,7 @@ export async function PATCH(req: NextRequest) {
     let updates;
     try {
       updates = await req.json();
-    } catch (error) {
+    } catch {
       console.warn('[API] Invalid JSON in request body');
       return NextResponse.json(
         { error: 'Invalid JSON in request body' },

@@ -7,10 +7,15 @@ export type NodeStatusConfig = {
   defaultStatus?: NodeStatus;
 };
 
+export type NodeData = {
+  status?: NodeStatus;
+  [key: string]: unknown;
+};
+
 export function useNodeStatus(
   id: string,
-  data: Record<string, any>,
-  updateNodeData: (id: string, data: any) => void,
+  data: NodeData,
+  updateNodeData: (id: string, data: NodeData) => void,
   config: NodeStatusConfig = {}
 ) {
   const getNextStatus = useCallback((currentStatus: NodeStatus, direction: 'forward' | 'backward'): NodeStatus => {

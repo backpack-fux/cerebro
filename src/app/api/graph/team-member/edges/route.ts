@@ -39,8 +39,8 @@ export async function POST(req: NextRequest) {
         console.log('[API] Detected team member to team connection, using connectToTeam method');
         
         // Extract allocation and role from edge data if available
-        const allocation = (edge.data as any)?.allocation || 100;
-        const role = (edge.data as any)?.role || 'Developer';
+        const allocation = edge.data?.allocation ?? 100;
+        const role = edge.data?.role ?? 'Developer';
         
         // Use the connectToTeam method to handle both edge creation and roster update
         createdEdge = await teamMemberService.connectToTeam(

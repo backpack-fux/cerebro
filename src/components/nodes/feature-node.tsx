@@ -9,7 +9,7 @@ import {
   NodeHeaderMenuAction,
 } from '@/components/nodes/node-header';
 import { DropdownMenuItem } from "@radix-ui/react-dropdown-menu";
-import { useMemo, memo } from "react";
+import { useMemo, memo, useCallback } from "react";
 import { Textarea } from "@/components/ui/textarea";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
@@ -24,6 +24,42 @@ import { TeamAllocation } from '@/components/shared/TeamAllocation';
 import { formatHours } from '@/utils/format-utils';
 import { formatMemberName } from '@/utils/node-utils';
 import type { TeamAllocation as ITeamAllocation } from '@/utils/types/allocation';
+import { MemberAllocationData as ImportedMemberAllocationData, AvailableMember } from '@/utils/types/allocation';
+
+// Debug logger that only logs in development
+const debugLog = (message: string, data?: unknown) => {
+  if (process.env.NODE_ENV === 'development') {
+    console.log(`[FeatureNode] ${message}`, data);
+  }
+};
+
+// Group logger for development
+const debugGroup = (groupName: string, logFn: () => void) => {
+  if (process.env.NODE_ENV === 'development') {
+    console.group(groupName);
+    logFn();
+    console.groupEnd();
+  }
+};
+
+// Import the allocation data type from the same module
+interface LocalMemberAllocationData {
+  memberId: string;
+  name: string;
+  hours: number;
+  cost?: number;
+  capacity: number;
+  allocation: number;
+  daysEquivalent: number;
+  percentage?: number;
+  memberCapacity?: number;
+  hourlyRate?: number;
+  current?: {
+    hours?: number;
+    cost?: number;
+  };
+}
+
 /**
  * Interface for member cost data used in the cost receipt
  */
@@ -46,7 +82,7 @@ export const FeatureNode = memo(function FeatureNode({ id, data, selected }: Nod
   const projectDurationDays = Number(data.duration) || 1;
   
   // DEBUG: Log project duration days
-  console.log('[FeatureNode] Project Duration Days:', {
+  debugLog('Project Duration Days:', {
     id,
     duration: data.duration,
     projectDurationDays,
@@ -54,26 +90,36 @@ export const FeatureNode = memo(function FeatureNode({ id, data, selected }: Nod
     endDate: data.endDate
   });
   
+  // Create a memoized version of the formatMemberName adapter to avoid re-renders
+  const formatMemberNameAdapter = useCallback(
+    (memberId: string, memberData?: { title?: string }): string => {
+      return formatMemberName(memberId, getNodes(), memberData);
+    },
+    [getNodes]
+  );
+  
   // Pre-calculate member allocations for display and cost calculation
   const memberAllocations = useMemo(() => {
-    console.group('🎯 Team Roster Calculations');
+    // Initialize with empty Map to avoid type errors
+    let allocations = new Map<string, LocalMemberAllocationData>();
     
-    console.log('Connected Teams:', feature.connectedTeams);
-    console.log('Processed Team Allocations:', feature.processedTeamAllocations);
-    console.log('Project Duration Days:', projectDurationDays);
-
-    const allocations = feature.calculateMemberAllocations(
-      feature.connectedTeams,
-      feature.processedTeamAllocations,
-      projectDurationDays,
-      formatMemberName
-    );
-
-    console.log('Calculated Member Allocations:', allocations);
-    console.groupEnd();
+    debugGroup('🎯 Team Roster Calculations', () => {
+      debugLog('Connected Teams:', feature.connectedTeams);
+      debugLog('Processed Team Allocations:', feature.processedTeamAllocations);
+      debugLog('Project Duration Days:', projectDurationDays);
+      
+      allocations = feature.calculateMemberAllocations(
+        feature.connectedTeams,
+        feature.processedTeamAllocations,
+        projectDurationDays,
+        formatMemberNameAdapter
+      );
+      
+      debugLog('Calculated Member Allocations:', allocations);
+    });
     
     return allocations;
-  }, [feature, projectDurationDays]);
+  }, [feature, projectDurationDays, formatMemberNameAdapter]);
   
   // Calculate cost summary
   const costSummary = useMemo(() => {
@@ -86,8 +132,42 @@ export const FeatureNode = memo(function FeatureNode({ id, data, selected }: Nod
     );
   }, [feature, memberAllocations]);
   
-  const getMemberName = (memberId: string, memberData?: Record<string, unknown>): string => {
-    return formatMemberName(memberId, getNodes(), memberData);
+  // Convert memberAllocations to use the correct MemberCapacity type
+  const convertMemberAllocations = (allocations: Map<string, LocalMemberAllocationData>): Map<string, ImportedMemberAllocationData> => {
+    const result = new Map<string, ImportedMemberAllocationData>();
+    
+    allocations.forEach((allocation, key) => {
+      const converted: ImportedMemberAllocationData = {
+        ...allocation,
+        memberCapacity: allocation.memberCapacity ? {
+          hoursPerDay: allocation.memberCapacity as number,
+          daysPerWeek: 5, // Default value
+        } : undefined,
+        cost: allocation.cost || 0, // Ensure cost is defined
+      };
+      result.set(key, converted);
+    });
+    
+    return result;
+  };
+  
+  // Adapter function to match the expected type for TeamAllocation's formatMemberName
+  const formatMemberNameForTeam = (id: string, member: AvailableMember): string => {
+    return member.name || formatMemberName(id, getNodes(), { title: member.name });
+  };
+  
+  // Get converted allocations
+  const convertedAllocations = convertMemberAllocations(memberAllocations);
+  
+  // Convert MemberAllocationData[] to MemberCost[]
+  const convertAllocationsToCostArray = (allocations: LocalMemberAllocationData[]): MemberCost[] => {
+    return allocations.map(allocation => ({
+      memberId: allocation.memberId,
+      name: allocation.name || '',
+      hours: allocation.hours,
+      hourlyRate: allocation.hourlyRate || 0,
+      cost: allocation.cost || 0
+    }));
   };
   
   return (
@@ -229,9 +309,9 @@ export const FeatureNode = memo(function FeatureNode({ id, data, selected }: Nod
               key={team.teamId}
               team={team}
               teamAllocation={feature.processedTeamAllocations.find((a: ITeamAllocation) => a.teamId === team.teamId)}
-              memberAllocations={memberAllocations}
+              memberAllocations={convertedAllocations}
               projectDurationDays={projectDurationDays}
-              formatMemberName={getMemberName}
+              formatMemberName={formatMemberNameForTeam}
               onMemberValueChange={(teamId, memberId, hours) => {
                 feature.handleAllocationChangeLocal(teamId, memberId, hours);
               }}
@@ -248,7 +328,7 @@ export const FeatureNode = memo(function FeatureNode({ id, data, selected }: Nod
         
         {costSummary.allocations.length > 0 && (
           <CostReceipt
-            allocations={costSummary.allocations}
+            allocations={convertAllocationsToCostArray(costSummary.allocations)}
             totalCost={costSummary.totalCost}
             totalHours={costSummary.totalHours}
             totalDays={costSummary.totalDays}

@@ -1,23 +1,22 @@
 // app/api/graph/team/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { teamService } from '@/services/graph/neo4j/neo4j.provider';
-import { CreateTeamNodeParams, Season, RosterMember, Neo4jTeamNodeData } from '@/services/graph/team/team.types';
-import { neo4jToReactFlow } from '@/services/graph/team/team.transform';
-import { neo4jStorage } from '@/services/graph/neo4j/neo4j.provider';
+import { CreateTeamNodeParams, Season, RosterMember } from '@/services/graph/team/team.types';
 
 /**
  * Validates a Season object
  * @param season The season object to validate
  * @returns True if valid, false otherwise
  */
-function isValidSeason(season: any): season is Season {
+function isValidSeason(season: unknown): season is Season {
+  if (!season || typeof season !== 'object') return false;
+  
+  const s = season as Season;
   return (
-    season &&
-    typeof season === 'object' &&
-    typeof season.startDate === 'string' &&
-    typeof season.endDate === 'string' &&
-    typeof season.name === 'string' &&
-    (!season.goals || Array.isArray(season.goals))
+    typeof s.startDate === 'string' &&
+    typeof s.endDate === 'string' &&
+    typeof s.name === 'string' &&
+    (!s.goals || Array.isArray(s.goals))
   );
 }
 
@@ -26,13 +25,14 @@ function isValidSeason(season: any): season is Season {
  * @param member The roster member to validate
  * @returns True if valid, false otherwise
  */
-function isValidRosterMember(member: any): member is RosterMember {
+function isValidRosterMember(member: unknown): member is RosterMember {
+  if (!member || typeof member !== 'object') return false;
+  
+  const m = member as RosterMember;
   return (
-    member &&
-    typeof member === 'object' &&
-    typeof member.memberId === 'string' &&
-    typeof member.allocation === 'number' &&
-    typeof member.role === 'string'
+    typeof m.memberId === 'string' &&
+    typeof m.allocation === 'number' &&
+    typeof m.role === 'string'
   );
 }
 
@@ -41,7 +41,7 @@ function isValidRosterMember(member: any): member is RosterMember {
  * @param roster The roster array to validate
  * @returns True if valid, false otherwise
  */
-function isValidRoster(roster: any): roster is RosterMember[] {
+function isValidRoster(roster: unknown): roster is RosterMember[] {
   return Array.isArray(roster) && roster.every(isValidRosterMember);
 }
 

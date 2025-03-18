@@ -2,6 +2,7 @@ import { parseISO, eachWeekOfInterval, format, addDays, differenceInDays } from 
 import { TimeAllocation, WeeklyAllocation, WeeklyAvailability, RosterMember, MemberAllocation, TeamAllocation } from '../types/allocation';
 import { calculateWorkingDays } from '../time/calendar';
 import { parseJsonIfString } from '@/utils/utils';
+import { Node } from '@xyflow/react';
 
 /**
  * Calculate member allocations from team roster and requested hours
@@ -222,14 +223,14 @@ export function calculateMemberWeeklyAvailability(
  * @param allNodes All nodes in the flow
  * @returns Total hours allocated to this member across all features
  */
-export function getMemberTotalAllocations(memberId: string, allNodes: any[]): number {
+export function getMemberTotalAllocations(memberId: string, allNodes: Node[]): number {
   return allNodes
     .filter(node => node.type === 'feature' && node.data.teamAllocations)
     .reduce((total, node) => {
       const teamAllocations = parseJsonIfString<TeamAllocation[]>(node.data.teamAllocations, []);
       const memberAllocation = teamAllocations
         .flatMap(ta => ta.allocatedMembers || [])
-        .find((m: any) => m.memberId === memberId);
+        .find((m: MemberAllocation) => m.memberId === memberId);
       
       return total + (memberAllocation?.hours || 0);
     }, 0);

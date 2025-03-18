@@ -1,14 +1,61 @@
 "use client";
 
 import { useCallback } from "react";
-import { 
-  calculateWeeklyCapacity, 
-  percentageToHours,
-  MemberCapacity
-} from '@/utils/utils';
+import { calculateWeeklyCapacity } from '@/utils/utils';
 import { calculateEffectiveCapacity } from '@/utils/allocation/capacity';
 import { ConnectedTeam } from '@/hooks/useTeamAllocation';
 import { AvailableMember } from '@/utils/types/allocation';
+
+// Define interfaces for our data structures
+interface TeamAllocation {
+  teamId: string;
+  allocatedMembers: Array<{
+    memberId: string;
+    name?: string;
+    hours: number;
+  }>;
+}
+
+interface MemberAllocationData {
+  memberId: string;
+  name: string;
+  hours: number;
+  cost?: number;
+  capacity: number;
+  allocation: number;
+  daysEquivalent: number;
+  percentage?: number;
+  memberCapacity?: number;
+  hourlyRate?: number;
+  current?: {
+    hours?: number;
+    cost?: number;
+  };
+}
+
+interface NodeData {
+  teamAllocations?: TeamAllocation[];
+  [key: string]: unknown;
+}
+
+interface TeamAllocationHook {
+  connectedTeams: ConnectedTeam[];
+  requestTeamAllocation: (
+    teamId: string, 
+    requestedHours: number,
+    memberData?: Array<{
+      memberId: string;
+      name?: string;
+      hours?: number;
+    }>,
+    saveToBackend?: boolean
+  ) => TeamAllocation[] | undefined;
+}
+
+// Update AvailableMember interface to include hourlyRate
+interface ExtendedAvailableMember extends AvailableMember {
+  hourlyRate?: number;
+}
 
 // Utility function to round numbers to 1 decimal place for better display
 const roundToOneDecimal = (num: number): number => {
@@ -20,9 +67,9 @@ const roundToOneDecimal = (num: number): number => {
  * Shared between feature and option nodes
  */
 export function useResourceAllocation(
-  data: any,
-  teamAllocationHook: any,
-  getNodes: () => any[]
+  data: NodeData,
+  teamAllocationHook: TeamAllocationHook,
+  getNodes: () => Array<{ id: string; data?: { title?: string } }>
 ) {
   /**
    * Handle allocation change - local state only (no backend save)
@@ -72,7 +119,7 @@ export function useResourceAllocation(
       false // Don't save to backend yet
     );
     
-  }, [getNodes, teamAllocationHook]);
+  }, [teamAllocationHook, getNodes]);
 
   /**
    * Handle allocation commit - save to backend when the user finishes dragging
@@ -120,7 +167,7 @@ export function useResourceAllocation(
       true // Save to backend
     );
     
-  }, [getNodes, teamAllocationHook]);
+  }, [teamAllocationHook, getNodes]);
 
   /**
    * Calculate member allocations for display and cost calculation
@@ -131,94 +178,52 @@ export function useResourceAllocation(
    * @returns Map of member allocations
    */
   const calculateMemberAllocations = useCallback((
-    connectedTeams: any[],
-    processedTeamAllocations: any[],
+    connectedTeams: ConnectedTeam[],
+    processedTeamAllocations: TeamAllocation[],
     projectDurationDays: number,
-    formatMemberName: (memberId: string, memberData?: any) => string
+    formatMemberName: (memberId: string, memberData?: { title?: string }) => string
   ) => {
-    const allocations = new Map();
+    const allocations = new Map<string, MemberAllocationData>();
     
-    // Process each team allocation
     processedTeamAllocations.forEach(allocation => {
-      // Process each member in the allocation
-      allocation.allocatedMembers.forEach((member: any) => {
-        // Use the member's name if available, otherwise format the ID
+      allocation.allocatedMembers.forEach(member => {
         const memberName = member.name || formatMemberName(member.memberId);
-        
-        // Find the team member in the available bandwidth to get their capacity details
         const team = connectedTeams.find(t => t.teamId === allocation.teamId);
-        const teamMember = team?.availableBandwidth.find((m: { memberId: string }) => m.memberId === member.memberId);
+        const teamMember = team?.availableBandwidth.find(m => m.memberId === member.memberId) as ExtendedAvailableMember | undefined;
         
-        // Create a MemberCapacity object from the available data
-        const memberCapacity: MemberCapacity = {
-          // Use the actual values from the team member if available
-          hoursPerDay: teamMember?.hoursPerDay || 8,
-          daysPerWeek: teamMember?.daysPerWeek || 5,
-          // Use the member's allocation from the team's roster data
-          allocation: typeof teamMember?.allocation === 'number' ? teamMember.allocation : 100
-        };
+        if (!teamMember) return;
         
-        // Calculate weekly capacity - use the actual weeklyCapacity if available
-        const weeklyCapacity = teamMember?.weeklyCapacity || calculateWeeklyCapacity(memberCapacity);
+        const current = allocations.get(member.memberId);
+        const currentHours = current?.hours || 0;
+        const currentCost = current?.cost || 0;
         
-        // Ensure the weekly capacity is reasonable (cap at 100 hours per week)
-        const normalizedWeeklyCapacity = Math.min(weeklyCapacity, 100);
+        // Calculate member capacity
+        const capacity = calculateWeeklyCapacity({
+          hoursPerDay: teamMember.hoursPerDay || 8,
+          daysPerWeek: teamMember.daysPerWeek || 5
+        });
         
-        // Get the team allocation percentage
-        const teamAllocationPercent = memberCapacity.allocation || 100;
-        
-        // Use the utility function to calculate effective capacity
-        const effectiveWeeklyCapacity = calculateEffectiveCapacity(normalizedWeeklyCapacity, teamAllocationPercent);
-        
-        // Calculate total capacity for the project duration
-        const totalCapacity = calculateEffectiveCapacity(
-          normalizedWeeklyCapacity, 
-          teamAllocationPercent, 
-          projectDurationDays, 
-          memberCapacity.daysPerWeek
+        // Calculate effective capacity based on team allocation
+        const effectiveCapacity = calculateEffectiveCapacity(
+          capacity,
+          teamMember.allocation || 100,
+          projectDurationDays,
+          teamMember.daysPerWeek || 5
         );
         
-        // Get the allocated hours for this member
-        const memberHours = typeof member.hours === 'number' ? member.hours : 0;
+        const hourlyRate = teamMember.hourlyRate || 0;
         
-        // Calculate percentage of their capacity being used
-        const percentage = totalCapacity > 0 
-          ? (memberHours / totalCapacity) * 100 
-          : 0;
-        
-        // Calculate cost based on hourly rate
-        // dailyRate in the API is actually an hourly rate
-        const hourlyRate = teamMember?.dailyRate || 100; // Default hourly rate
-        const cost = memberHours * hourlyRate;
-        
-        // Add or update the allocation for this member
-        if (allocations.has(member.memberId)) {
-          const current = allocations.get(member.memberId);
-          const currentHours = typeof current.hours === 'number' ? current.hours : 0;
-          allocations.set(member.memberId, {
-            ...current,
-            hours: currentHours + memberHours,
-            percentage: percentage,
-            weeklyCapacity: normalizedWeeklyCapacity,
-            effectiveCapacity: effectiveWeeklyCapacity,
-            memberCapacity,
-            name: memberName, // Ensure we store the name
-            hourlyRate,
-            cost: current.cost + cost
-          });
-        } else {
-          allocations.set(member.memberId, {
-            memberId: member.memberId,
-            hours: memberHours,
-            percentage: percentage,
-            weeklyCapacity: normalizedWeeklyCapacity,
-            effectiveCapacity: effectiveWeeklyCapacity,
-            memberCapacity,
-            name: memberName, // Store the name
-            hourlyRate,
-            cost: cost
-          });
-        }
+        allocations.set(member.memberId, {
+          memberId: member.memberId,
+          name: memberName,
+          hours: currentHours + member.hours,
+          cost: currentCost + (member.hours * hourlyRate),
+          capacity,
+          allocation: teamMember.allocation || 100,
+          daysEquivalent: (currentHours + member.hours) / (teamMember.hoursPerDay || 8),
+          percentage: ((currentHours + member.hours) / effectiveCapacity) * 100,
+          hourlyRate
+        });
       });
     });
     
@@ -230,7 +235,7 @@ export function useResourceAllocation(
    * @param memberAllocations Map of member allocations
    * @returns Cost summary object
    */
-  const calculateCostSummary = useCallback((memberAllocations: Map<string, any>) => {
+  const calculateCostSummary = useCallback((memberAllocations: Map<string, MemberAllocationData>) => {
     let totalCost = 0;
     let totalHours = 0;
     let totalDays = 0;
@@ -239,24 +244,14 @@ export function useResourceAllocation(
     allocations.forEach(allocation => {
       totalCost += allocation.cost || 0;
       totalHours += allocation.hours || 0;
-      
-      // Calculate days based on hours and hoursPerDay
-      const hoursPerDay = allocation.memberCapacity?.hoursPerDay || 8;
-      const days = (allocation.hours || 0) / hoursPerDay;
-      totalDays += days;
+      totalDays += allocation.daysEquivalent || 0;
     });
     
     return {
-      allocations: allocations.map(allocation => ({
-        memberId: allocation.memberId,
-        name: allocation.name,
-        hours: allocation.hours,
-        hourlyRate: allocation.hourlyRate,
-        cost: allocation.cost
-      })),
-      totalCost,
-      totalHours,
-      totalDays
+      totalCost: roundToOneDecimal(totalCost),
+      totalHours: roundToOneDecimal(totalHours),
+      totalDays: roundToOneDecimal(totalDays),
+      allocations
     };
   }, []);
 

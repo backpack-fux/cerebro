@@ -3,19 +3,25 @@ import { teamService, neo4jStorage } from '@/services/graph/neo4j/neo4j.provider
 import { UpdateTeamNodeParams, Season, RosterMember, Neo4jTeamNodeData } from '@/services/graph/team/team.types';
 import { neo4jToReactFlow } from '@/services/graph/team/team.transform';
 
+interface Neo4jErrorResponse {
+  code: string;
+  message: string;
+}
+
 /**
  * Validates a Season object
  * @param season The season object to validate
  * @returns True if valid, false otherwise
  */
-function isValidSeason(season: any): season is Season {
+function isValidSeason(season: unknown): season is Season {
+  if (!season || typeof season !== 'object') return false;
+  
+  const typedSeason = season as Partial<Season>;
   return (
-    season &&
-    typeof season === 'object' &&
-    typeof season.startDate === 'string' &&
-    typeof season.endDate === 'string' &&
-    typeof season.name === 'string' &&
-    (!season.goals || Array.isArray(season.goals))
+    typeof typedSeason.startDate === 'string' &&
+    typeof typedSeason.endDate === 'string' &&
+    typeof typedSeason.name === 'string' &&
+    (!typedSeason.goals || Array.isArray(typedSeason.goals))
   );
 }
 
@@ -24,31 +30,32 @@ function isValidSeason(season: any): season is Season {
  * @param member The roster member to validate
  * @returns True if valid, false otherwise
  */
-function isValidRosterMember(member: any): member is RosterMember {
-  console.log('[API] Validating roster member:', member);
+function isValidRosterMember(member: unknown): member is RosterMember {
+  if (!member || typeof member !== 'object') return false;
+  
+  const typedMember = member as Partial<RosterMember>;
+  console.log('[API] Validating roster member:', typedMember);
   console.log('[API] Member properties:', {
-    isMember: !!member,
-    isObject: typeof member === 'object',
-    hasMemberId: typeof member?.memberId === 'string',
-    hasAllocation: typeof member?.allocation === 'number',
-    hasRole: typeof member?.role === 'string',
-    roleValue: member?.role
+    isMember: !!typedMember,
+    isObject: typeof typedMember === 'object',
+    hasMemberId: typeof typedMember.memberId === 'string',
+    hasAllocation: typeof typedMember.allocation === 'number',
+    hasRole: typeof typedMember.role === 'string',
+    roleValue: typedMember.role
   });
   
   // Ensure role is a string (case-insensitive)
-  const role = member?.role;
+  const role = typedMember.role;
   const isValidRole = typeof role === 'string';
   
   return (
-    member &&
-    typeof member === 'object' &&
-    typeof member.memberId === 'string' &&
-    typeof member.allocation === 'number' &&
+    typeof typedMember.memberId === 'string' &&
+    typeof typedMember.allocation === 'number' &&
     isValidRole &&
     // Optional fields should be of the correct type if present
-    (member.startDate === undefined || typeof member.startDate === 'string') &&
-    (member.endDate === undefined || typeof member.endDate === 'string') &&
-    (member.allocations === undefined || Array.isArray(member.allocations))
+    (typedMember.startDate === undefined || typeof typedMember.startDate === 'string') &&
+    (typedMember.endDate === undefined || typeof typedMember.endDate === 'string') &&
+    (typedMember.allocations === undefined || Array.isArray(typedMember.allocations))
   );
 }
 
@@ -57,7 +64,7 @@ function isValidRosterMember(member: any): member is RosterMember {
  * @param roster The roster array to validate
  * @returns True if valid, false otherwise
  */
-function isValidRoster(roster: any): roster is RosterMember[] {
+function isValidRoster(roster: unknown): roster is RosterMember[] {
   console.log('[API] Validating roster:', roster);
   
   // If roster is a string, try to parse it as JSON
@@ -66,8 +73,8 @@ function isValidRoster(roster: any): roster is RosterMember[] {
     try {
       rosterArray = JSON.parse(roster);
       console.log('[API] Parsed roster string into array:', rosterArray);
-    } catch (error) {
-      console.error('[API] Error parsing roster string:', error);
+    } catch {
+      console.error('[API] Error parsing roster string');
       return false;
     }
   }
@@ -143,9 +150,10 @@ export async function GET(request: NextRequest) {
     
     // Check if it's a Neo4j-specific error
     if (error && typeof error === 'object' && 'code' in error) {
+      const neo4jError = error as Neo4jErrorResponse;
       console.error('[API] Neo4j error details:', {
-        code: (error as any).code,
-        message: (error as any).message
+        code: neo4jError.code,
+        message: neo4jError.message
       });
     }
     
@@ -199,8 +207,8 @@ export async function PATCH(request: NextRequest) {
         try {
           updateData.roster = JSON.parse(updateData.roster);
           console.log('[API] Parsed roster string into array:', updateData.roster);
-        } catch (error) {
-          console.error('[API] Error parsing roster string:', error);
+        } catch {
+          console.error('[API] Error parsing roster string');
           return NextResponse.json(
             { error: 'Invalid roster format. Roster must be a valid JSON array.' },
             { status: 400 }
@@ -250,35 +258,35 @@ export async function PATCH(request: NextRequest) {
     // Use the teamService to update the node
     const updatedNode = await teamService.update(updateData);
     
-    // Ensure the node has properly parsed roster and season
-    if (typeof updatedNode.data.roster === 'string') {
-      try {
-        updatedNode.data.roster = JSON.parse(updatedNode.data.roster);
-      } catch (e) {
-        updatedNode.data.roster = [];
-      }
-    }
-    
+    // Ensure complex objects are properly parsed
     if (typeof updatedNode.data.season === 'string') {
       try {
         updatedNode.data.season = JSON.parse(updatedNode.data.season);
-      } catch (e) {
+      } catch {
         updatedNode.data.season = undefined;
       }
     }
     
+    if (typeof updatedNode.data.roster === 'string') {
+      try {
+        updatedNode.data.roster = JSON.parse(updatedNode.data.roster);
+      } catch {
+        updatedNode.data.roster = [];
+      }
+    }
+
     console.log('[API] Successfully updated TeamNode:', {
       id: updatedNode.id,
       type: updatedNode.type,
       data: {
         title: updatedNode.data.title,
         description: updatedNode.data.description,
-        season: updatedNode.data.season,
-        roster: updatedNode.data.roster
+        season: updatedNode.data.season ? 'provided' : 'not provided',
+        roster: Array.isArray(updatedNode.data.roster) ? `${updatedNode.data.roster.length} members` : 'not provided'
       }
     });
-    
-    // Return the transformed node
+
+    // Return the updated node
     return NextResponse.json(updatedNode);
   } catch (error) {
     console.error('[API] Error updating TeamNode:', {
@@ -289,9 +297,10 @@ export async function PATCH(request: NextRequest) {
     
     // Check if it's a Neo4j-specific error
     if (error && typeof error === 'object' && 'code' in error) {
+      const neo4jError = error as Neo4jErrorResponse;
       console.error('[API] Neo4j error details:', {
-        code: (error as any).code,
-        message: (error as any).message
+        code: neo4jError.code,
+        message: neo4jError.message
       });
     }
     
@@ -347,9 +356,10 @@ export async function DELETE(request: NextRequest) {
     
     // Check if it's a Neo4j-specific error
     if (error && typeof error === 'object' && 'code' in error) {
+      const neo4jError = error as Neo4jErrorResponse;
       console.error('[API] Neo4j error details:', {
-        code: (error as any).code,
-        message: (error as any).message
+        code: neo4jError.code,
+        message: neo4jError.message
       });
     }
     

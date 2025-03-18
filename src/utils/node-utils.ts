@@ -1,5 +1,17 @@
 import { Node } from '@xyflow/react';
 
+// Define interfaces for member data and roster
+interface MemberData {
+  name?: string;
+  title?: string;
+}
+
+interface RosterMember {
+  memberId: string;
+  name?: string;
+  allocation?: number;
+}
+
 /**
  * Format member name for display, handling various data sources
  * @param memberId The unique ID of the team member
@@ -10,7 +22,7 @@ import { Node } from '@xyflow/react';
 export function formatMemberName(
   memberId: string, 
   nodes?: Node[] | null, 
-  memberData?: any
+  memberData?: MemberData
 ): string {
   // Try to get the name from the member data first
   if (memberData?.name) return memberData.name;
@@ -49,7 +61,7 @@ export function getTeamMembers(teamId: string, nodes: Node[]): Array<{
   if (!teamNode || !teamNode.data?.roster) return [];
   
   // Get the roster
-  let roster: any[] = [];
+  let roster: RosterMember[] = [];
   if (typeof teamNode.data.roster === 'string') {
     try {
       roster = JSON.parse(teamNode.data.roster);
@@ -64,9 +76,9 @@ export function getTeamMembers(teamId: string, nodes: Node[]): Array<{
   }
   
   // Format and return team members
-  return roster.map((member: any) => {
+  return roster.map((member: RosterMember) => {
     const memberNode = nodes.find(n => n.id === member.memberId);
-    const name = memberNode?.data?.title || member.name || member.memberId.split('-')[0];
+    const name = String(memberNode?.data?.title || member.name || member.memberId.split('-')[0]);
     
     return {
       memberId: member.memberId,
@@ -81,6 +93,6 @@ export function getTeamMembers(teamId: string, nodes: Node[]): Array<{
  * @param node The node to check
  * @returns True if the node is a member node
  */
-export function isMemberNode(node: any): boolean {
-  return node?.type === 'member';
+export function isMemberNode(node: Node | null | undefined): boolean {
+  return Boolean(node?.type === 'member');
 } 

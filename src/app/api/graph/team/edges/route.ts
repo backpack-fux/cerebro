@@ -1,8 +1,22 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { teamService, featureService } from '@/services/graph/neo4j/neo4j.provider';
 import { RFTeamEdge } from '@/services/graph/team/team.types';
-import { GraphApiClient } from '@/services/graph/neo4j/api-client';
-import { NodeType } from '@/services/graph/neo4j/api-urls';
+
+// Define a more precise type for Neo4j errors
+interface Neo4jError {
+  code: string | number;
+  message: string;
+}
+
+// Helper function to check if an object is a Neo4j error
+function isNeo4jError(error: unknown): error is Neo4jError {
+  return (
+    error !== null &&
+    typeof error === 'object' &&
+    'code' in error &&
+    'message' in error
+  );
+}
 
 // POST /api/graph/team/edges - Create a new edge between team nodes
 export async function POST(req: NextRequest) {
@@ -108,10 +122,10 @@ export async function POST(req: NextRequest) {
     });
     
     // Check if it's a Neo4j-specific error
-    if (error && typeof error === 'object' && 'code' in error) {
+    if (isNeo4jError(error)) {
       console.error('[API] Neo4j error details:', {
-        code: (error as any).code,
-        message: (error as any).message
+        code: error.code,
+        message: error.message
       });
     }
     
@@ -165,10 +179,10 @@ export async function GET(req: NextRequest) {
     });
     
     // Check if it's a Neo4j-specific error
-    if (error && typeof error === 'object' && 'code' in error) {
+    if (isNeo4jError(error)) {
       console.error('[API] Neo4j error details:', {
-        code: (error as any).code,
-        message: (error as any).message
+        code: error.code,
+        message: error.message
       });
     }
     

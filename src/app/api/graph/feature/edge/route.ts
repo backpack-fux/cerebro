@@ -1,13 +1,7 @@
 // app/api/graph/feature/edge/route.ts
 import { NextRequest, NextResponse } from 'next/server';
-import { FeatureService } from '@/services/graph/feature/feature.service';
-import { neo4jStorage } from '@/services/graph/neo4j/neo4j.provider';
 import { RFFeatureEdge } from '@/services/graph/feature/feature.types';
-import { NodeType } from '@/services/graph/neo4j/api-urls';
-import { teamService } from '@/services/graph/neo4j/neo4j.provider';
-
-// Initialize the feature service
-const featureService = new FeatureService(neo4jStorage);
+import { featureService } from '@/services/graph/neo4j/neo4j.provider';
 
 export async function POST(req: NextRequest) {
   try {
@@ -133,9 +127,10 @@ export async function POST(req: NextRequest) {
     });
     
     if (error && typeof error === 'object' && 'code' in error) {
+      const neo4jError = error as { code: string; message: string };
       console.error('[API] Neo4j error details:', {
-        code: (error as any).code,
-        message: (error as any).message
+        code: neo4jError.code,
+        message: neo4jError.message
       });
     }
     

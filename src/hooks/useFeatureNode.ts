@@ -7,7 +7,8 @@ import { GraphApiClient } from '@/services/graph/neo4j/api-client';
 import { NodeType } from '@/services/graph/neo4j/api-urls';
 import { 
   RFFeatureNodeData, 
-  BuildType
+  BuildType,
+  TimeUnit
 } from '@/services/graph/feature/feature.types';
 import { useTeamAllocation } from "@/hooks/useTeamAllocation";
 import { useNodeStatus, NodeStatus } from "@/hooks/useNodeStatus";
@@ -18,10 +19,27 @@ import { isFeatureNode } from "@/utils/type-guards";
 import { TeamAllocation } from "@/utils/types/allocation";
 import { format } from 'date-fns';
 import { convertToDays, calculateEndDate } from '@/utils/time/duration';
-import { TimeUnit } from '@/types/common';
 import { isMemberNode } from '@/utils/node-utils';
 import { useNodeObserver } from '@/hooks/useNodeObserver';
 import { NodeUpdateType } from '@/services/graph/observer/node-observer';
+
+// Add these interfaces at the top of the file after imports
+interface TeamMember {
+  memberId: string;
+  name: string;
+  allocation?: number;
+  weeklyCapacity?: number;
+}
+
+interface TeamRoster {
+  roster?: TeamMember[];
+  title?: string;
+  bandwidth?: {
+    total?: number;
+    available?: number;
+    allocated?: number;
+  };
+}
 
 // Extended TeamAllocation interface with bandwidth properties
 interface ExtendedTeamAllocation extends TeamAllocation {
@@ -30,15 +48,21 @@ interface ExtendedTeamAllocation extends TeamAllocation {
   teamName?: string;
 }
 
-// Extended team data interface with bandwidth properties
-interface TeamNodeData {
-  roster?: any[];
-  title?: string;
-  bandwidth?: {
-    total?: number;
-    available?: number;
-    allocated?: number;
+// Add NodeDataEvent type at the top with other interfaces
+interface NodeDataEvent extends CustomEvent {
+  detail: {
+    subscriberId: string;
+    subscriberType: string;
+    publisherId: string;
+    publisherType: string;
+    relevantFields: string[];
+    data: unknown;
   };
+}
+
+// Add ExtendedRFFeatureNodeData interface
+interface ExtendedRFFeatureNodeData extends RFFeatureNodeData {
+  status?: NodeStatus;
 }
 
 /**
@@ -52,7 +76,6 @@ export function useFeatureNode(id: string, data: RFFeatureNodeData) {
   
   // Track if we've loaded data from the server
   const initialFetchCompletedRef = useRef(false);
-  const isInitializedRef = useRef(false);
   
   // Refs for debouncing
   const titleDebounceRef = useRef<NodeJS.Timeout | null>(null);
@@ -60,12 +83,12 @@ export function useFeatureNode(id: string, data: RFFeatureNodeData) {
   const buildTypeDebounceRef = useRef<NodeJS.Timeout | null>(null);
   const durationDebounceRef = useRef<NodeJS.Timeout | null>(null);
   
-  // Define JSON fields that need special handling
-  const jsonFields = ['teamAllocations', 'memberAllocations', 'teamMembers', 'availableBandwidth'];
+  // Replace the jsonFields constant with a useMemo
+  const jsonFields = useMemo(() => ['teamAllocations', 'memberAllocations', 'teamMembers', 'availableBandwidth'], []);
   
   // Parse complex objects if they are strings
   const parsedData = useMemo(() => {
-    return parseDataFromBackend(data, jsonFields) as RFFeatureNodeData;
+    return parseDataFromBackend(data, jsonFields) as ExtendedRFFeatureNodeData;
   }, [data, jsonFields]);
   
   // State for the feature node
@@ -77,8 +100,15 @@ export function useFeatureNode(id: string, data: RFFeatureNodeData) {
   // Add the node observer hook
   const { publishManifestUpdate, subscribeBasedOnManifest } = useNodeObserver<RFFeatureNodeData>(id, 'feature');
   
-  // Helper function to calculate team bandwidth from roster
-  const calculateTeamBandwidth = useCallback((roster: any) => {
+  // Move calculateMemberCapacity before calculateTeamBandwidth
+  const calculateMemberCapacity = useCallback((member: TeamMember) => {
+    // Implementation of member capacity calculation
+    const allocation = member.allocation || 0;
+    const weeklyCapacity = member.weeklyCapacity || 40;
+    return (allocation / 100) * weeklyCapacity;
+  }, []);
+  
+  const calculateTeamBandwidth = useCallback((roster: TeamMember[]) => {
     // Ensure roster is an array before using array methods
     if (!roster || !Array.isArray(roster)) {
       console.warn('[FeatureNode] calculateTeamBandwidth received invalid roster:', roster);
@@ -90,21 +120,14 @@ export function useFeatureNode(id: string, data: RFFeatureNodeData) {
       // Calculate member capacity and add to total
       return total + calculateMemberCapacity(member);
     }, 0);
-  }, []);
-  
-  const calculateMemberCapacity = useCallback((member: any) => {
-    // Implementation of member capacity calculation
-    const allocation = member.allocation || 0;
-    const weeklyCapacity = member.weeklyCapacity || 40;
-    return (allocation / 100) * weeklyCapacity;
-  }, []);
+  }, [calculateMemberCapacity]);
 
-  // Ensure valid build type
-  const ensureValidBuildType = (type: string | undefined): BuildType => {
+  // Replace the ensureValidBuildType function with a useCallback
+  const ensureValidBuildType = useCallback((type: string | undefined): BuildType => {
     // Default to 'internal' if type is undefined, empty, or not one of the valid options
     const validTypes: BuildType[] = ['internal', 'external'];
     return (type && validTypes.includes(type as BuildType)) ? (type as BuildType) : 'internal';
-  };
+  }, []);
 
   // Save to backend function
   const saveToBackend = useCallback(async (updates: Partial<RFFeatureNodeData>) => {
@@ -164,7 +187,7 @@ export function useFeatureNode(id: string, data: RFFeatureNodeData) {
       if (!teamNode) return allocation;
       
       // Get team data
-      const teamData = teamNode.data as TeamNodeData;
+      const teamData = teamNode.data as TeamRoster;
       
       // Ensure roster is an array
       const roster = teamData.roster && Array.isArray(teamData.roster) 
@@ -249,6 +272,23 @@ export function useFeatureNode(id: string, data: RFFeatureNodeData) {
       
       const serverData = await GraphApiClient.getNode('feature' as NodeType, id);
       
+      // Type-check and assert the shape of the returned data
+      if (!serverData || typeof serverData !== 'object') {
+        throw new Error('Invalid server data received');
+      }
+      
+      // Create a properly typed server data object
+      const typedServerData = serverData as {
+        title?: string;
+        description?: string;
+        buildType?: string;
+        teamAllocations?: string | TeamAllocation[];
+        startDate?: string;
+        endDate?: string;
+        duration?: number;
+        status?: string;
+      };
+      
       // Verify that we're working with a feature node in case the API returns a different type
       const nodeFromGraph = getNodes().find(n => n.id === id);
       if (nodeFromGraph && !isFeatureNode(nodeFromGraph)) {
@@ -256,26 +296,26 @@ export function useFeatureNode(id: string, data: RFFeatureNodeData) {
       }
       
       // Process team allocations using parseJsonIfString utility
-      const processedTeamAllocations = parseJsonIfString<TeamAllocation[]>(serverData.data.teamAllocations, []);
+      const processedTeamAllocations = parseJsonIfString<TeamAllocation[]>(typedServerData.teamAllocations, []);
       
       // Ensure buildType is valid
-      const validBuildType = ensureValidBuildType(serverData.data.buildType);
+      const validBuildType = ensureValidBuildType(typedServerData.buildType);
       
       // Update local state with all server data
-      setTitle(serverData.data.title || '');
-      setDescription(serverData.data.description || '');
+      setTitle(typedServerData.title || '');
+      setDescription(typedServerData.description || '');
       setBuildType(validBuildType);
       
       // Update node data in ReactFlow
       updateNodeData(id, {
         ...parsedData,
-        title: serverData.data.title || parsedData.title,
-        description: serverData.data.description || parsedData.description,
+        title: typedServerData.title || parsedData.title,
+        description: typedServerData.description || parsedData.description,
         buildType: validBuildType,
         teamAllocations: processedTeamAllocations,
-        startDate: serverData.data.startDate,
-        endDate: serverData.data.endDate,
-        duration: serverData.data.duration
+        startDate: typedServerData.startDate,
+        endDate: typedServerData.endDate,
+        duration: typedServerData.duration
       });
 
       // Also refresh data from connected team nodes to ensure team names and member names are up to date
@@ -305,27 +345,44 @@ export function useFeatureNode(id: string, data: RFFeatureNodeData) {
         try {
           const serverData = await GraphApiClient.getNode('feature' as NodeType, id);
           
+          // Type-check and assert the shape of the returned data
+          if (!serverData || typeof serverData !== 'object') {
+            throw new Error('Invalid server data received');
+          }
+          
+          // Create a properly typed server data object
+          const typedServerData = serverData as {
+            title?: string;
+            description?: string;
+            buildType?: string;
+            teamAllocations?: string | TeamAllocation[];
+            startDate?: string;
+            endDate?: string;
+            duration?: number;
+            status?: string;
+          };
+          
           // Process team allocations using parseJsonIfString utility
-          const processedTeamAllocations = parseJsonIfString<TeamAllocation[]>(serverData.data.teamAllocations, []);
+          const processedTeamAllocations = parseJsonIfString<TeamAllocation[]>(typedServerData.teamAllocations, []);
           
           // Ensure buildType is valid
-          const validBuildType = ensureValidBuildType(serverData.data.buildType);
+          const validBuildType = ensureValidBuildType(typedServerData.buildType);
           
           // Update local state with all server data
-          setTitle(serverData.data.title || '');
-          setDescription(serverData.data.description || '');
+          setTitle(typedServerData.title || '');
+          setDescription(typedServerData.description || '');
           setBuildType(validBuildType);
           
           // Update node data in ReactFlow
           updateNodeData(id, {
             ...parsedData,
-            title: serverData.data.title || parsedData.title,
-            description: serverData.data.description || parsedData.description,
+            title: typedServerData.title || parsedData.title,
+            description: typedServerData.description || parsedData.description,
             buildType: validBuildType,
             teamAllocations: processedTeamAllocations,
-            startDate: serverData.data.startDate,
-            endDate: serverData.data.endDate,
-            duration: serverData.data.duration
+            startDate: typedServerData.startDate,
+            endDate: typedServerData.endDate,
+            duration: typedServerData.duration
           });
           
         } catch (error) {
@@ -345,7 +402,7 @@ export function useFeatureNode(id: string, data: RFFeatureNodeData) {
     };
     
     fetchData();
-  }, [id, parsedData, updateNodeData, isLoading]);
+  }, [id, parsedData, updateNodeData, isLoading, ensureValidBuildType]);
   
   // Update local state when data changes from the props
   useEffect(() => {
@@ -365,19 +422,8 @@ export function useFeatureNode(id: string, data: RFFeatureNodeData) {
         setBuildType(validBuildType);
       }
     }
-  }, [parsedData.title, parsedData.description, parsedData.buildType, isLoading, title, description, buildType]);
+  }, [parsedData.title, parsedData.description, parsedData.buildType, isLoading, title, description, buildType, ensureValidBuildType]);
   
-  // Save team allocations to backend
-  const saveTeamAllocationsToBackend = useCallback(async (allocations: TeamAllocation[]) => {
-    try {
-      await GraphApiClient.updateNode('feature' as NodeType, id, {
-        teamAllocations: allocations
-      });
-    } catch (error) {
-      console.error('Failed to save team allocations to backend:', error);
-    }
-  }, [id]);
-
   // Use the resource allocation hook to manage resource allocations
   const resourceAllocation = useResourceAllocation(parsedData, teamAllocationHook, getNodes);
   
@@ -429,7 +475,7 @@ export function useFeatureNode(id: string, data: RFFeatureNodeData) {
   // Handle time unit change
   const handleTimeUnitChange = useCallback((newTimeUnit: string) => {
     // Cast to TimeUnit for type safety
-    const validTimeUnit = newTimeUnit as any;
+    const validTimeUnit = newTimeUnit as TimeUnit;
     updateNodeData(id, { ...parsedData, timeUnit: validTimeUnit });
     saveToBackend({ timeUnit: validTimeUnit });
   }, [id, parsedData, updateNodeData, saveToBackend]);
@@ -470,13 +516,10 @@ export function useFeatureNode(id: string, data: RFFeatureNodeData) {
   const requestTeamAllocation = useCallback((
     teamId: string, 
     requestedHours: number, 
-    memberData: any[] = []
+    memberData: TeamMember[] = []
   ) => {
     return teamAllocationHook.requestTeamAllocation(teamId, requestedHours, memberData);
   }, [teamAllocationHook]);
-
-  // Extract timeUnit from parsed data with default
-  const timeUnit = (parsedData.timeUnit as TimeUnit) || 'days';
 
   // Handle title change
   const handleTitleChange = useCallback((newTitle: string) => {
@@ -533,39 +576,24 @@ export function useFeatureNode(id: string, data: RFFeatureNodeData) {
   // Handle build type change
   const handleBuildTypeChange = useCallback((newBuildType: BuildType) => {
     // Ensure the new build type is valid
-    const validBuildType = ensureValidBuildType(newBuildType);
-    
-    // Check if value actually changed to prevent unnecessary updates
-    if (buildType === validBuildType) {
+    if (!['internal', 'external'].includes(newBuildType)) {
+      console.warn(`Invalid build type: ${newBuildType}`);
       return;
     }
-    
-    // Set initialized flag to prevent redundant default setting
-    isInitializedRef.current = true;
-    
-    // Update local state first
-    setBuildType(validBuildType);
-    
-    // Then update ReactFlow state
-    updateNodeData(id, { ...parsedData, buildType: validBuildType });
-    
-    // Clear existing timeout
-    if (buildTypeDebounceRef.current) clearTimeout(buildTypeDebounceRef.current);
-    
-    // Debounce the save to backend
-    buildTypeDebounceRef.current = setTimeout(() => {
-      saveToBackend({ buildType: validBuildType });
-      
-      // Publish the update to subscribers using the manifest system
-      publishManifestUpdate(
-        { ...parsedData, buildType: validBuildType },
-        ['buildType'],
-        { updateType: NodeUpdateType.CONTENT }
-      );
-      
-      buildTypeDebounceRef.current = null;
-    }, 1000);
-  }, [id, parsedData, updateNodeData, saveToBackend, buildType, ensureValidBuildType, publishManifestUpdate]);
+
+    // Update node data with the new build type
+    updateNodeData(id, { ...parsedData, buildType: newBuildType });
+
+    // Save to backend
+    saveToBackend({ buildType: newBuildType });
+
+    // Publish the update to subscribers using the manifest system
+    publishManifestUpdate(
+      { ...parsedData, buildType: newBuildType },
+      ['buildType'],
+      { updateType: NodeUpdateType.CONTENT }
+    );
+  }, [id, parsedData, updateNodeData, saveToBackend, publishManifestUpdate]);
 
   // Handle node deletion
   const handleDelete = useCallback(() => {
@@ -609,10 +637,12 @@ export function useFeatureNode(id: string, data: RFFeatureNodeData) {
 
   // Cleanup timeouts on unmount
   useEffect(() => {
+    const currentBuildTypeTimeout = buildTypeDebounceRef.current;
+    
     return () => {
       if (titleDebounceRef.current) clearTimeout(titleDebounceRef.current);
       if (descriptionDebounceRef.current) clearTimeout(descriptionDebounceRef.current);
-      if (buildTypeDebounceRef.current) clearTimeout(buildTypeDebounceRef.current);
+      if (currentBuildTypeTimeout) clearTimeout(currentBuildTypeTimeout);
       if (durationDebounceRef.current) clearTimeout(durationDebounceRef.current);
     };
   }, []);
@@ -700,158 +730,44 @@ export function useFeatureNode(id: string, data: RFFeatureNodeData) {
     }
   }, [id, parsedData, getNodes, updateNodeData, processedTeamAllocations]);
 
-  // Subscribe to team and team member updates using the manifest system
+  // Handle node data updates from other nodes
   useEffect(() => {
-    // Subscribe to updates based on the manifest
-    const { refresh, unsubscribe } = subscribeBasedOnManifest();
-    
+    if (!id) return;
+
+    // Subscribe to updates based on the node manifest
+    const { unsubscribe } = subscribeBasedOnManifest();
+
     // Handle node data updates
-    const handleNodeDataUpdated = (event: Event) => {
-      const customEvent = event as CustomEvent;
-      const detail = customEvent.detail;
-      
-      // Only process events for this node
-      if (detail.subscriberId !== id) return;
-      
-      console.log(`[FeatureNode] Received manifest-based update:`, detail);
-      
-      // Handle team updates
-      if (detail.publisherType === 'team' && 
-          (detail.relevantFields.includes('title') || 
-           detail.relevantFields.includes('roster') || 
-           detail.relevantFields.includes('bandwidth'))) {
-        
-        // Update team allocations based on the received team data
-        const currentAllocations = parseJsonIfString<ExtendedTeamAllocation[]>(parsedData.teamAllocations, []);
-        
-        // Find this team in the current allocations
-        const teamIndex = currentAllocations.findIndex(t => t.teamId === detail.publisherId);
-        
-        if (teamIndex >= 0) {
-          // Team already exists in allocations, update it
-          const teamAllocation = currentAllocations[teamIndex];
-          
-          // Ensure roster is an array
-          const roster = detail.data.roster && Array.isArray(detail.data.roster) 
-            ? detail.data.roster 
-            : [];
-          
-          // Get the team's bandwidth from the update or calculate it
-          const teamBandwidth = detail.data.bandwidth?.total || 
-                             calculateTeamBandwidth(roster);
-          
-          // Get the team's available bandwidth
-          const availableBandwidth = detail.data.bandwidth?.available || 
-                                   (teamBandwidth - (detail.data.bandwidth?.allocated || 0));
-          
-          // Update team allocation properties based on the received team data
-          const updatedTeamAllocation = {
-            ...teamAllocation,
-            teamBandwidth,
-            availableBandwidth,
-            // Keep the requested hours the same
-            requestedHours: teamAllocation.requestedHours || 0,
-            // Update team name if it has changed
-            teamName: detail.data.title || teamAllocation.teamName
-          };
-          
-          // Create a new allocations array with the updated team
-          const updatedAllocations = [...currentAllocations];
-          updatedAllocations[teamIndex] = updatedTeamAllocation;
-          
-          // Update node data
-          updateNodeData(id, {
-            ...parsedData,
-            teamAllocations: updatedAllocations as unknown as TeamAllocation[]
-          });
-          
-          // Save to backend
-          saveToBackend({
-            teamAllocations: updatedAllocations as unknown as TeamAllocation[]
-          });
-        }
-      }
-      
-      // Handle team member updates
-      if (detail.publisherType === 'teamMember' && 
-          detail.relevantFields.includes('title')) {
-        
-        // Update member names in team allocations
-        const currentAllocations = parseJsonIfString<ExtendedTeamAllocation[]>(parsedData.teamAllocations, []);
-        let hasUpdates = false;
-        
-        // Create updated team allocations with new member names
-        const updatedAllocations = currentAllocations.map(teamAllocation => {
-          // Check if this member is in this team allocation
-          const memberIndex = teamAllocation.allocatedMembers.findIndex(m => m.memberId === detail.publisherId);
-          
-          if (memberIndex >= 0) {
-            // Member found, update the name
-            const updatedMembers = [...teamAllocation.allocatedMembers];
-            updatedMembers[memberIndex] = {
-              ...updatedMembers[memberIndex],
-              name: String(detail.data.title || updatedMembers[memberIndex].name)
-            };
-            
-            hasUpdates = true;
-            return {
-              ...teamAllocation,
-              allocatedMembers: updatedMembers
-            };
+    const handleNodeDataUpdated = (event: NodeDataEvent) => {
+      const { publisherType, relevantFields } = event.detail;
+
+      switch (publisherType) {
+        case 'team':
+          // Handle team updates that might affect this feature
+          if (relevantFields.includes('roster') || relevantFields.includes('bandwidth')) {
+            // Refresh team data to get updated allocations
+            refreshConnectedTeamData();
           }
-          
-          return teamAllocation;
-        });
-        
-        // Only update if names have changed
-        if (hasUpdates) {
-          // Update node data
-          updateNodeData(id, {
-            ...parsedData,
-            teamAllocations: updatedAllocations as unknown as TeamAllocation[]
-          });
-          
-          // Save to backend
-          saveToBackend({
-            teamAllocations: updatedAllocations as unknown as TeamAllocation[]
-          });
-        }
+          break;
+
+        case 'provider':
+          // Handle provider updates that might affect this feature
+          if (relevantFields.includes('costs') || relevantFields.includes('duration')) {
+            // Refresh provider data to get updated costs
+            refreshConnectedTeamData();
+          }
+          break;
       }
     };
-    
-    window.addEventListener('nodeDataUpdated', handleNodeDataUpdated);
-    
-    // Also listen for drag stop events to update data
-    const handleDragStop = (event: Event) => {
-      const customEvent = event as CustomEvent;
-      if (customEvent.detail?.nodeType === 'team' || customEvent.detail?.nodeType === 'teamMember') {
-        // Refresh data from connected team nodes when a team node is dragged
-        refreshConnectedTeamData();
-      }
-    };
-    
-    window.addEventListener('nodeDragStop', handleDragStop);
-    
-    // Also listen for connection changes
-    const handleConnectionsChanged = (event: Event) => {
-      const customEvent = event as CustomEvent;
-      if (customEvent.detail?.nodeId === id) {
-        refresh();
-        // Also refresh data from connected team nodes when connections change
-        refreshConnectedTeamData();
-      }
-    };
-    
-    window.addEventListener('nodeConnectionsChanged', handleConnectionsChanged);
-    
+
+    window.addEventListener('nodeDataUpdated', handleNodeDataUpdated as EventListener);
+
     return () => {
       unsubscribe();
-      window.removeEventListener('nodeDataUpdated', handleNodeDataUpdated);
-      window.removeEventListener('nodeDragStop', handleDragStop);
-      window.removeEventListener('nodeConnectionsChanged', handleConnectionsChanged);
+      window.removeEventListener('nodeDataUpdated', handleNodeDataUpdated as EventListener);
     };
-  }, [id, parsedData, updateNodeData, saveToBackend, subscribeBasedOnManifest, refreshConnectedTeamData, calculateTeamBandwidth]);
-  
+  }, [id, subscribeBasedOnManifest, refreshConnectedTeamData]);
+
   // Return the hook API
   return useMemo(() => ({
     // State
@@ -901,7 +817,8 @@ export function useFeatureNode(id: string, data: RFFeatureNodeData) {
     handleTitleChange, handleDescriptionChange, handleBuildTypeChange, handleStatusChange,
     handleDurationChangeWithPublish, handleTimeUnitChange, cycleStatus, handleDelete, requestTeamAllocation,
     handleAllocationChangeLocal, handleAllocationCommit,
-    duration, timeUnit, startDate, endDate, handleStartDateChange, handleEndDateChange,
-    refreshData, refreshConnectedTeamData, getStatusColor, calculateMemberAllocations, calculateCostSummary
+    duration, startDate, endDate, handleStartDateChange, handleEndDateChange,
+    refreshData, refreshConnectedTeamData, getStatusColor, calculateMemberAllocations, calculateCostSummary,
+    connectedTeams, costs, parsedData.timeUnit
   ]);
 } 

@@ -8,10 +8,17 @@ export type DurationConfig = {
   tip?: string;
 };
 
+export type NodeData = {
+  [key: string]: unknown;
+  duration?: number;
+  timeToClose?: number;
+  buildDuration?: number;
+};
+
 export function useDurationInput(
   id: string, 
-  data: Record<string, any>,
-  updateNodeData: (id: string, data: any) => void,
+  data: NodeData,
+  updateNodeData: (id: string, data: NodeData) => void,
   config: DurationConfig
 ) {
   const handleDurationChange = useCallback((value: string) => {
@@ -25,7 +32,8 @@ export function useDurationInput(
   }, [id, data, updateNodeData, config]);
 
   const handleDurationKeyDown = useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {
-    const currentDays = data[config.fieldName] || 0;
+    const currentValue = data[config.fieldName];
+    const currentDays = typeof currentValue === 'number' ? currentValue : 0;
     const step = e.shiftKey ? 5 : 1;
 
     if (e.key === 'ArrowUp') {
@@ -45,11 +53,14 @@ export function useDurationInput(
     }
   }, [data, updateNodeData, id, config]);
 
+  const currentValue = data[config.fieldName];
+  const durationValue = typeof currentValue === 'number' ? currentValue : 0;
+
   return {
     handleDurationChange,
     handleDurationKeyDown,
-    value: data[config.fieldName],
-    displayValue: data[config.fieldName] ? formatDuration(data[config.fieldName]) : 'days',
+    value: durationValue,
+    displayValue: durationValue ? formatDuration(durationValue) : 'days',
     config
   };
 } 

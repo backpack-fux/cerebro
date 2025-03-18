@@ -29,10 +29,7 @@ const TeamNode = memo(function TeamNode({ id, data, selected }: NodeProps) {
   
   // Direct check of dates
   useEffect(() => {
-    const now = getCurrentDate();
-    const start = team.season?.startDate ? new Date(team.season.startDate) : null;
-    const end = team.season?.endDate ? new Date(team.season.endDate) : null;
-
+    // Effect is used for tracking season changes
   }, [team.season, team.seasonProgress.isActive]);
 
   return (
@@ -125,7 +122,7 @@ const TeamNode = memo(function TeamNode({ id, data, selected }: NodeProps) {
                     ? "Season has ended" 
                     : team.seasonProgress.hasStarted
                       ? `${team.seasonProgress.daysRemaining} days remaining`
-                      : (team.seasonProgress as any).isFuture && team.seasonProgress.daysRemaining > 0
+                      : team.seasonProgress.isFuture && team.seasonProgress.daysRemaining > 0
                         ? `Starts in ${team.seasonProgress.daysRemaining} days`
                         : "Please check season dates"
                   }

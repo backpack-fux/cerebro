@@ -28,7 +28,7 @@ export function reactFlowToNeo4j(optionNode: RFOptionNode): Neo4jOptionNodeData 
   const data = optionNode.data as RFOptionNodeData; // Cast to ensure type safety
   
   // Helper function to safely handle JSON serialization
-  const safeJsonStringify = (value: any): string | undefined => {
+  const safeJsonStringify = (value: unknown): string | undefined => {
     if (!value) return undefined;
     
     if (typeof value === 'string') {
@@ -37,7 +37,7 @@ export function reactFlowToNeo4j(optionNode: RFOptionNode): Neo4jOptionNodeData 
         JSON.parse(value);
         // If it parses successfully, use it as is
         return value;
-      } catch (e) {
+      } catch {
         // If it's not valid JSON, stringify it
         return JSON.stringify(value);
       }

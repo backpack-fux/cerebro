@@ -40,7 +40,7 @@ const TeamMemberNode = memo(({ id, data, selected }: NodeProps) => {
   const { addError, clearErrors, getErrors } = useValidation();
   
   // Use the team member node hook to manage state and operations
-  const teamMember = useTeamMemberNode(id, data as RFTeamMemberNodeData, addError, clearErrors, getErrors);
+  const teamMember = useTeamMemberNode(id, data as RFTeamMemberNodeData, addError, clearErrors);
   
   // State for custom role input
   const [customRole, setCustomRole] = React.useState('');

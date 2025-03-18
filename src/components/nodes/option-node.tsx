@@ -10,7 +10,7 @@ import {
 } from '@/components/nodes/node-header';
 import { DropdownMenuItem } from "@radix-ui/react-dropdown-menu";
 import { memo, useMemo, useState, useEffect } from "react";
-import { useEdges, useReactFlow } from "@xyflow/react";
+import { useReactFlow } from "@xyflow/react";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
@@ -26,17 +26,70 @@ import { TeamAllocation } from '@/components/shared/TeamAllocation';
 import { formatNumber, formatHours } from '@/utils/format-utils';
 import { formatMemberName } from '@/utils/node-utils';
 import type { TeamAllocation as ITeamAllocation } from '@/utils/types/allocation';
+import { NodeStatus } from '@/hooks/useNodeStatus';
+import { MemberAllocationData as ImportedMemberAllocationData, AvailableMember } from '@/utils/types/allocation';
+
+// Debug logger that only logs in development
+const debugLog = (message: string, data?: unknown) => {
+  if (process.env.NODE_ENV === 'development') {
+    console.log(`[OptionNode] ${message}`, data);
+  }
+};
+
+// Define a local MemberAllocationData interface
+interface LocalMemberAllocationData {
+  memberId: string;
+  name: string;
+  hours: number;
+  cost?: number;
+  capacity: number;
+  allocation: number;
+  daysEquivalent: number;
+  percentage?: number;
+  memberCapacity?: number;
+  hourlyRate?: number;
+  current?: {
+    hours?: number;
+    cost?: number;
+  };
+}
+
+// Define the MemberCost interface
+interface MemberCost {
+  memberId: string;
+  name: string;
+  hours: number;
+  hourlyRate: number;
+  cost: number;
+}
+
+// Define the ExtendedRFOptionNodeData interface locally to match useOptionNode's expectations
+interface ExtendedRFOptionNodeData extends RFOptionNodeData {
+  status?: NodeStatus;
+}
 
 /**
  * Option Node component for displaying and editing option data
  * Uses React.memo to prevent unnecessary re-renders
  */
 export const OptionNode = memo(function OptionNode({ id, data, selected }: NodeProps) {
-  const edges = useEdges();
   const { getNodes } = useReactFlow();
   
+  // Create data with properly typed status
+  const typedData = useMemo(() => {
+    const result = { ...data };
+    // Convert status string to NodeStatus type
+    if (data.status) {
+      const validStatuses: Array<NodeStatus> = ['planning', 'in_progress', 'completed', 'active'];
+      result.status = validStatuses.includes(data.status as NodeStatus) 
+        ? data.status as NodeStatus 
+        : 'planning';
+    }
+    return result as ExtendedRFOptionNodeData;
+  }, [data]);
+  
   // Use our custom hook for option node logic
-  const option = useOptionNode(id, data as RFOptionNodeData);
+  const option = useOptionNode(id, typedData);
   
   // Use the shared resource allocation hook
   const resourceAllocation = useResourceAllocation(data, option, getNodes);
@@ -85,7 +138,7 @@ export const OptionNode = memo(function OptionNode({ id, data, selected }: NodeP
   const projectDurationDays = Number(data.duration) || 1;
   
   // DEBUG: Log the project duration to verify it's correct
-  console.log('Option Node - Project Duration:', {
+  debugLog('Project Duration:', {
     rawDuration: data.duration,
     calculatedDays: projectDurationDays,
     nodeId: id
@@ -97,20 +150,55 @@ export const OptionNode = memo(function OptionNode({ id, data, selected }: NodeP
       option.connectedTeams,
       option.processedTeamAllocations,
       projectDurationDays,
-      formatMemberName
+      (memberId: string, memberData?: { title?: string }) => formatMemberName(memberId, getNodes(), memberData)
     );
   }, [
     option.connectedTeams, 
     option.processedTeamAllocations, 
-    projectDurationDays, 
-    formatMemberName,
-    resourceAllocation.calculateMemberAllocations
+    projectDurationDays,
+    resourceAllocation,
+    getNodes
   ]);
   
   // Calculate cost summary
   const costSummary = useMemo(() => {
     return resourceAllocation.calculateCostSummary(memberAllocations);
-  }, [memberAllocations, resourceAllocation.calculateCostSummary]);
+  }, [memberAllocations, resourceAllocation]);
+  
+  // Adapter function to match the expected type for TeamAllocation's formatMemberName
+  const formatMemberNameForTeam = (id: string, member: AvailableMember): string => {
+    return member.name || formatMemberName(id, getNodes(), { title: member.name });
+  };
+  
+  // Convert MemberAllocationData[] to MemberCost[]
+  const convertAllocationsToCostArray = (allocations: LocalMemberAllocationData[]): MemberCost[] => {
+    return allocations.map(allocation => ({
+      memberId: allocation.memberId,
+      name: allocation.name || '',
+      hours: allocation.hours,
+      hourlyRate: allocation.hourlyRate || 0,
+      cost: allocation.cost || 0
+    }));
+  };
+  
+  // Convert memberAllocations to use the correct MemberCapacity type
+  const convertMemberAllocations = (allocations: Map<string, LocalMemberAllocationData>): Map<string, ImportedMemberAllocationData> => {
+    const result = new Map<string, ImportedMemberAllocationData>();
+    
+    allocations.forEach((allocation, key) => {
+      const converted: ImportedMemberAllocationData = {
+        ...allocation,
+        memberCapacity: allocation.memberCapacity ? {
+          hoursPerDay: allocation.memberCapacity as number,
+          daysPerWeek: 5, // Default value
+        } : undefined,
+        cost: allocation.cost || 0, // Ensure cost is defined
+      };
+      result.set(key, converted);
+    });
+    
+    return result;
+  };
   
   return (
     <BaseNode selected={selected} className="w-[400px]">
@@ -302,9 +390,9 @@ export const OptionNode = memo(function OptionNode({ id, data, selected }: NodeP
               key={team.teamId}
               team={team}
               teamAllocation={option.processedTeamAllocations.find((a: ITeamAllocation) => a.teamId === team.teamId)}
-              memberAllocations={memberAllocations}
+              memberAllocations={convertMemberAllocations(memberAllocations)}
               projectDurationDays={projectDurationDays}
-              formatMemberName={formatMemberName}
+              formatMemberName={formatMemberNameForTeam}
               onMemberValueChange={(teamId, memberId, hours) => {
                 resourceAllocation.handleAllocationChangeLocal(teamId, memberId, hours);
               }}
@@ -316,9 +404,9 @@ export const OptionNode = memo(function OptionNode({ id, data, selected }: NodeP
         </div>
 
         {/* Cost Receipt Section */}
-        {costSummary.allocations.length > 0 && (
-          <CostReceipt 
-            allocations={costSummary.allocations}
+        {costSummary && costSummary.allocations.length > 0 && (
+          <CostReceipt
+            allocations={convertAllocationsToCostArray(costSummary.allocations)}
             totalCost={costSummary.totalCost}
             totalHours={costSummary.totalHours}
             totalDays={costSummary.totalDays}

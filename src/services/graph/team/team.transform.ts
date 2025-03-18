@@ -15,7 +15,7 @@ export function reactFlowToNeo4j(teamNode: RFTeamNode): Neo4jTeamNodeData {
         JSON.parse(data.season);
         // If it parses successfully, use it as is
         seasonValue = data.season;
-      } catch (e) {
+      } catch {
         // If it's not valid JSON, stringify it
         seasonValue = JSON.stringify(data.season);
       }
@@ -29,7 +29,7 @@ export function reactFlowToNeo4j(teamNode: RFTeamNode): Neo4jTeamNodeData {
   let rosterValue = undefined;
   if (data.roster) {
     // First, ensure we have the roster as an array
-    let rosterArray: any[] = [];
+    let rosterArray: RosterMember[] = [];
     
     if (typeof data.roster === 'string') {
       try {

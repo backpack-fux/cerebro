@@ -7,6 +7,16 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
+    "lint:bun": "bunx eslint ./src/**/*.ts ./src/**/*.tsx",
+    "lint:bun:fix": "bunx eslint ./src/**/*.ts ./src/**/*.tsx --fix",
+    "lint:graph": "bunx eslint ./src/services/graph/**/*.ts",
+    "lint:graph:fix": "bunx eslint ./src/services/graph/**/*.ts --fix",
+    "lint:provider": "bunx eslint ./src/services/graph/provider/**/*.ts",
+    "lint:team": "bunx eslint ./src/services/graph/team/**/*.ts",
+    "lint:option": "bunx eslint ./src/services/graph/option/**/*.ts",
+    "lint:neo4j": "bunx eslint ./src/services/graph/neo4j/**/*.ts",
+    "lint:api": "bunx eslint ./src/app/api/**/*.ts",
+    "lint:api:fix": "bunx eslint ./src/app/api/**/*.ts --fix",
     "unfuck": "rm -rf .next && rm -rf node_modules && rm -rf package-lock.json rm -rf bun.lockb && bun i"
   },
   "dependencies": {

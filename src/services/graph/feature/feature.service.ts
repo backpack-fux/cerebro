@@ -1,7 +1,7 @@
 import { IGraphStorage } from '@/services/graph/neo4j/graph.interface';
-import { RFFeatureNode, RFFeatureNodeData, CreateFeatureNodeParams, UpdateFeatureNodeParams, RFFeatureEdge, MemberAllocation, TeamAllocation, Neo4jFeatureNodeData, BuildType, TimeUnit } from '@/services/graph/feature/feature.types';
-import { reactFlowToNeo4jEdge, neo4jToReactFlowEdge, reactFlowToNeo4j, neo4jToReactFlow } from '@/services/graph/feature/feature.transform';
-import { connectFeatureToTeam, disconnectFeatureFromTeam, updateFeatureResourceAllocation, getFeatureMemberAvailableHours } from './feature-resource-integration';
+import { RFFeatureNode, RFFeatureNodeData, CreateFeatureNodeParams, UpdateFeatureNodeParams, RFFeatureEdge, TeamAllocation } from '@/services/graph/feature/feature.types';
+import { reactFlowToNeo4jEdge, neo4jToReactFlowEdge, reactFlowToNeo4j } from '@/services/graph/feature/feature.transform';
+import { connectFeatureToTeam, disconnectFeatureFromTeam, updateFeatureResourceAllocation, getFeatureMemberAvailableHours, ResourceUpdateData } from './feature-resource-integration';
 
 export class FeatureService {
   constructor(private storage: IGraphStorage<RFFeatureNodeData>) {}
@@ -527,7 +527,7 @@ export class FeatureService {
   /**
    * Handle team resource updates from the observer
    */
-  private async handleTeamResourceUpdate(featureId: string, teamId: string, data: any) {
+  private async handleTeamResourceUpdate(featureId: string, teamId: string, data: ResourceUpdateData) {
     console.log(`[FeatureService] Received resource update for feature ${featureId} from team ${teamId}`);
     
     try {
@@ -567,7 +567,7 @@ export class FeatureService {
           // Update each member's available hours
           for (let i = 0; i < allocatedMembers.length; i++) {
             const member = allocatedMembers[i];
-            const memberResource = data.memberResources.find((m: any) => m.memberId === member.memberId);
+            const memberResource = data.memberResources?.find(m => m.memberId === member.memberId);
             
             if (memberResource) {
               // Calculate available hours for this member
@@ -576,7 +576,13 @@ export class FeatureService {
                 featureId,
                 teamId,
                 member.memberId,
-                memberResource,
+                // Ensure required properties are present for TeamMemberData
+                {
+                  hoursPerDay: memberResource.hoursPerDay || 8,
+                  daysPerWeek: memberResource.daysPerWeek || 5,
+                  weeklyCapacity: memberResource.weeklyCapacity,
+                  allocation: memberResource.allocation
+                },
                 projectDurationDays
               );
               
@@ -602,5 +608,12 @@ export class FeatureService {
     } catch (error) {
       console.error(`[FeatureService] Error handling resource update for feature ${featureId} from team ${teamId}:`, error);
     }
+  }
+
+  // Add getById method to retrieve a node by ID
+  async getById(id: string): Promise<RFFeatureNode | null> {
+    const node = await this.storage.getNode(id);
+    if (!node) return null;
+    return node as RFFeatureNode;
   }
 } 

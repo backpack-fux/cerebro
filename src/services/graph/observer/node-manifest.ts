@@ -159,7 +159,7 @@ export function getFieldDetails(nodeType: string, fieldId: string): DataField | 
  */
 export function getSubscribersForField(publisherType: string, fieldId: string): string[] {
   return Object.entries(NodeManifests)
-    .filter(([nodeType, manifest]) => {
+    .filter(([, manifest]) => {
       // Check if this node type subscribes to the publisher
       if (!manifest.subscribes.nodeTypes.includes(publisherType as NodeType)) {
         return false;

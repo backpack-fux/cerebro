@@ -1,9 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { FeatureService } from '@/services/graph/feature/feature.service';
-import { neo4jStorage } from '@/services/graph/neo4j/neo4j.provider';
+import { featureService } from '@/services/graph/neo4j/neo4j.provider';
 
-// Initialize the feature service
-const featureService = new FeatureService(neo4jStorage);
+// Use the pre-instantiated featureService from the provider
+// No need to create a new instance with neo4jStorage
 
 // GET /api/graph/feature/edge/[id] - Get a feature edge by ID
 export async function GET(request: NextRequest) {
@@ -53,9 +52,10 @@ export async function GET(request: NextRequest) {
     
     // Check if it's a Neo4j-specific error
     if (error && typeof error === 'object' && 'code' in error) {
+      const neo4jError = error as { code: string; message: string };
       console.error('[API] Neo4j error details:', {
-        code: (error as any).code,
-        message: (error as any).message
+        code: neo4jError.code,
+        message: neo4jError.message
       });
     }
     
@@ -125,9 +125,10 @@ export async function PATCH(request: NextRequest) {
     
     // Check if it's a Neo4j-specific error
     if (error && typeof error === 'object' && 'code' in error) {
+      const neo4jError = error as { code: string; message: string };
       console.error('[API] Neo4j error details:', {
-        code: (error as any).code,
-        message: (error as any).message
+        code: neo4jError.code,
+        message: neo4jError.message
       });
     }
     
@@ -183,9 +184,10 @@ export async function DELETE(request: NextRequest) {
     
     // Check if it's a Neo4j-specific error
     if (error && typeof error === 'object' && 'code' in error) {
+      const neo4jError = error as { code: string; message: string };
       console.error('[API] Neo4j error details:', {
-        code: (error as any).code,
-        message: (error as any).message
+        code: neo4jError.code,
+        message: neo4jError.message
       });
     }
     

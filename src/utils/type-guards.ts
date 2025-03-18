@@ -1,14 +1,22 @@
 import { Node } from '@xyflow/react';
 
-// Define common node data types
+// Define common node data types with more specific type definitions
 export interface TeamNodeData extends Record<string, unknown> {
   title: string;
-  roster: Array<any>;
+  roster: Array<RosterMember>;
   season?: {
     startDate: string;
     endDate: string;
     name: string;
   };
+}
+
+// Define RosterMember type to replace Array<any>
+export interface RosterMember {
+  memberId: string;
+  name?: string;
+  weeklyCapacity?: number;
+  allocation?: number;
 }
 
 export interface MemberNodeData extends Record<string, unknown> {
@@ -20,10 +28,21 @@ export interface MemberNodeData extends Record<string, unknown> {
   startDate?: string;
 }
 
+// Define TeamAllocation type to replace Array<any>
+export interface TeamAllocation {
+  teamId: string;
+  requestedHours?: number;
+  allocatedHours?: number;
+  allocatedMembers?: Array<{
+    memberId: string;
+    hours: number;
+  }>;
+}
+
 export interface FeatureNodeData extends Record<string, unknown> {
   title: string;
   description?: string;
-  teamAllocations?: Array<any> | string;
+  teamAllocations?: Array<TeamAllocation> | string;
   duration?: number;
   startDate?: string;
   endDate?: string;
@@ -32,19 +51,39 @@ export interface FeatureNodeData extends Record<string, unknown> {
 export interface OptionNodeData extends Record<string, unknown> {
   title: string;
   description?: string;
-  teamAllocations?: Array<any> | string;
+  teamAllocations?: Array<TeamAllocation> | string;
   duration?: number;
   startDate?: string;
   endDate?: string;
 }
 
+// Define Cost and DDItem types to replace Array<any>
+export interface Cost {
+  id: string;
+  name: string;
+  costType: string;
+  details: {
+    type: string;
+    amount: number;
+    frequency?: string;
+  };
+}
+
+export interface DDItem {
+  id: string;
+  name: string;
+  status: string;
+  notes?: string;
+  dueDate?: string;
+}
+
 export interface ProviderNodeData extends Record<string, unknown> {
   title: string;
   description?: string;
-  teamAllocations?: Array<any> | string;
+  teamAllocations?: Array<TeamAllocation> | string;
   duration?: number;
-  costs?: Array<any>;
-  ddItems?: Array<any>;
+  costs?: Array<Cost>;
+  ddItems?: Array<DDItem>;
 }
 
 /**
@@ -110,9 +149,12 @@ export function isProviderNode(node: Node | null | undefined): node is Node<Prov
 
 /**
  * Generic type guard for checking if a value is a specific type
+ * @param value The value to check
+ * @param propertyNames Array of property names that should exist on the type
+ * @returns Boolean indicating if the value matches the type
  */
 export function isOfType<T>(
-  value: any, 
+  value: unknown, 
   propertyNames: Array<keyof T>
 ): value is T {
   if (!value || typeof value !== 'object') return false;

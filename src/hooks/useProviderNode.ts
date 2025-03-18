@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useReactFlow } from "@xyflow/react";
+import { useReactFlow, Edge } from "@xyflow/react";
 import { toast } from "sonner";
 import { GraphApiClient } from '@/services/graph/neo4j/api-client';
 import { NodeType } from '@/services/graph/neo4j/api-urls';
@@ -11,28 +11,32 @@ import {
   DDItem
 } from '@/services/graph/provider/provider.types';
 import { useTeamAllocation } from "@/hooks/useTeamAllocation";
-import { useNodeStatus } from "@/hooks/useNodeStatus";
+import { useNodeStatus, NodeStatus } from "@/hooks/useNodeStatus";
 import { useDurationInput } from "@/hooks/useDurationInput";
 import { useResourceAllocation } from "@/hooks/useResourceAllocation";
 import { v4 as uuidv4 } from 'uuid';
 import { prepareDataForBackend, parseDataFromBackend, parseJsonIfString } from "@/utils/utils";
 import { isProviderNode } from "@/utils/type-guards";
 import { TeamAllocation } from "@/utils/types/allocation";
-import { calculateCalendarDuration } from "@/utils/time/calendar";
 import { useNodeObserver } from '@/hooks/useNodeObserver';
+
+// Extend RFProviderNodeData to ensure status is of type NodeStatus
+interface ExtendedRFProviderNodeData extends RFProviderNodeData {
+  status?: NodeStatus;
+}
 
 /**
  * Hook for managing provider node state and operations
  * Handles provider-specific functionality like costs and due diligence items
  */
-export function useProviderNode(id: string, data: RFProviderNodeData) {
-  const { getNodes, setNodes, getEdges, setEdges, updateNodeData } = useReactFlow();
+export function useProviderNode(id: string, data: ExtendedRFProviderNodeData) {
+  const { getNodes, setNodes, setEdges, updateNodeData } = useReactFlow();
   
   // Initialize node observer
-  const { publishUpdate, publishManifestUpdate, subscribeBasedOnManifest } = useNodeObserver<RFProviderNodeData>(id, 'provider');
+  const { publishManifestUpdate, subscribeBasedOnManifest } = useNodeObserver<RFProviderNodeData>(id, 'provider');
   
   // Define JSON fields that need special handling
-  const jsonFields = ['costs', 'ddItems', 'teamAllocations', 'memberAllocations'];
+  const jsonFields = useMemo(() => ['costs', 'ddItems', 'teamAllocations', 'memberAllocations'], []);
   
   // Parse complex objects if they are strings
   const parsedData = useMemo(() => {
@@ -115,7 +119,10 @@ export function useProviderNode(id: string, data: RFProviderNodeData) {
   const teamAllocationHook = useTeamAllocation(id, parsedData);
   
   // Add the saveTeamAllocationsToBackend function to the teamAllocationHook
-  (teamAllocationHook as any).saveTeamAllocationsToBackend = saveTeamAllocationsToBackend;
+  const enhancedTeamAllocationHook = teamAllocationHook as unknown as typeof teamAllocationHook & {
+    saveTeamAllocationsToBackend: typeof saveTeamAllocationsToBackend
+  };
+  enhancedTeamAllocationHook.saveTeamAllocationsToBackend = saveTeamAllocationsToBackend;
   
   // Extract the processed team allocations from the hook
   const teamAllocationsFromHook = teamAllocationHook.processedTeamAllocations;
@@ -132,7 +139,7 @@ export function useProviderNode(id: string, data: RFProviderNodeData) {
   // Use the node status hook to manage status
   const { status, getStatusColor, cycleStatus } = useNodeStatus(
     id, 
-    parsedData, 
+    parsedData as ExtendedRFProviderNodeData, 
     updateNodeData, 
     {
       canBeActive: true,
@@ -296,18 +303,18 @@ export function useProviderNode(id: string, data: RFProviderNodeData) {
       .then(() => {
         setNodes((nodes) => nodes.filter((node) => node.id !== id));
         
-        setEdges((edges) => {
+        setEdges((edges: Edge[]) => {
           // Find connected edges
-          const connectedEdges = edges.filter((edge) => edge.source === id || edge.target === id);
+          const connectedEdges = edges.filter((edge: Edge) => edge.source === id || edge.target === id);
           
           // Try to delete each edge from backend
-          connectedEdges.forEach((edge) => {
+          connectedEdges.forEach((edge: Edge) => {
             GraphApiClient.deleteEdge('provider' as NodeType, edge.id)
               .catch((error) => console.error(`Failed to delete edge ${edge.id}:`, error));
           });
           
           // Remove edges from React Flow
-          return edges.filter((edge) => edge.source !== id && edge.target !== id);
+          return edges.filter((edge: Edge) => edge.source !== id && edge.target !== id);
         });
         
         toast.success("Provider successfully deleted");
@@ -345,26 +352,42 @@ export function useProviderNode(id: string, data: RFProviderNodeData) {
       // Use the GraphApiClient to fetch node data
       const serverData = await GraphApiClient.getNode('provider' as NodeType, id);
       
+      // Type-check and assert the shape of the returned data
+      if (!serverData || typeof serverData !== 'object') {
+        throw new Error('Invalid server data received');
+      }
+      
+      // Create a properly typed server data object
+      const typedServerData = serverData as {
+        title?: string;
+        description?: string;
+        duration?: number;
+        costs?: string | ProviderCost[];
+        ddItems?: string | DDItem[];
+        teamAllocations?: string | TeamAllocation[];
+        status?: string;
+      };
+      
       // Process costs and due diligence items
-      const processedCosts = parseJsonIfString<ProviderCost[]>(serverData.data.costs, []);
-      const processedDDItems = parseJsonIfString<DDItem[]>(serverData.data.ddItems, []);
-      const processedTeamAllocations = parseJsonIfString<TeamAllocation[]>(serverData.data.teamAllocations, []);
+      const processedCosts = parseJsonIfString<ProviderCost[]>(typedServerData.costs, []);
+      const processedDDItems = parseJsonIfString<DDItem[]>(typedServerData.ddItems, []);
+      const processedTeamAllocations = parseJsonIfString<TeamAllocation[]>(typedServerData.teamAllocations, []);
       
       // Update local state
-      setTitle(serverData.data.title || '');
-      setDescription(serverData.data.description || '');
+      setTitle(typedServerData.title || '');
+      setDescription(typedServerData.description || '');
       setCosts(processedCosts);
       setDDItems(processedDDItems);
       
       // Update node data in ReactFlow
       updateNodeData(id, {
         ...parsedData,
-        title: serverData.data.title || parsedData.title,
-        description: serverData.data.description || parsedData.description,
+        title: typedServerData.title || parsedData.title,
+        description: typedServerData.description || parsedData.description,
         costs: processedCosts,
         ddItems: processedDDItems,
         teamAllocations: processedTeamAllocations,
-        duration: serverData.data.duration || parsedData.duration
+        duration: typedServerData.duration || parsedData.duration
       });
       
       console.log(`Successfully refreshed provider data for ${id}`);

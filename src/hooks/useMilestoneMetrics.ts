@@ -407,7 +407,7 @@ export function useMilestoneMetrics(nodeId: string) {
     });
 
     return metrics;
-  }, [connections, getNodes, updateCounter, getConnectedNodes]);
+  }, [getNodes, updateCounter, getConnectedNodes]);
 
   useEffect(() => {
     const saveMetricsToBackend = async () => {

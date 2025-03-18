@@ -4,14 +4,37 @@ import {
   RFTeamNodeData, 
   CreateTeamNodeParams, 
   UpdateTeamNodeParams, 
-  RFTeamEdge, 
-  Neo4jTeamNodeData } from '@/services/graph/team/team.types';
-import { reactFlowToNeo4jEdge, neo4jToReactFlowEdge, reactFlowToNeo4j, neo4jToReactFlow } from '@/services/graph/team/team.transform';
+  RFTeamEdge } from '@/services/graph/team/team.types';
+import { reactFlowToNeo4jEdge, neo4jToReactFlowEdge, reactFlowToNeo4j } from '@/services/graph/team/team.transform';
 import { initializeTeamResources, setupTeamResourcePublishing, updateTeamRoster } from './team-resource-integration';
 import { teamResourceObserver } from '../observer/team-resource-observer';
 
+// Helper function to parse a team roster
+const parseTeamRoster = (team: RFTeamNode) => {
+  let roster = [];
+  try {
+    if (typeof team.data.roster === 'string') {
+      roster = JSON.parse(team.data.roster);
+    } else if (Array.isArray(team.data.roster)) {
+      roster = team.data.roster;
+    }
+  } catch (error) {
+    console.error('[TeamService] Error parsing roster:', error);
+  }
+  return roster;
+};
+
 export class TeamService {
   constructor(private storage: IGraphStorage<RFTeamNodeData>) {}
+
+  // Helper function to update team resources
+  private async updateTeamResources(teamId: string): Promise<void> {
+    const updatedTeam = await this.getNode(teamId);
+    if (updatedTeam) {
+      const roster = parseTeamRoster(updatedTeam);
+      updateTeamRoster(teamId, roster);
+    }
+  }
 
   async create(params: CreateTeamNodeParams): Promise<RFTeamNode> {
     console.log('[TeamService] Creating team node:', params);
@@ -275,23 +298,7 @@ export class TeamService {
       });
       
       // After successfully adding the team member, update the team's roster
-      const updatedTeam = await this.getNode(teamId);
-      if (updatedTeam) {
-        // Parse the roster
-        let roster = [];
-        try {
-          if (typeof updatedTeam.data.roster === 'string') {
-            roster = JSON.parse(updatedTeam.data.roster);
-          } else if (Array.isArray(updatedTeam.data.roster)) {
-            roster = updatedTeam.data.roster;
-          }
-        } catch (error) {
-          console.error('[TeamService] Error parsing roster:', error);
-        }
-        
-        // Update team resources with the new roster
-        updateTeamRoster(teamId, roster);
-      }
+      await this.updateTeamResources(teamId);
       
       return this.createEdge(edge);
     } catch (error) {
@@ -326,23 +333,7 @@ export class TeamService {
       });
       
       // After successfully removing the team member, update the team's roster
-      const updatedTeam = await this.getNode(teamId);
-      if (updatedTeam) {
-        // Parse the roster
-        let roster = [];
-        try {
-          if (typeof updatedTeam.data.roster === 'string') {
-            roster = JSON.parse(updatedTeam.data.roster);
-          } else if (Array.isArray(updatedTeam.data.roster)) {
-            roster = updatedTeam.data.roster;
-          }
-        } catch (error) {
-          console.error('[TeamService] Error parsing roster:', error);
-        }
-        
-        // Update team resources with the new roster
-        updateTeamRoster(teamId, roster);
-      }
+      await this.updateTeamResources(teamId);
     } catch (error) {
       console.error(`[TeamService] Error removing team member ${memberId} from team ${teamId}:`, error);
       throw error;
@@ -384,23 +375,7 @@ export class TeamService {
       }
       
       // After successfully updating the allocation, update the team's roster
-      const updatedTeam = await this.getNode(teamId);
-      if (updatedTeam) {
-        // Parse the roster
-        let roster = [];
-        try {
-          if (typeof updatedTeam.data.roster === 'string') {
-            roster = JSON.parse(updatedTeam.data.roster);
-          } else if (Array.isArray(updatedTeam.data.roster)) {
-            roster = updatedTeam.data.roster;
-          }
-        } catch (error) {
-          console.error('[TeamService] Error parsing roster:', error);
-        }
-        
-        // Update team resources with the new roster
-        updateTeamRoster(teamId, roster);
-      }
+      await this.updateTeamResources(teamId);
     } catch (error) {
       console.error(`[TeamService] Error updating allocation for team member ${memberId} in team ${teamId}:`, error);
       throw error;

@@ -50,7 +50,7 @@ export interface RFFeatureNodeData extends ReactFlowNodeBase {
   position?: XYPosition;
 }
 
-export interface RFFeatureNode extends Node<RFFeatureNodeData> {}
+export type RFFeatureNode = Node<RFFeatureNodeData>;
 
 // Service types for Neo4j operations
 export type CreateFeatureNodeParams = {

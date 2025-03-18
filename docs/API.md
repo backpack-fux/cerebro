@@ -372,4 +372,210 @@ interface UpdateMetadata {
   timestamp?: number;
   userId?: string;
 }
+```
+
+## Edge Operations
+
+### Milestone Edges
+
+#### Get Milestone Edge by ID
+
+```http
+GET /graph/milestone/edges/{id}
+```
+
+Retrieves a specific milestone edge by its ID.
+
+**Response**
+
+```json
+{
+  "id": "string",
+  "source": "string",
+  "target": "string",
+  "type": "dependency|related|string",
+  "data": {
+    "label": "string",
+    "edgeType": "string"
+  }
+}
+```
+
+#### Update Milestone Edge
+
+```http
+PATCH /graph/milestone/edges/{id}
+Content-Type: application/json
+
+{
+  "data": {
+    "label": "string",
+    "edgeType": "string"
+  }
+}
+```
+
+Updates an existing milestone edge.
+
+**Response**
+
+```json
+{
+  "id": "string",
+  "source": "string",
+  "target": "string",
+  "type": "dependency|related|string",
+  "data": {
+    "label": "string",
+    "edgeType": "string"
+  }
+}
+```
+
+#### Delete Milestone Edge
+
+```http
+DELETE /graph/milestone/edges/{id}
+```
+
+Deletes a milestone edge.
+
+**Response**
+
+```json
+{
+  "success": true
+}
+```
+
+### Provider Edges
+
+#### Get All Provider Edges
+
+```http
+GET /graph/provider/{id}/edge?type={edgeType}
+```
+
+Retrieves all edges connected to a provider. Optionally filter by edge type.
+
+**Response**
+
+```json
+[
+  {
+    "id": "string",
+    "source": "string",
+    "target": "string",
+    "type": "PROVIDER_TEAM|PROVIDER_FEATURE|PROVIDER_DEPENDENCY|string",
+    "data": {
+      "label": "string",
+      "edgeType": "string",
+      "allocation": 0
+    }
+  }
+]
+```
+
+#### Create Provider Edge
+
+```http
+POST /graph/provider/{id}/edge
+Content-Type: application/json
+
+{
+  "target": "string",
+  "type": "PROVIDER_TEAM|PROVIDER_FEATURE|PROVIDER_DEPENDENCY|string",
+  "data": {
+    "label": "string",
+    "allocation": 0
+  }
+}
+```
+
+Creates a new edge connected to a provider.
+
+**Response**
+
+```json
+{
+  "id": "string",
+  "source": "string",
+  "target": "string",
+  "type": "PROVIDER_TEAM|PROVIDER_FEATURE|PROVIDER_DEPENDENCY|string",
+  "data": {
+    "label": "string",
+    "edgeType": "string",
+    "allocation": 0
+  }
+}
+```
+
+#### Get Provider Edge by ID
+
+```http
+GET /graph/provider/edge/{id}
+```
+
+Retrieves a specific provider edge by its ID.
+
+**Response**
+
+```json
+{
+  "id": "string",
+  "source": "string",
+  "target": "string",
+  "type": "PROVIDER_TEAM|PROVIDER_FEATURE|PROVIDER_DEPENDENCY|string",
+  "data": {
+    "label": "string",
+    "edgeType": "string",
+    "allocation": 0
+  }
+}
+```
+
+#### Update Provider Edge
+
+```http
+PATCH /graph/provider/edge/{id}
+Content-Type: application/json
+
+{
+  "label": "string",
+  "allocation": 0
+}
+```
+
+Updates an existing provider edge.
+
+**Response**
+
+```json
+{
+  "id": "string",
+  "source": "string",
+  "target": "string",
+  "type": "PROVIDER_TEAM|PROVIDER_FEATURE|PROVIDER_DEPENDENCY|string",
+  "data": {
+    "label": "string",
+    "edgeType": "string",
+    "allocation": 0
+  }
+}
+```
+
+#### Delete Provider Edge
+
+```http
+DELETE /graph/provider/edge/{id}
+```
+
+Deletes a provider edge.
+
+**Response**
+
+```json
+{
+  "success": true
+}
 ``` 

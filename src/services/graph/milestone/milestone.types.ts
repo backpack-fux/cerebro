@@ -50,7 +50,7 @@ export interface RFMilestoneNodeData extends ReactFlowNodeBase {
   providerDetails?: ProviderCostSummary[];
 }
 
-export interface RFMilestoneNode extends Node<RFMilestoneNodeData> {}
+export type RFMilestoneNode = Node<RFMilestoneNodeData>;
 
 // Service types for Neo4j operations
 export type CreateMilestoneNodeParams = {

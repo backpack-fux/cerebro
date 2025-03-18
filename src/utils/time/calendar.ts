@@ -1,4 +1,4 @@
-import { parseISO, differenceInDays, format, addDays } from 'date-fns';
+import { format, addDays } from 'date-fns';
 
 // Use a consistent date for the application
 // This allows us to test with future dates
@@ -129,11 +129,11 @@ export function doTimePeriodsOverlap(
 }
 
 /**
- * Gets default start and end dates based on team season
- * @param season Team season data
+ * Get default timeframe for allocations, using season if available
+ * @param season Optional season data with startDate and endDate
  * @returns Default start and end dates for new allocations
  */
-export function getDefaultTimeframe(season: any): { startDate: string; endDate: string } {
+export function getDefaultTimeframe(season: { startDate?: string; endDate?: string } | null | undefined): { startDate: string; endDate: string } {
   // Check if season has valid startDate and endDate strings
   if (season && typeof season.startDate === 'string' && typeof season.endDate === 'string') {
     return {

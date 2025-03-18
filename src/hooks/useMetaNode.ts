@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useReactFlow, useEdges } from "@xyflow/react";
 import { toast } from "sonner";
-import { RFMetaNode, RFMetaNodeData } from '@/services/graph/meta/meta.types';
-import { API_URLS, NodeType } from '@/services/graph/neo4j/api-urls';
+import { RFMetaNodeData } from '@/services/graph/meta/meta.types';
+import { API_URLS } from '@/services/graph/neo4j/api-urls';
 import { prepareDataForBackend, parseDataFromBackend } from "@/utils/utils";
 import { useNodeObserver } from '@/hooks/useNodeObserver';
 
@@ -15,10 +15,10 @@ export function useMetaNode(id: string, data: RFMetaNodeData) {
   const edges = useEdges();
   
   // Initialize node observer
-  const { publishUpdate, publishManifestUpdate, subscribeBasedOnManifest } = useNodeObserver<RFMetaNodeData>(id, 'meta');
+  const { publishManifestUpdate, subscribeBasedOnManifest } = useNodeObserver<RFMetaNodeData>(id, 'meta');
   
   // Define JSON fields that need special handling
-  const jsonFields: string[] = ['tags', 'relatedLinks'];
+  const jsonFields = useMemo(() => ['tags', 'relatedLinks'], []);
   
   // Parse complex objects if they are strings
   const parsedData = useMemo(() => {

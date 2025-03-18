@@ -8,8 +8,105 @@
 import { integrateWithFeatureNode } from '../observer/team-resource-integration';
 import { RFFeatureNode } from './feature.types';
 
+/**
+ * Custom error class for feature integration errors
+ */
+export class FeatureIntegrationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'FeatureIntegrationError';
+  }
+}
+
+// Define the type of data expected by the integrateWithFeatureNode callback
+interface ObserverResourceUpdateData {
+  teamId: string;
+  totalBandwidth?: number;
+  availableBandwidth?: number;
+  memberResources?: unknown;
+  [key: string]: unknown;
+}
+
+/**
+ * Resource update data interface
+ */
+export interface ResourceUpdateData {
+  teamId: string;
+  teamBandwidth?: number;
+  availableBandwidth?: number;
+  memberAllocations?: Array<{
+    memberId: string;
+    name?: string;
+    availableHours?: number;
+    allocatedHours?: number;
+  }>;
+  memberResources?: Array<{
+    memberId: string;
+    name?: string;
+    availableHours?: number;
+    hoursPerDay?: number;
+    daysPerWeek?: number;
+    weeklyCapacity?: number;
+    allocation?: number;
+  }>;
+  [key: string]: unknown;
+}
+
+/**
+ * Team member data required for capacity calculations
+ */
+export interface TeamMemberData {
+  hoursPerDay: number;
+  daysPerWeek: number;
+  weeklyCapacity?: number;
+  allocation?: number;
+}
+
+/**
+ * Interface for the integration object returned by integrateWithFeatureNode
+ */
+export interface FeatureTeamIntegration {
+  /**
+   * Allocate resources to team members
+   * @param memberAllocations Array of member allocations with hours
+   * @param projectDurationDays Project duration in days
+   * @returns Result of allocation request
+   */
+  allocateResources: (
+    memberAllocations: Array<{
+      memberId: string;
+      name: string;
+      hours: number;
+    }>,
+    projectDurationDays: number
+  ) => unknown;
+  
+  /**
+   * Release allocated resources
+   */
+  releaseResources: () => void;
+  
+  /**
+   * Get available hours for a team member
+   * @param memberId The team member ID
+   * @param memberData The team member data
+   * @param projectDurationDays Project duration in days 
+   * @returns Available hours for the member
+   */
+  getAvailableHours: (
+    memberId: string,
+    memberData: TeamMemberData,
+    projectDurationDays: number
+  ) => number;
+  
+  /**
+   * Clean up the integration
+   */
+  cleanup: () => void;
+}
+
 // Map to store feature-team integrations
-const featureTeamIntegrations = new Map<string, Map<string, ReturnType<typeof integrateWithFeatureNode>>>();
+const featureTeamIntegrations = new Map<string, Map<string, FeatureTeamIntegration>>();
 
 /**
  * Connect a feature node to a team's resources
@@ -22,7 +119,7 @@ const featureTeamIntegrations = new Map<string, Map<string, ReturnType<typeof in
 export function connectFeatureToTeam(
   featureNode: RFFeatureNode,
   teamId: string,
-  onUpdate: (data: any) => void
+  onUpdate: (data: ResourceUpdateData) => void
 ) {
   const featureId = featureNode.id;
   
@@ -38,12 +135,31 @@ export function connectFeatureToTeam(
     return featureIntegrations.get(teamId)!;
   }
   
+  // Create a wrapper function to adapt between the different data formats
+  const observerUpdateCallback = (data: ObserverResourceUpdateData) => {
+    // Transform data from observer format to feature format
+    const featureData: ResourceUpdateData = {
+      teamId: data.teamId,
+      teamBandwidth: data.totalBandwidth,
+      availableBandwidth: data.availableBandwidth
+    };
+    
+    // Only include memberResources if present
+    if (data.memberResources) {
+      // Type assertion to match expected structure
+      featureData.memberResources = data.memberResources as ResourceUpdateData['memberResources'];
+    }
+    
+    // Call the original update function
+    onUpdate(featureData);
+  };
+  
   // Create new integration
   const integration = integrateWithFeatureNode(
     featureId,
     teamId,
     featureNode.data,
-    onUpdate
+    observerUpdateCallback
   );
   
   // Store the integration
@@ -97,6 +213,7 @@ export function disconnectFeatureFromTeam(featureId: string, teamId: string) {
  * @param memberAllocations Array of member allocations
  * @param projectDurationDays The project duration in days
  * @returns The result of the allocation request
+ * @throws {FeatureIntegrationError} If feature is not connected to the team
  */
 export function updateFeatureResourceAllocation(
   featureId: string,
@@ -110,14 +227,16 @@ export function updateFeatureResourceAllocation(
 ) {
   // Check if this feature has integrations
   if (!featureTeamIntegrations.has(featureId)) {
-    console.warn(`[FeatureResourceIntegration] Feature ${featureId} not connected to any team`);
+    const error = new FeatureIntegrationError(`Feature ${featureId} not connected to any team`);
+    console.warn(error.message);
     return null;
   }
   
   // Check if this feature is connected to this team
   const featureIntegrations = featureTeamIntegrations.get(featureId)!;
   if (!featureIntegrations.has(teamId)) {
-    console.warn(`[FeatureResourceIntegration] Feature ${featureId} not connected to team ${teamId}`);
+    const error = new FeatureIntegrationError(`Feature ${featureId} not connected to team ${teamId}`);
+    console.warn(error.message);
     return null;
   }
   
@@ -129,32 +248,35 @@ export function updateFeatureResourceAllocation(
 }
 
 /**
- * Get available hours for a team member in a feature node context
+ * Get available hours for a team member on a feature
  * 
- * @param featureId The ID of the feature node
- * @param teamId The ID of the team
- * @param memberId The ID of the team member
+ * @param featureId The feature ID
+ * @param teamId The team ID
+ * @param memberId The team member ID
  * @param memberData The team member data
  * @param projectDurationDays The project duration in days
- * @returns The available hours for the member
+ * @returns Available hours for the member
+ * @throws {FeatureIntegrationError} If feature is not connected to the team
  */
 export function getFeatureMemberAvailableHours(
   featureId: string,
   teamId: string,
   memberId: string,
-  memberData: any,
+  memberData: TeamMemberData,
   projectDurationDays: number
 ) {
   // Check if this feature has integrations
   if (!featureTeamIntegrations.has(featureId)) {
-    console.warn(`[FeatureResourceIntegration] Feature ${featureId} not connected to any team`);
+    const error = new FeatureIntegrationError(`Feature ${featureId} not connected to any team`);
+    console.warn(error.message);
     return 0;
   }
   
   // Check if this feature is connected to this team
   const featureIntegrations = featureTeamIntegrations.get(featureId)!;
   if (!featureIntegrations.has(teamId)) {
-    console.warn(`[FeatureResourceIntegration] Feature ${featureId} not connected to team ${teamId}`);
+    const error = new FeatureIntegrationError(`Feature ${featureId} not connected to team ${teamId}`);
+    console.warn(error.message);
     return 0;
   }
   

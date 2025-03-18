@@ -21,7 +21,7 @@ export function reactFlowToNeo4j(milestoneNode: RFMilestoneNode): Neo4jMilestone
         JSON.parse(data.featureAllocations);
         // If it parses successfully, use it as is
         featureAllocationsValue = data.featureAllocations;
-      } catch (error) {
+      } catch {
         // If it fails to parse, stringify it
         featureAllocationsValue = JSON.stringify(data.featureAllocations);
       }
@@ -40,7 +40,7 @@ export function reactFlowToNeo4j(milestoneNode: RFMilestoneNode): Neo4jMilestone
         JSON.parse(data.optionDetails);
         // If it parses successfully, use it as is
         optionDetailsValue = data.optionDetails;
-      } catch (error) {
+      } catch {
         // If it fails to parse, stringify it
         optionDetailsValue = JSON.stringify(data.optionDetails);
       }
@@ -59,7 +59,7 @@ export function reactFlowToNeo4j(milestoneNode: RFMilestoneNode): Neo4jMilestone
         JSON.parse(data.providerDetails);
         // If it parses successfully, use it as is
         providerDetailsValue = data.providerDetails;
-      } catch (error) {
+      } catch {
         // If it fails to parse, stringify it
         providerDetailsValue = JSON.stringify(data.providerDetails);
       }
@@ -104,7 +104,7 @@ export function neo4jToReactFlow(neo4jData: Neo4jMilestoneNodeData): RFMilestone
   const jsonFields = ['kpis', 'featureAllocations', 'optionDetails', 'providerDetails'];
   
   // Parse all JSON fields
-  const parsedData = parseDataFromBackend(neo4jData, jsonFields);
+  const parsedData = parseDataFromBackend(neo4jData as unknown as Record<string, unknown>, jsonFields);
   
   return {
     id: neo4jData.id, // Use the ID directly without adding a prefix
@@ -198,8 +198,8 @@ export function transformMilestoneNode(node: Neo4jNode): GraphNode<RFMilestoneNo
       } else if (Array.isArray(featureAllocations)) {
         parsedFeatureAllocations = featureAllocations as unknown as FeatureAllocationSummary[];
       }
-    } catch (error) {
-      console.error('Error parsing featureAllocations JSON:', error, { featureAllocations });
+    } catch {
+      console.error('Error parsing featureAllocations JSON:', { featureAllocations });
     }
   }
   
@@ -213,8 +213,8 @@ export function transformMilestoneNode(node: Neo4jNode): GraphNode<RFMilestoneNo
       } else if (Array.isArray(optionDetails)) {
         parsedOptionDetails = optionDetails as unknown as OptionRevenueSummary[];
       }
-    } catch (error) {
-      console.error('Error parsing optionDetails JSON:', error, { optionDetails });
+    } catch {
+      console.error('Error parsing optionDetails JSON:', { optionDetails });
     }
   }
   
@@ -228,8 +228,8 @@ export function transformMilestoneNode(node: Neo4jNode): GraphNode<RFMilestoneNo
       } else if (Array.isArray(providerDetails)) {
         parsedProviderDetails = providerDetails as unknown as ProviderCostSummary[];
       }
-    } catch (error) {
-      console.error('Error parsing providerDetails JSON:', error, { providerDetails });
+    } catch {
+      console.error('Error parsing providerDetails JSON:', { providerDetails });
     }
   }
 

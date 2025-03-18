@@ -10,20 +10,35 @@ import {
 import {
   TeamAllocation,
   MemberAllocation,
-  RosterMember,
   WorkAllocation,
   AvailableMember,
   CostSummary,
 } from '@/utils/types/allocation';
 import { calculateMemberAllocationDetails } from '@/utils/allocation/weekly';
 import { calculateCostSummary } from '@/utils/allocation/cost';
-import { calculateEffectiveCapacity } from '@/utils/allocation/capacity';
 import { calculateNodeMemberCapacity } from '@/utils/allocation/node-capacity';
 import {
   calculateCalendarDuration,
   getEndDateFromDuration
 } from '@/utils/time/calendar';
 import { GraphApiClient } from '@/services/graph/neo4j/api-client';
+
+// Define our own RosterMember interface to match the actual usage in the code
+interface TeamRosterMember {
+  memberId: string;
+  allocation: number;  // % of member's time allocated to team
+  allocations?: Array<WorkAllocation>;
+  startDate?: string;
+  name?: string;
+}
+
+// Type cast function to handle RosterMember with allocations 
+function asTeamRosterMember(member: unknown): TeamRosterMember {
+  if (!member || typeof member !== 'object') {
+    return { memberId: '', allocation: 0 };
+  }
+  return member as TeamRosterMember;
+}
 
 // Interface for connected teams returned by the hook
 export interface ConnectedTeam {
@@ -108,13 +123,15 @@ export function useTeamAllocation(nodeId: string, data: FeatureNodeData) {
         if (teamNode.data.roster) {
           try {
             // Parse the roster if it's a string
-            const roster = parseJsonIfString<RosterMember[]>(teamNode.data.roster, []);
+            const roster = parseJsonIfString<TeamRosterMember[]>(teamNode.data.roster, []);
             
             // Map the roster to available members
-            availableBandwidth = roster.map((member: any) => {
+            availableBandwidth = roster.map((member: TeamRosterMember) => {
               // Find the actual team member node to get the correct name and capacity
               const memberNode = nodes.find(n => n.id === member.memberId);
-              const memberName = memberNode?.data?.title || member.name || member.memberId.split('-')[0];
+              const memberName = memberNode?.data?.title || 
+                (typeof member.name === 'string' ? member.name : '') || 
+                member.memberId.split('-')[0];
               
               // Get the actual capacity values from the team member node
               const hoursPerDay = Number(memberNode?.data?.hoursPerDay) || 8;
@@ -137,7 +154,7 @@ export function useTeamAllocation(nodeId: string, data: FeatureNodeData) {
               // Use the shared utility function to calculate effective capacity
               const availableHours = calculateNodeMemberCapacity({
                 memberId: member.memberId,
-                name: memberName,
+                name: memberName as string,
                 weeklyCapacity,
                 hoursPerDay,
                 daysPerWeek,
@@ -148,16 +165,16 @@ export function useTeamAllocation(nodeId: string, data: FeatureNodeData) {
               
               return {
                 memberId: member.memberId,
-                name: memberName,
+                name: memberName as string, // Ensure name is explicitly a string
                 availableHours,
                 dailyRate: Number(memberNode?.data?.dailyRate) || 350,
                 hoursPerDay,
                 daysPerWeek,
                 weeklyCapacity,
                 allocation: teamAllocationPercentage // Add the team allocation percentage for reference
-              };
+              } as AvailableMember; // Explicitly cast to AvailableMember
             });
-          } catch (e) {
+          } catch {
             // Error handled silently, returns empty array
           }
         }
@@ -288,10 +305,10 @@ export function useTeamAllocation(nodeId: string, data: FeatureNodeData) {
     }
     
     // Get the team's roster
-    const roster = parseJsonIfString<RosterMember[]>(teamNode.data.roster, []);
+    const roster = parseJsonIfString<TeamRosterMember[]>(teamNode.data.roster, []);
     
     // Start with existing allocated members if updating an existing allocation
-    let allocatedMembers: Array<{ memberId: string; name?: string; hours: number }> = 
+    const allocatedMembers: Array<{ memberId: string; name?: string; hours: number }> = 
       existingAllocationIndex >= 0 
         ? [...currentAllocations[existingAllocationIndex].allocatedMembers]
         : [];
@@ -342,7 +359,7 @@ export function useTeamAllocation(nodeId: string, data: FeatureNodeData) {
             // Add new member
             allocatedMembers.push({
               memberId,
-              name,
+              name: name || '',
               hours
             });
           }
@@ -403,8 +420,12 @@ export function useTeamAllocation(nodeId: string, data: FeatureNodeData) {
     const updatedRoster = teamNode.data.roster.map(member => {
       if (member.memberId !== memberId) return member;
 
+      // Safely access allocations, defaulting to empty array if not present
+      const memberWithAllocations = asTeamRosterMember(member);
+      const memberAllocations = memberWithAllocations.allocations || [];
+      
       // Remove the allocation for this node
-      const updatedAllocations = member.allocations.filter((a: WorkAllocation) => a.nodeId !== nodeId);
+      const updatedAllocations = memberAllocations.filter((a: WorkAllocation) => a.nodeId !== nodeId);
       
       // Recalculate total utilization
       const totalUtilization = updatedAllocations.reduce((sum: number, allocation: WorkAllocation) => 
@@ -517,13 +538,17 @@ export function useTeamAllocation(nodeId: string, data: FeatureNodeData) {
     const updatedRoster = teamNode.data.roster.map(member => {
       if (member.memberId !== memberId) return member;
 
+      // Cast to our extended type
+      const memberWithAllocations = asTeamRosterMember(member);
+      const memberAllocations = memberWithAllocations.allocations || [];
+
       // Find existing allocation for this node
-      const existingAllocationIndex = member.allocations.findIndex((a: WorkAllocation) => a.nodeId === nodeId);
+      const existingAllocationIndex = memberAllocations.findIndex((a: WorkAllocation) => a.nodeId === nodeId);
       
-      let updatedAllocations;
+      let updatedAllocations: WorkAllocation[];
       if (existingAllocationIndex >= 0) {
         // Update existing allocation
-        updatedAllocations = [...member.allocations];
+        updatedAllocations = [...memberAllocations];
         updatedAllocations[existingAllocationIndex] = {
           nodeId,
           percentage: allocationDetails.percentage,
@@ -534,7 +559,7 @@ export function useTeamAllocation(nodeId: string, data: FeatureNodeData) {
       } else {
         // Add new allocation
         updatedAllocations = [
-          ...member.allocations,
+          ...memberAllocations,
           {
             nodeId,
             percentage: allocationDetails.percentage,
@@ -579,7 +604,7 @@ export function useTeamAllocation(nodeId: string, data: FeatureNodeData) {
     
     if (teamAllocationIndex >= 0) {
       // Create updated member allocation with only the required fields
-      const updatedMemberAllocation = {
+      const updatedMemberAllocation: MemberAllocation = {
         memberId,
         name: memberNode.data.title || '',
         hours
@@ -587,9 +612,11 @@ export function useTeamAllocation(nodeId: string, data: FeatureNodeData) {
 
       // Update or add the member allocation
       const existingTeamAllocation = teamAllocationsArray[teamAllocationIndex];
-      const memberIndex = existingTeamAllocation.allocatedMembers.findIndex((m: MemberAllocation) => m.memberId === memberId);
+      const memberIndex = existingTeamAllocation.allocatedMembers.findIndex(
+        (m: MemberAllocation) => m.memberId === memberId
+      );
       
-      let updatedMembers;
+      let updatedMembers: MemberAllocation[];
       if (memberIndex >= 0) {
         // Update existing member
         updatedMembers = [...existingTeamAllocation.allocatedMembers];
@@ -600,7 +627,10 @@ export function useTeamAllocation(nodeId: string, data: FeatureNodeData) {
       }
       
       // Calculate new total requested hours
-      const totalRequestedHours = updatedMembers.reduce((sum: number, m: MemberAllocation) => sum + (m.hours || 0), 0);
+      const totalRequestedHours = updatedMembers.reduce(
+        (sum: number, m: MemberAllocation) => sum + (m.hours || 0), 
+        0
+      );
       
       // Update the team allocations with only the required fields
       const updatedTeamAllocations = teamAllocationsArray.map((a: TeamAllocation) => {

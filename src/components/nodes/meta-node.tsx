@@ -18,7 +18,7 @@ import { Textarea } from '@/components/ui/textarea';
  * MetaNode component for displaying and editing meta information
  * Uses useMetaNode hook for domain logic and state management
  */
-const MetaNode = memo(({ id, data, selected }: NodeProps) => {
+const MetaNode = memo(({ id, data }: NodeProps) => {
   const {
     title,
     description,

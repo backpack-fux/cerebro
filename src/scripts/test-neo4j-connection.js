@@ -1,7 +1,7 @@
 // Test Neo4j Connection Script
 // Run with: bun src/scripts/test-neo4j-connection.js
 
-const neo4j = require('neo4j-driver');
+import neo4j from 'neo4j-driver';
 
 async function testConnection() {
   // Use the same configuration as in the application

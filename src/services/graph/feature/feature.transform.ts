@@ -16,7 +16,8 @@ export function reactFlowToNeo4j(featureNode: RFFeatureNode): Neo4jFeatureNodeDa
         JSON.parse(data.teamAllocations);
         // If it parses successfully, use it as is
         teamAllocationsValue = data.teamAllocations;
-      } catch (e) {
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      } catch (_) {
         // If it's not valid JSON, stringify it
         teamAllocationsValue = JSON.stringify(data.teamAllocations);
       }
@@ -27,15 +28,17 @@ export function reactFlowToNeo4j(featureNode: RFFeatureNode): Neo4jFeatureNodeDa
   }
 
   // Similar checks for teamMembers and memberAllocations
-  let teamMembersValue = data.teamMembers ? 
+  const teamMembersValue = data.teamMembers ? 
     (typeof data.teamMembers === 'string' ? 
-      ((() => { try { JSON.parse(data.teamMembers); return data.teamMembers; } catch (e) { return JSON.stringify(data.teamMembers); } })()) : 
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      ((() => { try { JSON.parse(data.teamMembers); return data.teamMembers; } catch (_) { return JSON.stringify(data.teamMembers); } })()) : 
       JSON.stringify(data.teamMembers)) : 
     undefined;
 
-  let memberAllocationsValue = data.memberAllocations ? 
+  const memberAllocationsValue = data.memberAllocations ? 
     (typeof data.memberAllocations === 'string' ? 
-      ((() => { try { JSON.parse(data.memberAllocations); return data.memberAllocations; } catch (e) { return JSON.stringify(data.memberAllocations); } })()) : 
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      ((() => { try { JSON.parse(data.memberAllocations); return data.memberAllocations; } catch (_) { return JSON.stringify(data.memberAllocations); } })()) : 
       JSON.stringify(data.memberAllocations)) : 
     undefined;
 
@@ -64,7 +67,7 @@ export function neo4jToReactFlow(neo4jData: Neo4jFeatureNodeData): RFFeatureNode
   const jsonFields = ['teamMembers', 'memberAllocations', 'teamAllocations', 'availableBandwidth'];
   
   // Parse all JSON fields
-  const parsedData = parseDataFromBackend(neo4jData, jsonFields);
+  const parsedData = parseDataFromBackend(neo4jData as unknown as Record<string, unknown>, jsonFields);
   
   return {
     id: neo4jData.id,

@@ -9,6 +9,13 @@ import { teamResourceObserver } from '../observer/team-resource-observer';
 import { nodeObserver, NodeUpdateType } from '../observer/node-observer';
 import { RFTeamNode } from './team.types';
 
+// Define a simplified team roster type for the observer integration
+type TeamRosterMember = {
+  memberId: string;
+  allocation?: number;
+  [key: string]: unknown;
+};
+
 /**
  * Initialize team resources when a team is created or updated
  * 
@@ -35,13 +42,14 @@ export function setupTeamResourcePublishing(teamId: string): void {
   // to all work nodes that are subscribed to it
   
   // Subscribe to the team's own updates to republish them as resource updates
-  const unsubscribe = nodeObserver.subscribe(
+  // We don't need to unsubscribe as this runs for the application lifetime
+  nodeObserver.subscribe(
     'team-resource-integration',
     teamId,
     (publisherId, data, metadata) => {
       if (metadata.updateType === NodeUpdateType.CONTENT) {
         // When team content changes, reinitialize resources
-        teamResourceObserver.initializeTeamResources(teamId, data);
+        teamResourceObserver.initializeTeamResources(teamId, data as RFTeamNode);
         
         console.log(`[TeamResourceIntegration] Republished resource update for team ${teamId}`);
       }
@@ -49,8 +57,7 @@ export function setupTeamResourcePublishing(teamId: string): void {
     NodeUpdateType.CONTENT
   );
   
-  // Store the unsubscribe function somewhere if needed for cleanup
-  // For now, we'll just let it run for the lifetime of the application
+  // The unsubscribe function is available if cleanup is needed in the future
 }
 
 /**
@@ -59,7 +66,10 @@ export function setupTeamResourcePublishing(teamId: string): void {
  * @param teamId The ID of the team
  * @param roster The updated team roster
  */
-export function updateTeamRoster(teamId: string, roster: any[]): void {
+export function updateTeamRoster(
+  teamId: string, 
+  roster: TeamRosterMember[]
+): void {
   // Create a team data object with the updated roster
   const teamData = {
     roster: roster

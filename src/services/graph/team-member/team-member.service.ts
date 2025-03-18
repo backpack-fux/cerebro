@@ -67,11 +67,7 @@ export class TeamMemberService {
       const { id, ...updateData } = params;
       
       // Remove any complex objects that should not be directly stored in Neo4j
-      // These should be handled separately or serialized
-      const { memberSummary, ...safeUpdateData } = updateData as any;
-      
-      // Update the node with safe data only
-      const result = await this.storage.updateNode(id, safeUpdateData as Partial<RFTeamMemberNodeData>);
+      const result = await this.storage.updateNode(id, updateData as Partial<RFTeamMemberNodeData>);
       console.log('[TeamMemberService] Updated team member node:', result);
       return result as RFTeamMemberNode;
     } catch (error) {

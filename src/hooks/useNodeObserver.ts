@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef } from 'react';
-import { useReactFlow, Node, useNodeConnections } from '@xyflow/react';
+import { useReactFlow, useNodeConnections } from '@xyflow/react';
 import { nodeObserver, NodeUpdateType, NodeUpdateCallback, NodeUpdateMetadata } from '@/services/graph/observer/node-observer';
 import { NodeType } from '@/services/graph/neo4j/api-urls';
 import { 
@@ -13,7 +13,7 @@ import {
 /**
  * Helper hook to easily connect React Flow nodes with the observer system
  */
-export function useNodeObserver<T extends object = any>(
+export function useNodeObserver<T extends Record<string, unknown>>(
   nodeId: string,
   nodeType: NodeType
 ) {
@@ -127,8 +127,8 @@ export function useNodeObserver<T extends object = any>(
       ]);
       
       affectedFields = Array.from(allKeys).filter(key => {
-        const prevValue = (prevData as any)[key];
-        const newValue = (data as any)[key];
+        const prevValue = prevData[key];
+        const newValue = data[key];
         
         // Special handling for objects and arrays
         if (typeof prevValue === 'object' && prevValue !== null && 

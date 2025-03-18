@@ -14,8 +14,6 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { RFMilestoneNodeData } from '@/services/graph/milestone/milestone.types';
 import { useMilestoneNode } from '@/hooks/useMilestoneNode';
-import { Trash2, RefreshCw } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { formatHours } from "@/utils/utils";
 

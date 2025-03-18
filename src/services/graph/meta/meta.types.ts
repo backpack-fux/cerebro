@@ -10,7 +10,7 @@ export interface RFMetaNodeData extends ReactFlowNodeBase {
   position?: XYPosition;
 }
 
-export interface RFMetaNode extends Node<RFMetaNodeData> {}
+export type RFMetaNode = Node<RFMetaNodeData>;
 
 // Service types for Neo4j operations
 export type CreateMetaNodeParams = {

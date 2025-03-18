@@ -3,17 +3,12 @@
 import React from 'react';
 import { User } from "lucide-react";
 import { Slider } from "@/components/ui/slider";
-import { 
-  formatHours, 
-  formatPercentage, 
-  percentageToHours,
-} from "@/utils/utils";
-import { Label } from "@/components/ui/label";
+import { formatHours } from "@/utils/utils";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { AlertCircle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { calculateEffectiveCapacity } from "@/utils/allocation/capacity";
-import { AvailableMember, MemberAllocationData as IMemberAllocationData, MemberCapacity } from "@/utils/types/allocation";
+import { AvailableMember, MemberAllocationData as IMemberAllocationData } from "@/utils/types/allocation";
 
 export type { IMemberAllocationData as MemberAllocationData };
 
@@ -119,31 +114,8 @@ export const MemberAllocation: React.FC<MemberAllocationProps> = ({
   
   // Create a MemberCapacity object if we don't have allocation data
   if (!allocation) {
-    const memberCapacity: MemberCapacity = {
-      // Use the actual values from the team member if available
-      hoursPerDay: member.hoursPerDay || 8,
-      daysPerWeek: member.daysPerWeek || 5,
-      allocation: 100
-    };
-    
     // Calculate weekly capacity - use the actual weeklyCapacity if available
     const normalizedWeeklyCapacity = Math.min(memberWeeklyCapacity, 100);
-    
-    // Create a default allocation object
-    const defaultAllocation = {
-      memberId: member.memberId,
-      percentage: 0,
-      hours: 0,
-      weeklyCapacity: normalizedWeeklyCapacity,
-      memberCapacity,
-      name: member.name
-    };
-    
-    // Ensure we have a valid percentage value for the slider
-    const sliderValue = 0;
-    
-    // Calculate weekly hours based on allocation percentage
-    const weeklyHours = percentageToHours(sliderValue, normalizedWeeklyCapacity);
     
     return (
       <div className={`space-y-1 ${isOverAllocated ? 'border-l-2 border-destructive pl-2' : ''}`}>
@@ -158,36 +130,29 @@ export const MemberAllocation: React.FC<MemberAllocationProps> = ({
                     <AlertCircle className="h-4 w-4 text-destructive" />
                   </TooltipTrigger>
                   <TooltipContent>
-                    <p>Member is over-allocated by {safeFormatHours(overAllocatedBy)} hours</p>
+                    <p>Over allocated by {formatHours(overAllocatedBy)}</p>
                   </TooltipContent>
                 </Tooltip>
               </TooltipProvider>
             )}
           </div>
-          <div className="flex items-center gap-1">
-            <span className="text-xs text-muted-foreground">
-              {displayAvailableHours} available
-            </span>
-          </div>
+          <Badge variant="secondary">
+            {formatHours(availableHours || 0)} available
+          </Badge>
         </div>
         
-        <div className="pt-2">
-          <Slider
-            defaultValue={[0]}
-            value={[hours]}
-            max={maxHours}
-            step={1}
-            onValueChange={handleValueChange}
-            onValueCommit={handleValueCommit}
-            disabled={!onValueChange}
-            className="focus:outline-none"
-            aria-label={`Allocate hours for ${member.name}`}
-          />
-          <div className="flex justify-between text-xs text-muted-foreground mt-1">
-            <span>0h</span>
-            <span className="text-center">{safeFormatHours(maxHours / 2)}</span>
-            <span>{safeFormatHours(maxHours)}</span>
-          </div>
+        <Slider
+          value={[0]}
+          min={0}
+          max={100}
+          step={5}
+          onValueChange={handleValueChange}
+          onValueCommit={handleValueCommit}
+          className="w-full"
+        />
+        
+        <div className="text-xs text-muted-foreground">
+          {formatHours(calculateEffectiveCapacity(normalizedWeeklyCapacity, 0))} hours per week
         </div>
       </div>
     );

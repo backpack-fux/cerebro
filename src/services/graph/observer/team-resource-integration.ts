@@ -8,11 +8,31 @@
 import { teamResourceObserver, ResourceAllocationRequest } from './team-resource-observer';
 import { nodeObserver, NodeUpdateType } from './node-observer';
 import { calculateNodeMemberCapacity } from '../../../utils/allocation/node-capacity';
+import { AvailableMember } from '../../../utils/types/allocation';
+
+/**
+ * Interface for team data
+ */
+interface TeamData {
+  roster?: string | Array<{ memberId: string; allocation?: number }>;
+  [key: string]: unknown;
+}
+
+/**
+ * Interface for resource update data
+ */
+interface ResourceUpdateData {
+  teamId: string;
+  teamBandwidth: number;
+  availableBandwidth: number;
+  memberResources: unknown;
+  [key: string]: unknown;
+}
 
 /**
  * Initialize team resources when a team node is created or updated
  */
-export function initializeTeamResources(teamId: string, teamData: any) {
+export function initializeTeamResources(teamId: string, teamData: TeamData) {
   // Initialize team resources in the observer
   teamResourceObserver.initializeTeamResources(teamId, teamData);
 }
@@ -24,7 +44,7 @@ export function connectWorkNodeToTeam(
   workNodeId: string, 
   workNodeType: string, 
   teamId: string,
-  onTeamResourceUpdate: (data: any) => void
+  onTeamResourceUpdate: (data: ResourceUpdateData) => void
 ) {
   // Subscribe to team resource updates
   const unsubscribe = nodeObserver.subscribe(
@@ -33,7 +53,7 @@ export function connectWorkNodeToTeam(
     (publisherId, data, metadata) => {
       if (metadata.updateType === NodeUpdateType.ALLOCATION) {
         // Handle resource allocation updates
-        onTeamResourceUpdate(data);
+        onTeamResourceUpdate(data as ResourceUpdateData);
       }
     },
     NodeUpdateType.ALLOCATION
@@ -85,7 +105,7 @@ export function getAvailableHours(
   workNodeId: string,
   teamId: string,
   memberId: string,
-  memberData: any,
+  memberData: Partial<AvailableMember>,
   projectDurationDays: number
 ) {
   // Get team resource state
@@ -97,12 +117,21 @@ export function getAvailableHours(
   if (!memberResource) return 0;
   
   // Calculate total available hours for the project duration
-  const totalHours = calculateNodeMemberCapacity(memberData, projectDurationDays);
+  const totalHours = calculateNodeMemberCapacity({
+    memberId: memberId,
+    name: memberData.name || 'Unknown',
+    availableHours: memberData.availableHours || 0,
+    dailyRate: memberData.dailyRate || 0,
+    hoursPerDay: memberData.hoursPerDay || 8,
+    daysPerWeek: memberData.daysPerWeek || 5,
+    weeklyCapacity: memberData.weeklyCapacity || 40,
+    allocation: memberData.allocation
+  }, projectDurationDays);
   
   // Calculate hours allocated to other work nodes
   const otherAllocations = Array.from(memberResource.allocations.entries())
     .filter(([nodeId]) => nodeId !== workNodeId)
-    .reduce((sum, [_, hours]) => sum + hours, 0);
+    .reduce((sum, [, hours]) => sum + hours, 0);
   
   // Return available hours
   return Math.max(0, totalHours - otherAllocations);
@@ -114,8 +143,8 @@ export function getAvailableHours(
 export function integrateWithFeatureNode(
   featureId: string,
   teamId: string,
-  featureData: any,
-  onUpdate: (data: any) => void
+  featureData: unknown,
+  onUpdate: (data: ResourceUpdateData) => void
 ) {
   // Connect to team and subscribe to resource updates
   const unsubscribe = connectWorkNodeToTeam(
@@ -125,9 +154,9 @@ export function integrateWithFeatureNode(
     (data) => {
       // Update feature node with new resource data
       onUpdate({
-        teamId: data.teamId,
-        teamBandwidth: data.totalBandwidth,
-        availableBandwidth: data.availableBandwidth,
+        teamId: data.teamId as string,
+        teamBandwidth: Number(data.totalBandwidth) || 0,
+        availableBandwidth: Number(data.availableBandwidth) || 0,
         memberResources: data.memberResources
       });
     }
@@ -159,7 +188,7 @@ export function integrateWithFeatureNode(
     },
     
     // Get available hours for a member
-    getAvailableHours: (memberId: string, memberData: any, projectDurationDays: number) => {
+    getAvailableHours: (memberId: string, memberData: Partial<AvailableMember>, projectDurationDays: number) => {
       return getAvailableHours(
         featureId,
         teamId,
@@ -183,8 +212,8 @@ export function integrateWithFeatureNode(
 export function integrateWithOptionNode(
   optionId: string,
   teamId: string,
-  optionData: any,
-  onUpdate: (data: any) => void
+  optionData: unknown,
+  onUpdate: (data: ResourceUpdateData) => void
 ) {
   // Connect to team and subscribe to resource updates
   const unsubscribe = connectWorkNodeToTeam(
@@ -194,9 +223,9 @@ export function integrateWithOptionNode(
     (data) => {
       // Update option node with new resource data
       onUpdate({
-        teamId: data.teamId,
-        teamBandwidth: data.totalBandwidth,
-        availableBandwidth: data.availableBandwidth,
+        teamId: data.teamId as string,
+        teamBandwidth: Number(data.totalBandwidth) || 0,
+        availableBandwidth: Number(data.availableBandwidth) || 0,
         memberResources: data.memberResources
       });
     }
@@ -228,7 +257,7 @@ export function integrateWithOptionNode(
     },
     
     // Get available hours for a member
-    getAvailableHours: (memberId: string, memberData: any, projectDurationDays: number) => {
+    getAvailableHours: (memberId: string, memberData: Partial<AvailableMember>, projectDurationDays: number) => {
       return getAvailableHours(
         optionId,
         teamId,

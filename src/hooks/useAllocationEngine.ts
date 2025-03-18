@@ -1,9 +1,9 @@
-import { useMemo, useCallback, useState } from 'react';
+import { useMemo, useCallback } from 'react';
 import { useReactFlow } from '@xyflow/react';
 import { getWeeklyBuckets } from '@/utils/allocation/weekly';
 import { calculateEffectiveCapacity, calculateWeeklyHours } from '@/utils/allocation/capacity';
 import { calculateCalendarDuration, doTimePeriodsOverlap, getDefaultTimeframe } from '@/utils/time/calendar';
-import { parseJsonIfString } from '@/utils/utils';
+import { parseJsonIfString } from '../utils/utils';
 import { format } from 'date-fns';
 
 /**
@@ -27,17 +27,23 @@ export interface MemberAllocationData {
   isOverAllocated: boolean;
 }
 
+interface TeamAllocation {
+  allocatedMembers: Array<{
+    memberId: string;
+    hours: number;
+  }>;
+}
+
+interface MemberAllocation {
+  memberId: string;
+  hours: number;
+}
+
 /**
  * Hook for managing team allocations with time-based constraints
  */
 export function useAllocationEngine() {
   const { getNodes } = useReactFlow();
-  const [refreshCounter, setRefreshCounter] = useState(0);
-  
-  // Force a refresh of allocation data
-  const refreshAllocations = useCallback(() => {
-    setRefreshCounter(prev => prev + 1);
-  }, []);
   
   // Get team members
   const teamMembers = useMemo(() => {
@@ -74,7 +80,7 @@ export function useAllocationEngine() {
     }
     
     return members;
-  }, [getNodes, refreshCounter]);
+  }, [getNodes]);
   
   // Get work nodes with allocation data
   const workNodesWithAllocations = useMemo(() => {
@@ -124,7 +130,7 @@ export function useAllocationEngine() {
         timeframe
       };
     });
-  }, [getNodes, refreshCounter]);
+  }, [getNodes]);
   
   // Check if a member is over-allocated
   const checkMemberAllocation = useCallback((
@@ -186,12 +192,12 @@ export function useAllocationEngine() {
       if (!timeframe) return;
       
       // Process each team allocation
-      teamAllocations.forEach((teamAllocation: any) => {
+      teamAllocations.forEach((teamAllocation: TeamAllocation) => {
         if (!teamAllocation?.allocatedMembers) return;
         
         // Process each member allocation
-        teamAllocation.allocatedMembers.forEach((memberAlloc: any) => {
-          const { memberId, name, hours = 0 } = memberAlloc;
+        teamAllocation.allocatedMembers.forEach((memberAlloc: MemberAllocation) => {
+          const { memberId, hours = 0 } = memberAlloc;
           if (!memberId || !hours) return;
           
           // Skip if member not found
@@ -320,7 +326,6 @@ export function useAllocationEngine() {
   return {
     teamMembers,
     memberAllocations,
-    checkMemberAvailability,
-    refreshAllocations
+    checkMemberAvailability
   };
 } 

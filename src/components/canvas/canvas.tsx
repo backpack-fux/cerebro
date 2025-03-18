@@ -10,9 +10,8 @@ import {
     Connection,
     addEdge,
     Node,
-    NodeChange,
-    NodePositionChange,
     useReactFlow,
+    Edge
 } from "@xyflow/react";
 import { nodeTypes } from "@/components/nodes";
 import { Console } from "@/components/console/console";
@@ -22,31 +21,165 @@ import { NodeType } from "@/services/graph/neo4j/api-urls";
 import { Toaster } from "@/components/ui/sonner";
 import { toast } from "sonner";
 import { nodeObserver, NodeUpdateType } from '@/services/graph/observer/node-observer';
+import { ReactFlowNodeBase } from '@/services/graph/base-node/reactflow.types';
 
 // Configure panning buttons (1 = middle mouse, 2 = right mouse)
 // Use middle mouse button (1) for panning to avoid conflicts with selection
 const panOnDragButtons = [1];
 
+// Type for node data in the graph
+type GraphNodeData = ReactFlowNodeBase & {
+    label?: string;
+    buildType?: string;
+    timeUnit?: string;
+    duration?: number;
+    status?: string;
+    roles?: string[];
+    hoursPerDay?: number;
+    daysPerWeek?: number;
+    weeklyCapacity?: number;
+    roster?: unknown[];
+    dueDate?: string;
+};
+
 export default function Canvas() {
-    // Use any type to avoid TypeScript errors with complex node structures
-    const [nodes, setNodes, onNodesChange] = useNodesState<any>([]);
-    const [edges, setEdges, onEdgesChange] = useEdgesState<any>([]);
+    // Use GraphNodeData type for nodes
+    const [nodes, setNodes, onNodesChange] = useNodesState<Node<GraphNodeData>>([]);
+    const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [deletingNodes, setDeletingNodes] = useState<Set<string>>(new Set());
-    const [deletingEdges, setDeletingEdges] = useState<Set<string>>(new Set());
-    const [updatingNodePositions, setUpdatingNodePositions] = useState<Set<string>>(new Set());
     const [isCreatingNode, setIsCreatingNode] = useState<Record<string, boolean>>({});
     
     // Get ReactFlow instance for viewport and node operations
     const { getViewport, addNodes } = useReactFlow();
     
-    // Function to create a new node from the console
-    const createNode = useCallback(async (type: string, label: string) => {
-        try {
-            // Mark this node type as being created
-            setIsCreatingNode(prev => ({ ...prev, [type]: true }));
+    // Add a node to the graph
+    const addNodeToGraph = useCallback(async (nodeType: NodeType, label: string, position: { x: number, y: number }) => {
+        // Get current viewport to position the node in the visible area
+        console.log(`Creating new ${nodeType} node with label "${label}" at position:`, position);
+        
+        // Create the node in the backend
+        // Get current timestamp for created/updated fields
+        const now = new Date().toISOString();
+        
+        // Handle different node types with their specific required fields
+        let nodeData: GraphNodeData = {
+            name: label,
+            description: '',
+            createdAt: now,
+            updatedAt: now,
+            position,
+            type: nodeType
+        };
+        
+        // Different node types require different fields
+        switch (nodeType) {
+            case 'teamMember':
+                nodeData = {
+                    ...nodeData,
+                    roles: ['developer'], // Default role
+                    hoursPerDay: 8, // Default values
+                    daysPerWeek: 5,
+                    weeklyCapacity: 40
+                };
+                break;
             
+            case 'team':
+                nodeData = {
+                    ...nodeData,
+                    roster: [] // Empty roster to start
+                };
+                break;
+            
+            case 'feature':
+                nodeData = {
+                    ...nodeData,
+                    buildType: 'internal', // Default values
+                    timeUnit: 'days',
+                    duration: 5,
+                    status: 'planning'
+                };
+                break;
+            
+            case 'milestone':
+                nodeData = {
+                    ...nodeData,
+                    dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0] // Default due date: 30 days from now
+                };
+                break;
+            
+            case 'provider':
+                nodeData = {
+                    ...nodeData,
+                    name: label, // Name is required by ReactFlowNodeBase
+                    createdAt: now,
+                    updatedAt: now
+                };
+                break;
+            
+            case 'option':
+                nodeData = {
+                    ...nodeData,
+                    name: label, // Name is required by ReactFlowNodeBase
+                    createdAt: now,
+                    updatedAt: now
+                };
+                break;
+            
+            // For all other node types
+            default:
+                nodeData = {
+                    ...nodeData,
+                    label, // Also include label
+                    name: label, // Name is required by ReactFlowNodeBase
+                    createdAt: now,
+                    updatedAt: now
+                };
+                break;
+        }
+        
+        const result = await GraphApiClient.createNode(nodeType, nodeData);
+        
+        console.log(`Node created successfully:`, result);
+        
+        // Check if the node was created but is now blacklisted (rare case)
+        if (result && result.id && typeof result.id === 'string' && GraphApiClient.isNodeBlacklisted(result.id)) {
+            console.warn(`⚠️ Created node ${result.id} is blacklisted, removing from UI`);
+            toast.warning(`Node was created but marked problematic`, {
+                description: `The node was created but has been marked as problematic and will be removed.`,
+                duration: 5000
+            });
+            return result;
+        }
+        
+        // Add the node to the UI
+        const newNode: Node<GraphNodeData> = {
+            id: result.id as string,
+            type: nodeType,
+            position,
+            data: {
+                ...nodeData,
+                ...(result.data && typeof result.data === 'object' ? result.data : {})
+            }
+        };
+        
+        addNodes([newNode]);
+        
+        // Show success toast
+        toast(`Node created`, {
+            description: `New ${nodeType} node has been created.`,
+            duration: 3000
+        });
+        
+        return result;
+    }, [addNodes]);
+    
+    // Function to create a new node from the console
+    const createNode = useCallback(async (type: string, label: string): Promise<void> => {
+        setIsCreatingNode(prev => ({ ...prev, [type]: true }));
+
+        try {
             // Get current viewport to position the node in the visible area
             const viewport = getViewport();
             const position = {
@@ -54,154 +187,17 @@ export default function Canvas() {
                 y: -viewport.y + window.innerHeight / 2 - 75
             };
             
-            console.log(`Creating new ${type} node with label "${label}" at position:`, position);
-            
-            // Create the node in the backend
-            const nodeType = type as NodeType;
-            
-            // Get current timestamp for created/updated fields
-            const now = new Date().toISOString();
-            
-            // Handle different node types with their specific required fields
-            let nodeData: any = {
-                position
-            };
-            
-            // Different node types require different fields
-            switch (type) {
-                case 'teamMember':
-                    nodeData = {
-                        position,
-                        title: label,
-                        roles: ['developer'], // Default role
-                        hoursPerDay: 8, // Default values
-                        daysPerWeek: 5,
-                        weeklyCapacity: 40,
-                        name: label, // Name is required by ReactFlowNodeBase
-                        createdAt: now,
-                        updatedAt: now
-                    };
-                    break;
-                
-                case 'team':
-                    nodeData = {
-                        position,
-                        title: label,
-                        roster: [], // Empty roster to start
-                        name: label, // Name is required by ReactFlowNodeBase
-                        createdAt: now,
-                        updatedAt: now
-                    };
-                    break;
-                
-                case 'feature':
-                    nodeData = {
-                        position,
-                        title: label,
-                        buildType: 'internal', // Default values
-                        timeUnit: 'days',
-                        duration: 5,
-                        status: 'planning',
-                        name: label, // Name is required by ReactFlowNodeBase
-                        createdAt: now,
-                        updatedAt: now
-                    };
-                    break;
-                
-                case 'milestone':
-                    nodeData = {
-                        position,
-                        title: label,
-                        name: label, // Name is required by ReactFlowNodeBase
-                        dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0], // Default due date: 30 days from now
-                        createdAt: now,
-                        updatedAt: now
-                    };
-                    break;
-                
-                case 'provider':
-                    nodeData = {
-                        position,
-                        title: label,
-                        name: label, // Name is required by ReactFlowNodeBase
-                        createdAt: now,
-                        updatedAt: now
-                    };
-                    break;
-                
-                case 'option':
-                    nodeData = {
-                        position,
-                        title: label,
-                        name: label, // Name is required by ReactFlowNodeBase
-                        createdAt: now,
-                        updatedAt: now
-                    };
-                    break;
-                
-                // For all other node types
-                default:
-                    nodeData = {
-                        position,
-                        title: label, // Use title to be safe
-                        label, // Also include label
-                        name: label, // Name is required by ReactFlowNodeBase
-                        createdAt: now,
-                        updatedAt: now
-                    };
-                    break;
-            }
-            
-            const result = await GraphApiClient.createNode(nodeType, nodeData);
-            
-            console.log(`Node created successfully:`, result);
-            
-            // Check if the node was created but is now blacklisted (rare case)
-            if (result && result.id && GraphApiClient.isNodeBlacklisted(result.id)) {
-                console.warn(`⚠️ Created node ${result.id} is blacklisted, removing from UI`);
-                toast.warning(`Node was created but marked problematic`, {
-                    description: `The node was created but has been marked as problematic and will be removed.`,
-                    duration: 5000
-                });
-                return result;
-            }
-            
-            // Add the node to the UI
-            const newNode = {
-                id: result.id,
-                type,
-                position,
-                data: {
-                    label,
-                    ...result.data
-                }
-            };
-            
-            addNodes([newNode]);
-            
-            // Show success toast
-            toast(`Node created`, {
-                description: `New ${type} node has been created.`,
-                duration: 3000
-            });
-            
-            return result;
+            await addNodeToGraph(type as NodeType, label, position);
         } catch (error) {
-            console.error(`Failed to create ${type} node:`, error);
-            setError(`Failed to create node: ${error instanceof Error ? error.message : 'Unknown error'}`);
-            
-            // Show error toast
-            toast.error(`Failed to create node`, {
-                description: `${error instanceof Error ? error.message : 'Unknown error'}`,
+            console.error(`Error creating ${type} node:`, error);
+            toast.error(`Failed to create ${type} node`, {
+                description: error instanceof Error ? error.message : 'Unknown error',
                 duration: 5000
             });
-            
-            throw error;
         } finally {
-            // Mark this node type as no longer being created
             setIsCreatingNode(prev => ({ ...prev, [type]: false }));
         }
-    }, [getViewport, addNodes, setError]);
+    }, [addNodeToGraph, getViewport]);
     
     // Fetch graph data on component mount
     useEffect(() => {
@@ -237,7 +233,7 @@ export default function Canvas() {
                 
                 if (data.nodes && Array.isArray(data.nodes)) {
                     // Filter out any blacklisted nodes
-                    const filteredNodes = data.nodes.filter((node: any) => {
+                    const filteredNodes = data.nodes.filter((node: Node<GraphNodeData>) => {
                         const isBlacklisted = GraphApiClient.isNodeBlacklisted(node.id);
                         if (isBlacklisted) {
                             console.warn(`🚫 Filtering out blacklisted node ${node.id} from initial load`);
@@ -250,42 +246,16 @@ export default function Canvas() {
                 }
                 
                 if (data.edges && Array.isArray(data.edges)) {
-                    // Filter out edges connected to blacklisted nodes
-                    const filteredEdges = data.edges.filter((edge: any) => {
-                        const sourceId = edge.from || edge.source;
-                        const targetId = edge.to || edge.target;
-                        
-                        const isConnectedToBlacklisted = 
-                            GraphApiClient.isNodeBlacklisted(sourceId) || 
-                            GraphApiClient.isNodeBlacklisted(targetId);
-                            
-                        if (isConnectedToBlacklisted) {
-                            console.warn(`🚫 Filtering out edge connected to blacklisted node: ${edge.id}`);
-                        }
-                        
-                        return !isConnectedToBlacklisted;
-                    });
-                
-                    // Transform edges if needed to match ReactFlow's expected format
-                    const formattedEdges = filteredEdges.map((edge: any) => ({
-                        id: edge.id,
-                        source: edge.from || edge.source,
-                        target: edge.to || edge.target,
-                        type: 'default',
-                        data: {
-                            label: edge.properties?.label || edge.data?.label,
-                            edgeType: edge.type?.toLowerCase() || edge.data?.edgeType
-                        }
-                    }));
-                    
-                    console.log('Formatted edges:', formattedEdges);
-                    setEdges(formattedEdges);
+                    setEdges(data.edges);
                 }
+            } catch (error) {
+                console.error('Error fetching graph data:', error);
+                setError(error instanceof Error ? error.message : 'Unknown error');
                 
-                setError(null);
-            } catch (err) {
-                console.error('Error loading graph data:', err);
-                setError(err instanceof Error ? err.message : 'Unknown error loading graph data');
+                toast.error('Failed to load graph data', {
+                    description: error instanceof Error ? error.message : 'Unknown error',
+                    duration: 5000
+                });
             } finally {
                 setIsLoading(false);
             }
@@ -293,6 +263,100 @@ export default function Canvas() {
         
         fetchGraphData();
     }, [setNodes, setEdges]);
+    
+    // Handle node updates from the observer
+    useEffect(() => {
+        const handleNodeUpdate = async (publisherId: string, data: unknown, metadata: { updateType: NodeUpdateType }) => {
+            try {
+                const nodeId = publisherId;
+                const updateType = metadata.updateType;
+                
+                // Skip updates for blacklisted nodes
+                if (GraphApiClient.isNodeBlacklisted(nodeId)) {
+                    console.warn(`🚫 Skipping update for blacklisted node ${nodeId}`);
+                    return;
+                }
+                
+                // Get the node type from the existing nodes
+                const existingNode = nodes.find(node => node.id === nodeId);
+                if (!existingNode) {
+                    console.warn(`Node ${nodeId} not found in graph for update`);
+                    return;
+                }
+                
+                const nodeType = existingNode.type as NodeType;
+                
+                // Handle different update types
+                switch (updateType) {
+                    case NodeUpdateType.DELETE:
+                        setDeletingNodes(prev => new Set([...prev, nodeId]));
+                        try {
+                            await GraphApiClient.deleteNode(nodeType, nodeId);
+                            setNodes(nodes => nodes.filter(node => node.id !== nodeId));
+                            // Also remove any edges connected to this node
+                            setEdges(edges => edges.filter(edge => 
+                                edge.source !== nodeId && edge.target !== nodeId
+                            ));
+                        } finally {
+                            setDeletingNodes(prev => {
+                                const next = new Set(prev);
+                                next.delete(nodeId);
+                                return next;
+                            });
+                        }
+                        break;
+                        
+                    case NodeUpdateType.CONTENT:
+                    case NodeUpdateType.ATTRIBUTE:
+                        try {
+                            const updatedNode = await GraphApiClient.getNode(nodeType, nodeId);
+                            if (!updatedNode) {
+                                console.warn(`Node ${nodeId} not found during update`);
+                                return;
+                            }
+                            
+                            setNodes(nodes => nodes.map(node => 
+                                node.id === nodeId 
+                                    ? { 
+                                        ...node, 
+                                        data: { 
+                                            ...node.data, 
+                                            ...(updatedNode.data && typeof updatedNode.data === 'object' ? updatedNode.data : {})
+                                        } 
+                                    } 
+                                    : node
+                            ));
+                        } catch (error) {
+                            console.error(`Error updating node ${nodeId}:`, error);
+                            if (error instanceof Error && error.message.includes('404')) {
+                                // Node was deleted, remove it from the graph
+                                setNodes(nodes => nodes.filter(node => node.id !== nodeId));
+                            }
+                        }
+                        break;
+                }
+            } catch (error) {
+                console.error(`Error handling node update for ${publisherId}:`, error);
+                toast.error('Failed to update node', {
+                    description: error instanceof Error ? error.message : 'Unknown error',
+                    duration: 5000
+                });
+            }
+        };
+        
+        // Subscribe to node updates with a unique subscriber ID
+        const subscriberId = 'canvas';
+        nodes.forEach(node => {
+            nodeObserver.subscribe(subscriberId, node.id, handleNodeUpdate, NodeUpdateType.ANY);
+        });
+        
+        // Cleanup subscription
+        return () => {
+            nodes.forEach(node => {
+                nodeObserver.unsubscribe(subscriberId, node.id, handleNodeUpdate, NodeUpdateType.ANY);
+            });
+        };
+    }, [nodes, setNodes, setEdges]);
     
     // Handle node deletion
     const handleNodeDelete = useCallback(async (nodeId: string) => {
@@ -373,7 +437,7 @@ export default function Canvas() {
                 } else {
                     // For other errors, add the node back to the UI
                     console.error(`Error deleting node ${nodeId}:`, error);
-                    setNodes((currentNodes: any[]) => [...currentNodes, nodeToDelete]);
+                    setNodes((currentNodes: Node<GraphNodeData>[]) => [...currentNodes, nodeToDelete]);
                     setError(`Failed to delete node: ${error instanceof Error ? error.message : 'Unknown error'}`);
                     
                     // Show error toast
@@ -389,7 +453,7 @@ export default function Canvas() {
             console.error(`Error in node deletion process for ${nodeId}:`, error);
             
             // If deletion fails, add the node back
-            setNodes((currentNodes: any[]) => [...currentNodes, nodeToDelete]);
+            setNodes((currentNodes: Node<GraphNodeData>[]) => [...currentNodes, nodeToDelete]);
             
             // Show error message
             setError(`Failed to delete node: ${error instanceof Error ? error.message : 'Unknown error'}`);
@@ -410,7 +474,7 @@ export default function Canvas() {
     
     // Handle edge deletion
     const handleEdgeDelete = useCallback(async (edgeId: string) => {
-        const edgeToDelete = edges.find((edge: any) => edge.id === edgeId);
+        const edgeToDelete = edges.find((edge: Edge) => edge.id === edgeId);
         
         if (!edgeToDelete) {
             console.log(`Edge ${edgeId} not found in state, skipping deletion`);
@@ -418,7 +482,7 @@ export default function Canvas() {
         }
         
         // Mark edge as being deleted
-        setDeletingEdges(prev => new Set(prev).add(edgeId));
+        setDeletingNodes(prev => new Set(prev).add(edgeToDelete.source));
         
         try {
             console.log(`Deleting edge: ${edgeId}`);
@@ -453,7 +517,7 @@ export default function Canvas() {
             
             if (sourceExists && targetExists) {
                 // If deletion fails and both nodes still exist, add the edge back to UI
-                setEdges((currentEdges: any[]) => [...currentEdges, edgeToDelete]);
+                setEdges((currentEdges: Edge[]) => [...currentEdges, edgeToDelete]);
                 
                 // Show error message for non-404 errors
                 if (!String(error).includes('404')) {
@@ -469,9 +533,9 @@ export default function Canvas() {
             }
         } finally {
             // Remove from deleting set
-            setDeletingEdges(prev => {
+            setDeletingNodes(prev => {
                 const newSet = new Set(prev);
-                newSet.delete(edgeId);
+                newSet.delete(edgeToDelete.source);
                 return newSet;
             });
         }
@@ -531,12 +595,24 @@ export default function Canvas() {
             const now = new Date().toISOString();
             
             // Create the edge in the backend
-            const edgeData: any = {
-                source: connection.source, // Required field
-                target: connection.target, // Required field
+            const edgeData: {
+                source: string;
+                target: string;
+                type: string;
+                sourceHandle?: string;
+                targetHandle?: string;
+                data: {
+                    createdAt: string;
+                    updatedAt: string;
+                    allocation?: number;
+                    role?: string;
+                };
+            } = {
+                source: connection.source!, // Required field
+                target: connection.target!, // Required field
                 type: edgeType, // Required field
-                sourceHandle: connection.sourceHandle,
-                targetHandle: connection.targetHandle,
+                sourceHandle: connection.sourceHandle || undefined,
+                targetHandle: connection.targetHandle || undefined,
                 data: {
                     createdAt: now,
                     updatedAt: now
@@ -563,10 +639,10 @@ export default function Canvas() {
                         e.targetHandle === connection.targetHandle) {
                         return {
                             ...e,
-                            id: result.id,
+                            id: result.id as string,
                             data: {
                                 ...e.data,
-                                ...result.data
+                                ...(result.data && typeof result.data === 'object' ? result.data : {})
                             }
                         };
                     }
@@ -600,69 +676,10 @@ export default function Canvas() {
         }
     }, [nodes, setEdges, setError]);
     
-    // Handle node position updates with better UX
-    const handleNodePositionChange = useCallback(async (change: NodePositionChange) => {
-        const { id, position } = change;
-        
-        // Skip if we're already updating this node's position or if position is undefined
-        if (updatingNodePositions.has(id) || !position) return;
-        
-        // Get the current node
-        const currentNode = nodes.find(node => node.id === id);
-        if (!currentNode) return;
-        
-        // Mark node as being updated
-        setUpdatingNodePositions(prev => new Set(prev).add(id));
-        
-        // Store the node's position to check if it changed after the debounce
-        const initialPosition = { 
-            x: position.x || 0,
-            y: position.y || 0
-        };
-        
-        // Use a longer debounce for position updates to avoid excessive API calls during dragging
-        setTimeout(async () => {
-            try {
-                // Get the current node to see if position has changed significantly
-                const currentNode = nodes.find(node => node.id === id);
-                if (!currentNode || !currentNode.position) return;
-                
-                // Only update if position has changed by more than 5 pixels in any direction
-                // This prevents API calls for tiny movements
-                const significantChange = 
-                    Math.abs((currentNode.position.x || 0) - initialPosition.x) > 5 ||
-                    Math.abs((currentNode.position.y || 0) - initialPosition.y) > 5;
-                
-                if (significantChange) {
-                    await GraphApiClient.updateNode(
-                        currentNode.type as NodeType,
-                        id,
-                        { position: currentNode.position }
-                    );
-                    console.log(`Updated position for ${currentNode.type} node ${id}:`, currentNode.position);
-                } else {
-                    console.log(`Skipping position update for node ${id} (change too small)`);
-                }
-            } catch (error) {
-                console.error(`Failed to update position for node ${id}:`, error);
-            } finally {
-                // Remove from updating set
-                setUpdatingNodePositions(prev => {
-                    const newSet = new Set(prev);
-                    newSet.delete(id);
-                    return newSet;
-                });
-            }
-        }, 1000); // 1 second debounce
-    }, [updatingNodePositions, nodes]);
-    
     // Handle node drag stop - update position in database
     const onNodeDragStop = useCallback(async (event: React.MouseEvent, node: Node) => {
         // Skip if node is being deleted
         if (deletingNodes.has(node.id)) return;
-        
-        // Add to updating set
-        setUpdatingNodePositions(prev => new Set(prev).add(node.id));
         
         try {
             // Get node type
@@ -685,13 +702,6 @@ export default function Canvas() {
         } catch (error) {
             console.error(`Failed to update position for node ${node.id}:`, error);
             toast.error(`Failed to update node position: ${error instanceof Error ? error.message : 'Unknown error'}`);
-        } finally {
-            // Remove from updating set
-            setUpdatingNodePositions(prev => {
-                const newSet = new Set(prev);
-                newSet.delete(node.id);
-                return newSet;
-            });
         }
     }, [deletingNodes]);
     
@@ -704,7 +714,7 @@ export default function Canvas() {
         console.log('Selection ended');
     }, []);
     
-    const onSelectionChange = useCallback(({ nodes, edges }: { nodes: Node[]; edges: any[] }) => {
+    const onSelectionChange = useCallback(({ nodes, edges }: { nodes: Node[]; edges: Edge[] }) => {
         console.log('Selection changed:', { selectedNodes: nodes.length, selectedEdges: edges.length });
     }, []);
     

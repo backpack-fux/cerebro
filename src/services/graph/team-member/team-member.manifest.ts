@@ -6,7 +6,7 @@
 
 import { NodeType } from '@/services/graph/neo4j/api-urls';
 import { DataField } from '@/services/graph/observer/node-manifest';
-import { CommonFields, createField } from '@/services/graph/base-node/base-manifest';
+import { CommonFields } from '@/services/graph/base-node/base-manifest';
 
 // Team Member specific fields
 export const TeamMemberFields: Record<string, DataField> = {

@@ -2,6 +2,11 @@
 import { NextResponse } from 'next/server';
 import { neo4jStorage } from '@/services/graph/neo4j/neo4j.provider';
 
+interface Neo4jError {
+  code: string;
+  message: string;
+}
+
 export async function GET() {
   try {
     console.log('[API] Starting graph data retrieval');
@@ -44,21 +49,18 @@ export async function GET() {
 
     return NextResponse.json(response);
   } catch (error) {
-    console.error('[API] Error retrieving graph data:', {
-      error: error instanceof Error ? error.message : 'Unknown error',
-      stack: error instanceof Error ? error.stack : undefined,
-      type: error instanceof Error ? error.constructor.name : typeof error
-    });
+    console.error('[API] Error retrieving graph data:', error);
     
     if (error && typeof error === 'object' && 'code' in error) {
+      const neo4jError = error as Neo4jError;
       console.error('[API] Neo4j error details:', {
-        code: (error as any).code,
-        message: (error as any).message
+        code: neo4jError.code,
+        message: neo4jError.message
       });
     }
     
     return NextResponse.json(
-      { error: 'Failed to retrieve graph data', details: error instanceof Error ? error.message : 'Unknown error' },
+      { error: 'Failed to retrieve graph data' },
       { status: 500 }
     );
   }

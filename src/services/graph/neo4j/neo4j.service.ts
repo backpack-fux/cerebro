@@ -48,9 +48,9 @@ export class Neo4jGraphStorage<T> implements IGraphStorage<T> {
   const session = this.driver.session();
   try {
     const result = await session.run(CYPHER_QUERIES.GET_FULL_GRAPH);
-    const nodes: GraphNode<any>[] = [];
+    const nodes: GraphNode<unknown>[] = [];
     const edges: GraphEdge[] = [];
-    const nodeMap = new Map<string, GraphNode<any>>();
+    const nodeMap = new Map<string, GraphNode<unknown>>();
 
     result.records.forEach(record => {
       const node = record.get('n') as Neo4jNode;
@@ -102,19 +102,22 @@ export class Neo4jGraphStorage<T> implements IGraphStorage<T> {
     }
   }
 
-  async getNodesByType(type: NodeType): Promise<GraphNode<any>[]> {
+  async getNodesByType(type: NodeType): Promise<GraphNode<unknown>[]> {
     const session = this.driver.session();
     try {
       // Replace TYPE_PLACEHOLDER with the sanitized type
       const query = CYPHER_QUERIES.GET_NODES_BY_TYPE.replace('TYPE_PLACEHOLDER', sanitizeNodeType(type));
       const result = await session.run(query);
 
-      return result.records
+      // First map to transform nodes, then filter out nulls with a non-null assertion
+      const nodes = result.records
         .map(record => {
-          const node = record.get('n') as Neo4jNode<any>;
+          const node = record.get('n') as Neo4jNode;
           return this.transformNode(node);
         })
-        .filter((node): node is GraphNode<any> => node !== null);
+        .filter((node): node is NonNullable<typeof node> => node !== null);
+      
+      return nodes as GraphNode<unknown>[];
     } finally {
       await session.close();
     }
@@ -157,13 +160,14 @@ export class Neo4jGraphStorage<T> implements IGraphStorage<T> {
       
       // Remove position from properties to avoid Neo4j error with complex objects
       const cleanProperties = { ...properties };
-      if ((cleanProperties as any).position) {
-        delete (cleanProperties as any).position;
+      const propertiesWithPosition = cleanProperties as Record<string, unknown>;
+      if ('position' in propertiesWithPosition) {
+        delete propertiesWithPosition.position;
       }
       
       // Process properties to ensure all complex objects are stringified
       // Neo4j only accepts primitive types or arrays of primitive types
-      const processedProperties: Record<string, any> = {};
+      const processedProperties: Record<string, unknown> = {};
       
       for (const [key, value] of Object.entries(cleanProperties)) {
         if (value === null || value === undefined) {
