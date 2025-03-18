@@ -169,95 +169,97 @@ export function neo4jToReactFlowEdge(neo4jEdge: Neo4jMilestoneEdge): RFMilestone
 }
 
 export function transformMilestoneNode(node: Neo4jNode): GraphNode<RFMilestoneNodeData> | null {
-  if (!node?.properties) return null;
-
-  const type = node.labels[0]?.toLowerCase() as 'milestone';
-  if (type !== 'milestone') return null;
-
-  const { 
-    positionX, 
-    positionY, 
-    id, 
-    kpis, 
-    featureAllocations, 
-    optionDetails,
-    providerDetails,
-    ...properties 
-  } = node.properties;
-  
-  // Parse KPIs from JSON string if available
-  const parsedKpis = kpis ? JSON.parse(kpis as string) : undefined;
-  
-  // Parse feature allocations from JSON string if available
-  let parsedFeatureAllocations: FeatureAllocationSummary[] = [];
-  if (featureAllocations) {
-    try {
-      if (typeof featureAllocations === 'string') {
-        parsedFeatureAllocations = JSON.parse(featureAllocations as string);
-        console.log('[Transform] Successfully parsed featureAllocations:', parsedFeatureAllocations);
-      } else if (Array.isArray(featureAllocations)) {
-        parsedFeatureAllocations = featureAllocations as unknown as FeatureAllocationSummary[];
-      }
-    } catch {
-      console.error('Error parsing featureAllocations JSON:', { featureAllocations });
-    }
-  }
-  
-  // Parse option details from JSON string if available
-  let parsedOptionDetails: OptionRevenueSummary[] = [];
-  if (optionDetails) {
-    try {
-      if (typeof optionDetails === 'string') {
-        parsedOptionDetails = JSON.parse(optionDetails as string);
-        console.log('[Transform] Successfully parsed optionDetails:', parsedOptionDetails);
-      } else if (Array.isArray(optionDetails)) {
-        parsedOptionDetails = optionDetails as unknown as OptionRevenueSummary[];
-      }
-    } catch {
-      console.error('Error parsing optionDetails JSON:', { optionDetails });
-    }
-  }
-  
-  // Parse provider details from JSON string if available
-  let parsedProviderDetails: ProviderCostSummary[] = [];
-  if (providerDetails) {
-    try {
-      if (typeof providerDetails === 'string') {
-        parsedProviderDetails = JSON.parse(providerDetails as string);
-        console.log('[Transform] Successfully parsed providerDetails:', parsedProviderDetails);
-      } else if (Array.isArray(providerDetails)) {
-        parsedProviderDetails = providerDetails as unknown as ProviderCostSummary[];
-      }
-    } catch {
-      console.error('Error parsing providerDetails JSON:', { providerDetails });
-    }
+  if (!node?.properties) {
+    console.error('[Transform] Node has no properties:', node);
+    return null;
   }
 
-  return {
-    id: id as string, // Use the ID directly from Neo4j without adding a prefix
-    type,
-    position: {
-      x: typeof positionX === 'number' ? positionX : 0,
-      y: typeof positionY === 'number' ? positionY : 0,
-    },
-    data: {
-      title: properties.title as string,
-      description: properties.description as string | undefined,
-      status: properties.status as string | undefined,
-      kpis: parsedKpis,
-      name: properties.name as string,
-      createdAt: properties.createdAt as string,
-      updatedAt: properties.updatedAt as string,
-      // Add cost and revenue data
-      totalCost: properties.totalCost as number | undefined,
-      monthlyValue: properties.monthlyValue as number | undefined,
-      teamCosts: properties.teamCosts as number | undefined,
-      providerCosts: properties.providerCosts as number | undefined,
-      featureAllocations: parsedFeatureAllocations,
-      optionDetails: parsedOptionDetails,
-      providerDetails: parsedProviderDetails
-    } as RFMilestoneNodeData,
-  };
+  try {
+    const type = node.labels[0]?.toLowerCase() as 'milestone';
+    if (type !== 'milestone') {
+      console.warn('[Transform] Not a milestone node:', node.labels);
+      return null;
+    }
+
+    const { 
+      positionX, 
+      positionY, 
+      id, 
+      kpis, 
+      featureAllocations, 
+      optionDetails,
+      providerDetails,
+      ...properties 
+    } = node.properties;
+    
+    if (!id) {
+      console.error('[Transform] Node missing id property:', node.properties);
+      return null;
+    }
+    
+    // Safely parse JSON fields with robust error handling
+    const parseJsonSafely = <T>(jsonString: string | unknown, fieldName: string): T | undefined => {
+      if (!jsonString) return undefined;
+      
+      try {
+        if (typeof jsonString === 'string') {
+          return JSON.parse(jsonString) as T;
+        } else {
+          return jsonString as T;
+        }
+      } catch (error) {
+        console.error(`[Transform] Error parsing ${fieldName} JSON:`, error);
+        return undefined;
+      }
+    };
+    
+    // Parse KPIs
+    const parsedKpis = parseJsonSafely(kpis, 'kpis');
+    
+    // Parse feature allocations
+    const parsedFeatureAllocations = parseJsonSafely<FeatureAllocationSummary[]>(
+      featureAllocations, 'featureAllocations'
+    ) || [];
+    
+    // Parse option details
+    const parsedOptionDetails = parseJsonSafely<OptionRevenueSummary[]>(
+      optionDetails, 'optionDetails'
+    ) || [];
+    
+    // Parse provider details
+    const parsedProviderDetails = parseJsonSafely<ProviderCostSummary[]>(
+      providerDetails, 'providerDetails'
+    ) || [];
+    
+    // Ensure position values are numeric
+    const x = typeof positionX === 'number' ? positionX : 0;
+    const y = typeof positionY === 'number' ? positionY : 0;
+
+    return {
+      id: id as string,
+      type: 'milestone',
+      position: { x, y },
+      data: {
+        // Using a type assertion here because Neo4j properties can contain various types
+        // that we need to include in the node data. This is safe because we're doing proper
+        // validation of specific fields above and handling the complex nested objects properly.
+        ...(properties as Record<string, unknown>),
+        kpis: parsedKpis,
+        featureAllocations: parsedFeatureAllocations,
+        optionDetails: parsedOptionDetails,
+        providerDetails: parsedProviderDetails,
+        // Ensure critical properties are always present
+        title: properties.title as string || 'Untitled Milestone',
+        name: properties.name as string || properties.title as string || 'Untitled Milestone',
+        description: properties.description as string || '',
+        createdAt: properties.createdAt as string || new Date().toISOString(),
+        updatedAt: properties.updatedAt as string || new Date().toISOString(),
+      } as RFMilestoneNodeData,
+    };
+  } catch (error) {
+    console.error('[Transform] Error transforming milestone node:', error);
+    return null;
+  }
 }
 
 export function transformMilestoneEdge(relationship: Neo4jRelationship, sourceId?: string, targetId?: string): GraphEdge | null {

@@ -11,7 +11,8 @@ import {
     addEdge,
     Node,
     useReactFlow,
-    Edge
+    Edge,
+    XYPosition
 } from "@xyflow/react";
 import { nodeTypes } from "@/components/nodes";
 import { Console } from "@/components/console/console";
@@ -20,28 +21,60 @@ import { GraphApiClient } from "@/services/graph/neo4j/api-client";
 import { NodeType } from "@/services/graph/neo4j/api-urls";
 import { Toaster } from "@/components/ui/sonner";
 import { toast } from "sonner";
-import { nodeObserver, NodeUpdateType } from '@/services/graph/observer/node-observer';
+import { nodeObserver, NodeUpdateType, NodeUpdateMetadata } from '@/services/graph/observer/node-observer';
 import { ReactFlowNodeBase } from '@/services/graph/base-node/reactflow.types';
+
+// Import node type definitions from their respective files
+import { RFTeamMemberNodeData } from '@/services/graph/team-member/team-member.types';
+import { RFTeamNodeData } from '@/services/graph/team/team.types';
+import { RFFeatureNodeData } from '@/services/graph/feature/feature.types';
+import { RFOptionNodeData } from '@/services/graph/option/option.types';
+import { RFProviderNodeData } from '@/services/graph/provider/provider.types';
+import { RFMilestoneNodeData } from '@/services/graph/milestone/milestone.types';
+import { RFMetaNodeData } from '@/services/graph/meta/meta.types';
 
 // Configure panning buttons (1 = middle mouse, 2 = right mouse)
 // Use middle mouse button (1) for panning to avoid conflicts with selection
 const panOnDragButtons = [1];
 
-// Type for node data in the graph
-type GraphNodeData = ReactFlowNodeBase & {
-    label?: string;
-    buildType?: string;
-    timeUnit?: string;
-    duration?: number;
-    status?: string;
-    roles?: string[];
-    hoursPerDay?: number;
-    daysPerWeek?: number;
-    weeklyCapacity?: number;
-    roster?: unknown[];
-    dueDate?: string;
+/**
+ * Map of node types to their respective data interfaces
+ * This allows us to maintain type safety while working with different node types
+ */
+type NodeDataMap = {
+    'teamMember': RFTeamMemberNodeData;
+    'team': RFTeamNodeData;
+    'feature': RFFeatureNodeData;
+    'milestone': RFMilestoneNodeData;
+    'provider': RFProviderNodeData;
+    'option': RFOptionNodeData;
+    'meta': RFMetaNodeData;
+    // Fallback for node types without a specific interface yet
+    // This ensures we can still work with new node types while maintaining some type safety
+    // If you add a new node type, define its interface and add it above instead of relying on this fallback
+    [key: string]: ReactFlowNodeBase;
 };
 
+/**
+ * Type used for node data in the Canvas component
+ * Uses a discriminated union based on the node type
+ */
+type GraphNodeData = NodeDataMap[NodeType];
+
+/**
+ * Canvas Component
+ * 
+ * This component manages the main ReactFlow graph display, handling node creation, updating, deletion,
+ * and edge connections between nodes. It uses type definitions from each node type's file to ensure
+ * type safety across different node types.
+ * 
+ * Type Safety Strategy:
+ * - Import specific ReactFlow node data types from each service directory
+ * - Use a discriminated union based on NodeType to create a type-safe GraphNodeData
+ * - Each node operation preserves the specific type information for its node type
+ * 
+ * @see RFTeamMemberNodeData, RFTeamNodeData, etc. for specific node type definitions
+ */
 export default function Canvas() {
     // Use GraphNodeData type for nodes
     const [nodes, setNodes, onNodesChange] = useNodesState<Node<GraphNodeData>>([]);
@@ -55,87 +88,114 @@ export default function Canvas() {
     const { getViewport, addNodes } = useReactFlow();
     
     // Add a node to the graph
-    const addNodeToGraph = useCallback(async (nodeType: NodeType, label: string, position: { x: number, y: number }) => {
-        // Get current viewport to position the node in the visible area
-        console.log(`Creating new ${nodeType} node with label "${label}" at position:`, position);
-        
-        // Create the node in the backend
-        // Get current timestamp for created/updated fields
+    /**
+     * Adds a new node to the graph
+     * @param nodeType The type of node to create
+     * @param label Display name for the node
+     * @param position Initial position on the canvas
+     * @returns The node data from the API
+     * 
+     * @remarks
+     * We use 'any' here because the return type can vary based on the API response.
+     * The code properly validates the response with type guards before using it.
+     */
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const addNodeToGraph = useCallback(async (nodeType: NodeType, label: string, position: XYPosition): Promise<any> => {
+        // Setup base node data with common fields
         const now = new Date().toISOString();
         
-        // Handle different node types with their specific required fields
-        let nodeData: GraphNodeData = {
-            name: label,
-            description: '',
-            createdAt: now,
-            updatedAt: now,
-            position,
-            type: nodeType
-        };
+        // Create node data based on node type
+        let nodeData: GraphNodeData;
         
-        // Different node types require different fields
-        switch (nodeType) {
+        // Customize based on node type
+        switch(nodeType) {
             case 'teamMember':
                 nodeData = {
-                    ...nodeData,
-                    roles: ['developer'], // Default role
-                    hoursPerDay: 8, // Default values
+                    name: label,
+                    title: label,
+                    createdAt: now,
+                    updatedAt: now,
+                    position,
+                    roles: [],
+                    hoursPerDay: 8,
                     daysPerWeek: 5,
-                    weeklyCapacity: 40
-                };
+                    weeklyCapacity: 40,
+                } as RFTeamMemberNodeData;
                 break;
             
             case 'team':
                 nodeData = {
-                    ...nodeData,
-                    roster: [] // Empty roster to start
-                };
+                    name: label,
+                    title: label,
+                    createdAt: now,
+                    updatedAt: now,
+                    position,
+                    season: {
+                        startDate: '2025-01-01',
+                        endDate: '2025-12-31',
+                        name: 'New Season'
+                    },
+                    roster: []
+                } as RFTeamNodeData;
                 break;
             
             case 'feature':
                 nodeData = {
-                    ...nodeData,
-                    buildType: 'internal', // Default values
-                    timeUnit: 'days',
-                    duration: 5,
-                    status: 'planning'
-                };
+                    name: label,
+                    title: label,
+                    createdAt: now,
+                    updatedAt: now,
+                    position,
+                    status: 'planning',
+                    teamMembers: [],
+                    memberAllocations: [],
+                    teamAllocations: []
+                } as RFFeatureNodeData;
                 break;
             
             case 'milestone':
                 nodeData = {
-                    ...nodeData,
-                    dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0] // Default due date: 30 days from now
-                };
+                    name: label,
+                    title: label,
+                    createdAt: now,
+                    updatedAt: now,
+                    position,
+                    status: 'planning'
+                } as RFMilestoneNodeData;
                 break;
             
             case 'provider':
                 nodeData = {
-                    ...nodeData,
-                    name: label, // Name is required by ReactFlowNodeBase
+                    name: label,
+                    title: label,
                     createdAt: now,
-                    updatedAt: now
-                };
+                    updatedAt: now,
+                    position,
+                } as RFProviderNodeData;
                 break;
             
             case 'option':
                 nodeData = {
-                    ...nodeData,
-                    name: label, // Name is required by ReactFlowNodeBase
+                    name: label,
+                    title: label,
                     createdAt: now,
-                    updatedAt: now
-                };
+                    updatedAt: now,
+                    position,
+                    status: 'planning',
+                    goals: [],
+                    risks: []
+                } as RFOptionNodeData;
                 break;
             
             // For all other node types
             default:
                 nodeData = {
-                    ...nodeData,
-                    label, // Also include label
-                    name: label, // Name is required by ReactFlowNodeBase
+                    name: label,
+                    title: label,
                     createdAt: now,
-                    updatedAt: now
-                };
+                    updatedAt: now,
+                    position,
+                } as GraphNodeData;
                 break;
         }
         
@@ -266,7 +326,11 @@ export default function Canvas() {
     
     // Handle node updates from the observer
     useEffect(() => {
-        const handleNodeUpdate = async (publisherId: string, data: unknown, metadata: { updateType: NodeUpdateType }) => {
+        const handleNodeUpdate = async (
+            publisherId: string, 
+            data: unknown, 
+            metadata: NodeUpdateMetadata
+        ) => {
             try {
                 const nodeId = publisherId;
                 const updateType = metadata.updateType;
@@ -315,6 +379,7 @@ export default function Canvas() {
                                 return;
                             }
                             
+                            // Now we're dealing with an actual GraphNodeData with proper typing
                             setNodes(nodes => nodes.map(node => 
                                 node.id === nodeId 
                                     ? { 
@@ -677,7 +742,7 @@ export default function Canvas() {
     }, [nodes, setEdges, setError]);
     
     // Handle node drag stop - update position in database
-    const onNodeDragStop = useCallback(async (event: React.MouseEvent, node: Node) => {
+    const onNodeDragStop = useCallback(async (event: React.MouseEvent, node: Node<GraphNodeData>) => {
         // Skip if node is being deleted
         if (deletingNodes.has(node.id)) return;
         
@@ -714,7 +779,10 @@ export default function Canvas() {
         console.log('Selection ended');
     }, []);
     
-    const onSelectionChange = useCallback(({ nodes, edges }: { nodes: Node[]; edges: Edge[] }) => {
+    const onSelectionChange = useCallback(({ nodes, edges }: { 
+        nodes: Node<GraphNodeData>[]; 
+        edges: Edge[] 
+    }) => {
         console.log('Selection changed:', { selectedNodes: nodes.length, selectedEdges: edges.length });
     }, []);
     
@@ -737,7 +805,7 @@ export default function Canvas() {
                 multiSelectionKeyCode="Control"
                 panOnDrag={panOnDragButtons}
                 deleteKeyCode={['Backspace', 'Delete']}
-                onNodesDelete={(nodes) => nodes.forEach(node => handleNodeDelete(node.id))}
+                onNodesDelete={(nodes: Node<GraphNodeData>[]) => nodes.forEach(node => handleNodeDelete(node.id))}
                 onEdgesDelete={(edges) => edges.forEach(edge => handleEdgeDelete(edge.id))}
                 onSelectionStart={onSelectionStart}
                 onSelectionEnd={onSelectionEnd}

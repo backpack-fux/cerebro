@@ -24,6 +24,12 @@ export class TeamMemberService {
       const updatedAt = createdAt;
       const title = params.title || 'Untitled Team Member';
       
+      // Ensure roles is an array, even if empty
+      const roles = params.roles || [];
+      
+      // Ensure skills is an array, even if empty
+      const skills = params.skills || [];
+      
       const node: RFTeamMemberNode = {
         id: crypto.randomUUID(),
         type: 'teamMember',
@@ -32,7 +38,7 @@ export class TeamMemberService {
           title: title,
           name: title, // Set name to title as required by ReactFlowNodeBase
           description: params.bio || '', // Use bio as description
-          roles: params.roles || [],
+          roles: roles,
           bio: params.bio || '',
           timezone: params.timezone,
           dailyRate: params.dailyRate,
@@ -40,13 +46,20 @@ export class TeamMemberService {
           daysPerWeek: params.daysPerWeek || 5,
           weeklyCapacity: (params.hoursPerDay || 8) * (params.daysPerWeek || 5),
           startDate: params.startDate,
-          skills: params.skills || [],
+          skills: skills,
           createdAt: createdAt,
           updatedAt: updatedAt,
         },
       };
       
-      const result = await this.storage.createNode('teamMember', node.data);
+      // Create a Neo4j-compatible version of the data
+      const neo4jData = {
+        ...node.data,
+        // Properties that need special handling will be handled by the transform function
+      };
+      
+      // For Neo4j storage, we're passing the raw node data and letting the transform handle serialization
+      const result = await this.storage.createNode('teamMember', neo4jData as RFTeamMemberNodeData);
       console.log('[TeamMemberService] Created team member node:', result);
       return result as RFTeamMemberNode;
     } catch (error) {

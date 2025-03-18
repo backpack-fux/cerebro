@@ -132,18 +132,24 @@ export class TeamService {
     console.log('[TeamService] Deleting team node:', id);
     try {
       // Get all edges connected to this team
-      const edges = await this.getEdges(id);
-      
-      // For each connected work node, we should notify them that the team is being deleted
-      // This will allow them to update their UI and internal state
-      for (const edge of edges) {
-        // Check if the edge is connecting to a work node (feature, option, provider)
-        if (edge.type === 'team-feature' || edge.type === 'team-option' || edge.type === 'team-provider') {
-          console.log(`[TeamService] Notifying work node ${edge.target} about team deletion`);
-          
-          // We could implement a notification mechanism here if needed
-          // For now, the work nodes will handle this when they try to access team resources
+      try {
+        // Explicitly pass undefined for the type parameter to avoid Neo4j errors
+        const edges = await this.getEdges(id, undefined);
+        
+        // For each connected work node, we should notify them that the team is being deleted
+        // This will allow them to update their UI and internal state
+        for (const edge of edges) {
+          // Check if the edge is connecting to a work node (feature, option, provider)
+          if (edge.type === 'team-feature' || edge.type === 'team-option' || edge.type === 'team-provider') {
+            console.log(`[TeamService] Notifying work node ${edge.target} about team deletion`);
+            
+            // We could implement a notification mechanism here if needed
+            // For now, the work nodes will handle this when they try to access team resources
+          }
         }
+      } catch (edgeError) {
+        // Log the error but continue with node deletion
+        console.error('[TeamService] Error retrieving edges for team node, continuing with deletion:', edgeError);
       }
       
       // Delete the node from storage

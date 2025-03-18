@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createOptionStorage, createOptionService } from '@/services/graph/neo4j/neo4j.provider';
+import { optionService } from '@/services/graph/neo4j/neo4j.provider';
 import { 
-  Neo4jOptionNodeData, 
   Goal, 
   Risk, 
   MemberAllocation, 
@@ -11,22 +10,6 @@ import {
   CreateOptionNodeParams,
   OptionType
 } from '@/services/graph/option/option.types';
-import { neo4jToReactFlow } from '@/services/graph/option/option.transform';
-
-// Initialize the option service with the correct storage type
-const optionStorage = createOptionStorage();
-const optionService = createOptionService(optionStorage);
-
-interface CreateNodeBody {
-  type: string;
-  data: Neo4jOptionNodeData;
-  position: { x: number; y: number };
-}
-
-interface Neo4jError {
-  code: string;
-  message: string;
-}
 
 /**
  * Validates a Goal object
@@ -142,31 +125,59 @@ function isValidTeamAllocations(allocations: unknown): allocations is TeamAlloca
   return Array.isArray(allocations) && allocations.every(isValidTeamAllocation);
 }
 
-// POST /api/graph/meta/edges - Create a new edge between meta nodes
+// POST /api/graph/option - Create a new option node
 export async function POST(req: NextRequest) {
   try {
     console.log('[API] Starting OptionNode creation');
     const requestBody = await req.json();
     
-    // Type check the request body
-    if (!requestBody || typeof requestBody !== 'object' || !('data' in requestBody)) {
+    console.log('[API] OptionNode creation request body:', JSON.stringify(requestBody));
+    
+    // Handle both formats: nested data object or direct properties
+    let nodeData: Partial<CreateOptionNodeParams> & {
+      goals?: Goal[];
+      risks?: Risk[];
+      memberAllocations?: MemberAllocation[];
+      teamAllocations?: TeamAllocation[];
+      positionX?: number;
+      positionY?: number;
+    };
+    
+    let position: { x: number, y: number } = { x: 0, y: 0 };
+    
+    if ('data' in requestBody && typeof requestBody.data === 'object') {
+      // Format: { data: { title, positionX, positionY, ... } }
+      nodeData = requestBody.data;
+    } else if ('title' in requestBody) {
+      // Format: { title, position, ... } - direct properties
+      nodeData = requestBody;
+      
+      // Handle position differently in this format
+      if ('position' in requestBody && typeof requestBody.position === 'object') {
+        position = requestBody.position;
+        // Add positionX and positionY for compatibility
+        nodeData.positionX = position.x;
+        nodeData.positionY = position.y;
+      }
+    } else {
       console.warn('[API] Invalid OptionNode creation request: Invalid request body');
       return NextResponse.json(
-        { error: 'Invalid request body' },
+        { error: 'Invalid request body', details: 'Request must include title and position data' },
         { status: 400 }
       );
     }
     
-    const body = requestBody as CreateNodeBody;
-    
     // Remove any complex objects from the params
     // These will be handled by the service after node creation
-    const { goals, risks, memberAllocations, teamAllocations, ...createParams } = body.data;
+    const { goals, risks, memberAllocations, teamAllocations, ...createParams } = nodeData;
     
-    if (!createParams.title || !createParams.positionX || !createParams.positionY) {
+    // Check for required fields in either format
+    if (!createParams.title || 
+        ((!createParams.positionX || !createParams.positionY) && 
+         (!position || typeof position.x !== 'number' || typeof position.y !== 'number'))) {
       console.warn('[API] Invalid OptionNode creation request: Missing required fields');
       return NextResponse.json(
-        { error: 'Missing required fields: title and position are required' },
+        { error: 'Missing required fields', details: 'Title and position are required' },
         { status: 400 }
       );
     }
@@ -175,15 +186,15 @@ export async function POST(req: NextRequest) {
     if (createParams.optionType && !['customer', 'contract', 'partner'].includes(createParams.optionType)) {
       console.warn('[API] Invalid OptionNode creation request: Invalid optionType');
       return NextResponse.json(
-        { error: 'Invalid optionType. Must be one of: customer, contract, partner.' },
+        { error: 'Invalid optionType', details: 'Must be one of: customer, contract, partner' },
         { status: 400 }
       );
     }
 
     // Convert Neo4j position format to React Flow format
-    const position = {
-      x: createParams.positionX,
-      y: createParams.positionY
+    const finalPosition = {
+      x: createParams.positionX || position.x,
+      y: createParams.positionY || position.y
     };
 
     // Create params for the service
@@ -193,8 +204,10 @@ export async function POST(req: NextRequest) {
       optionType: createParams.optionType as OptionType | undefined,
       duration: createParams.duration,
       status: createParams.status,
-      position
+      position: finalPosition
     };
+
+    console.log('[API] Creating option node with params:', JSON.stringify(serviceParams));
 
     // Create the option node
     const createdNode = await optionService.create(serviceParams);
@@ -236,40 +249,37 @@ export async function POST(req: NextRequest) {
     }
     
     // Retrieve the node to get the complete data
-    const node = await optionStorage.getNode(createdNode.id);
+    const node = await optionService.getById(createdNode.id);
     
     if (!node) {
-      console.error('[API] Failed to retrieve created node:', createdNode.id);
+      console.error('[API] Failed to retrieve created option node:', createdNode.id);
       return NextResponse.json(
-        { error: 'Failed to retrieve created node' },
+        { error: 'Failed to retrieve created node', details: 'Database query returned null' },
         { status: 500 }
       );
     }
     
-    // Transform the node to properly parse JSON strings
-    const transformedNode = neo4jToReactFlow(node.data as unknown as Neo4jOptionNodeData);
-    
-    // Ensure the ID is included in the response
-    transformedNode.id = createdNode.id;
+    // Ensure the ID is explicitly set in the response
+    node.id = createdNode.id;
     
     console.log('[API] Successfully created OptionNode:', {
-      id: transformedNode.id,
-      type: transformedNode.type,
-      position: transformedNode.position,
+      id: node.id,
+      type: node.type,
+      position: node.position,
       data: {
-        title: transformedNode.data.title,
-        description: transformedNode.data.description,
-        optionType: transformedNode.data.optionType,
-        duration: transformedNode.data.duration,
-        status: transformedNode.data.status,
-        goals: Array.isArray(transformedNode.data.goals) ? `${transformedNode.data.goals.length} goals` : 'not provided',
-        risks: Array.isArray(transformedNode.data.risks) ? `${transformedNode.data.risks.length} risks` : 'not provided',
-        memberAllocations: Array.isArray(transformedNode.data.memberAllocations) ? `${transformedNode.data.memberAllocations.length} allocations` : 'not provided',
-        teamAllocations: Array.isArray(transformedNode.data.teamAllocations) ? `${transformedNode.data.teamAllocations.length} allocations` : 'not provided'
+        title: node.data.title,
+        description: node.data.description,
+        optionType: node.data.optionType,
+        duration: node.data.duration,
+        status: node.data.status,
+        goals: Array.isArray(node.data.goals) ? `${node.data.goals.length} goals` : 'not provided',
+        risks: Array.isArray(node.data.risks) ? `${node.data.risks.length} risks` : 'not provided',
+        memberAllocations: Array.isArray(node.data.memberAllocations) ? `${node.data.memberAllocations.length} allocations` : 'not provided',
+        teamAllocations: Array.isArray(node.data.teamAllocations) ? `${node.data.teamAllocations.length} allocations` : 'not provided'
       }
     });
 
-    return NextResponse.json(transformedNode, { status: 201 });
+    return NextResponse.json(node, { status: 201 });
   } catch (error) {
     console.error('[API] Error creating OptionNode:', {
       error: error instanceof Error ? error.message : 'Unknown error',
@@ -278,7 +288,7 @@ export async function POST(req: NextRequest) {
     });
     
     if (error && typeof error === 'object' && 'code' in error) {
-      const neo4jError = error as Neo4jError;
+      const neo4jError = error as { code: string; message: string };
       console.error('[API] Neo4j error details:', {
         code: neo4jError.code,
         message: neo4jError.message
@@ -287,169 +297,6 @@ export async function POST(req: NextRequest) {
     
     return NextResponse.json(
       { error: 'Failed to create OptionNode', details: error instanceof Error ? error.message : 'Unknown error' },
-      { status: 500 }
-    );
-  }
-}
-
-export async function PUT(req: NextRequest) {
-  try {
-    const requestBody = await req.json();
-    
-    // Type check the request body
-    if (!requestBody || typeof requestBody !== 'object' || !('id' in requestBody)) {
-      console.warn('[API] Invalid OptionNode update request: Invalid request body');
-      return NextResponse.json(
-        { error: 'Invalid request body' },
-        { status: 400 }
-      );
-    }
-
-    const { id, ...updateData } = requestBody;
-    
-    // Check if the node exists first
-    const node = await optionStorage.getNode(id);
-    
-    if (!node) {
-      console.warn('[API] OptionNode not found for update:', id);
-      return NextResponse.json(
-        { error: 'OptionNode not found' },
-        { status: 404 }
-      );
-    }
-
-    // Validate optionType if provided
-    if (updateData.optionType && !['customer', 'contract', 'partner'].includes(updateData.optionType)) {
-      console.warn('[API] Invalid OptionNode update request: Invalid optionType');
-      return NextResponse.json(
-        { error: 'Invalid optionType. Must be one of: customer, contract, partner.' },
-        { status: 400 }
-      );
-    }
-
-    // Validate goals if provided
-    if (updateData.goals !== undefined && !isValidGoals(updateData.goals)) {
-      console.warn('[API] Invalid OptionNode update request: Invalid goals array');
-      return NextResponse.json(
-        { error: 'Invalid goals array. Each goal must have id, description, and impact properties.' },
-        { status: 400 }
-      );
-    }
-
-    // Validate risks if provided
-    if (updateData.risks !== undefined && !isValidRisks(updateData.risks)) {
-      console.warn('[API] Invalid OptionNode update request: Invalid risks array');
-      return NextResponse.json(
-        { error: 'Invalid risks array. Each risk must have id, description, and severity properties.' },
-        { status: 400 }
-      );
-    }
-
-    // Validate memberAllocations if provided
-    if (updateData.memberAllocations !== undefined && !isValidMemberAllocations(updateData.memberAllocations)) {
-      console.warn('[API] Invalid OptionNode update request: Invalid memberAllocations array');
-      return NextResponse.json(
-        { error: 'Invalid memberAllocations array. Each allocation must have memberId and timePercentage properties.' },
-        { status: 400 }
-      );
-    }
-
-    // Validate teamAllocations if provided
-    if (updateData.teamAllocations !== undefined && !isValidTeamAllocations(updateData.teamAllocations)) {
-      console.warn('[API] Invalid OptionNode update request: Invalid teamAllocations array');
-      return NextResponse.json(
-        { error: 'Invalid teamAllocations array. Each allocation must have teamId, requestedHours, and allocatedMembers properties.' },
-        { status: 400 }
-      );
-    }
-
-    console.log('[API] Updating OptionNode with data:', {
-      id: updateData.id,
-      position: updateData.position,
-      title: updateData.title,
-      description: updateData.description,
-      optionType: updateData.optionType,
-      duration: updateData.duration,
-      status: updateData.status,
-      goals: updateData.goals ? `${updateData.goals.length} goals` : 'not provided',
-      risks: updateData.risks ? `${updateData.risks.length} risks` : 'not provided',
-      memberAllocations: updateData.memberAllocations ? `${updateData.memberAllocations.length} allocations` : 'not provided',
-      teamAllocations: updateData.teamAllocations ? `${updateData.teamAllocations.length} allocations` : 'not provided'
-    });
-
-    // Update the option node
-    const updatedNode = await optionService.update({
-      id,
-      ...updateData
-    });
-
-    // Ensure complex objects are properly parsed
-    if (typeof updatedNode.data.goals === 'string') {
-      try {
-        updatedNode.data.goals = JSON.parse(updatedNode.data.goals);
-      } catch {
-        updatedNode.data.goals = [];
-      }
-    }
-    
-    if (typeof updatedNode.data.risks === 'string') {
-      try {
-        updatedNode.data.risks = JSON.parse(updatedNode.data.risks);
-      } catch {
-        updatedNode.data.risks = [];
-      }
-    }
-    
-    if (typeof updatedNode.data.memberAllocations === 'string') {
-      try {
-        updatedNode.data.memberAllocations = JSON.parse(updatedNode.data.memberAllocations);
-      } catch {
-        updatedNode.data.memberAllocations = [];
-      }
-    }
-    
-    if (typeof updatedNode.data.teamAllocations === 'string') {
-      try {
-        updatedNode.data.teamAllocations = JSON.parse(updatedNode.data.teamAllocations);
-      } catch {
-        updatedNode.data.teamAllocations = [];
-      }
-    }
-
-    console.log('[API] Successfully updated OptionNode:', {
-      id: updatedNode.id,
-      type: updatedNode.type,
-      data: {
-        title: updatedNode.data.title,
-        description: updatedNode.data.description,
-        optionType: updatedNode.data.optionType,
-        duration: updatedNode.data.duration,
-        status: updatedNode.data.status,
-        goals: Array.isArray(updatedNode.data.goals) ? `${updatedNode.data.goals.length} goals` : 'not provided',
-        risks: Array.isArray(updatedNode.data.risks) ? `${updatedNode.data.risks.length} risks` : 'not provided',
-        memberAllocations: Array.isArray(updatedNode.data.memberAllocations) ? `${updatedNode.data.memberAllocations.length} allocations` : 'not provided',
-        teamAllocations: Array.isArray(updatedNode.data.teamAllocations) ? `${updatedNode.data.teamAllocations.length} allocations` : 'not provided'
-      }
-    });
-
-    return NextResponse.json(updatedNode);
-  } catch (error) {
-    console.error('[API] Error updating OptionNode:', {
-      error: error instanceof Error ? error.message : 'Unknown error',
-      stack: error instanceof Error ? error.stack : undefined,
-      type: error instanceof Error ? error.constructor.name : typeof error
-    });
-    
-    if (error && typeof error === 'object' && 'code' in error) {
-      const neo4jError = error as Neo4jError;
-      console.error('[API] Neo4j error details:', {
-        code: neo4jError.code,
-        message: neo4jError.message
-      });
-    }
-    
-    return NextResponse.json(
-      { error: 'Failed to update OptionNode', details: error instanceof Error ? error.message : 'Unknown error' },
       { status: 500 }
     );
   }

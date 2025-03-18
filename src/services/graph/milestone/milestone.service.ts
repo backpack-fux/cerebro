@@ -13,6 +13,9 @@ export class MilestoneService {
     console.log('[MilestoneService] Creating milestone node:', params);
     
     try {
+      // Ensure kpis is a valid array
+      const kpis = params.kpis || [];
+      
       const node: RFMilestoneNode = {
         id: crypto.randomUUID(),
         type: 'milestone',
@@ -21,14 +24,20 @@ export class MilestoneService {
           title: params.title || 'Untitled Milestone',
           description: params.description || '',
           status: params.status || 'planning' as NodeStatus,
-          kpis: params.kpis || [],
+          kpis: kpis,
           name: params.title || 'Untitled Milestone', // Default name to title
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
         },
       };
       
-      const result = await this.storage.createNode('milestone', node.data);
+      // Create a Neo4j-compatible version of the data
+      const neo4jData = {
+        ...node.data,
+        // The transformation function will handle serialization of complex objects
+      };
+      
+      const result = await this.storage.createNode('milestone', neo4jData as RFMilestoneNodeData);
       console.log('[MilestoneService] Created milestone node:', result);
       return result as RFMilestoneNode;
     } catch (error) {

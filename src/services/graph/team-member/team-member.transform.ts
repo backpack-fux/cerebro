@@ -1,6 +1,7 @@
 import { RFTeamMemberEdge, Neo4jTeamMemberEdge, TeamMemberSummary, RFTeamMemberNode, RFTeamMemberNodeData, Neo4jTeamMemberNodeData } from './team-member.types';
 import { GraphEdge, GraphNode } from '../neo4j/graph.interface';
 import { Node as Neo4jNode, Relationship as Neo4jRelationship } from 'neo4j-driver';
+import { Role } from '@/services/graph/shared/shared.types';
 
 /**
  * Transform a ReactFlow node to a Neo4j node
@@ -8,11 +9,51 @@ import { Node as Neo4jNode, Relationship as Neo4jRelationship } from 'neo4j-driv
 export function reactFlowToNeo4j(teamMemberNode: RFTeamMemberNode): Neo4jTeamMemberNodeData {
   const data = teamMemberNode.data as RFTeamMemberNodeData;
   
+  // Handle roles - convert to JSON string if it's an array
+  let rolesValue = undefined;
+  if (data.roles) {
+    if (typeof data.roles === 'string') {
+      // If it's already a string, check if it's valid JSON
+      try {
+        JSON.parse(data.roles);
+        rolesValue = data.roles;
+      } catch {
+        rolesValue = JSON.stringify([]);
+      }
+    } else if (Array.isArray(data.roles)) {
+      rolesValue = JSON.stringify(data.roles);
+    } else {
+      rolesValue = JSON.stringify([]);
+    }
+  } else {
+    rolesValue = JSON.stringify([]);
+  }
+  
+  // Handle skills - convert to JSON string if it's an array
+  let skillsValue = undefined;
+  if (data.skills) {
+    if (typeof data.skills === 'string') {
+      // If it's already a string, check if it's valid JSON
+      try {
+        JSON.parse(data.skills);
+        skillsValue = data.skills;
+      } catch {
+        skillsValue = JSON.stringify([]);
+      }
+    } else if (Array.isArray(data.skills)) {
+      skillsValue = JSON.stringify(data.skills);
+    } else {
+      skillsValue = JSON.stringify([]);
+    }
+  } else {
+    skillsValue = JSON.stringify([]);
+  }
+  
   return {
     id: teamMemberNode.id,
     name: data.title || 'Untitled Team Member',
     title: data.title,
-    roles: JSON.stringify(data.roles || []),
+    roles: rolesValue,
     bio: data.bio,
     timezone: data.timezone,
     dailyRate: data.dailyRate,
@@ -20,7 +61,7 @@ export function reactFlowToNeo4j(teamMemberNode: RFTeamMemberNode): Neo4jTeamMem
     daysPerWeek: data.daysPerWeek,
     weeklyCapacity: data.weeklyCapacity,
     startDate: data.startDate,
-    skills: data.skills ? JSON.stringify(data.skills) : undefined,
+    skills: skillsValue,
     teamId: data.teamId,
     allocation: data.allocation,
     createdAt: data.createdAt || new Date().toISOString(),
@@ -125,9 +166,34 @@ export function transformTeamMemberNode(node: Neo4jNode): GraphNode<RFTeamMember
 
   const { positionX, positionY, id, roles, skills, ...properties } = node.properties;
 
-  // Parse JSON strings back to arrays
-  const parsedRoles = roles ? JSON.parse(roles as string) : [];
-  const parsedSkills = skills ? JSON.parse(skills as string) : [];
+  // Parse JSON strings back to arrays with error handling
+  let parsedRoles: Role[] = [];
+  if (roles) {
+    try {
+      if (typeof roles === 'string') {
+        parsedRoles = JSON.parse(roles);
+      } else if (Array.isArray(roles)) {
+        parsedRoles = roles;
+      }
+    } catch (error) {
+      console.error('[TeamMemberTransform] Error parsing roles:', error);
+      parsedRoles = [];
+    }
+  }
+
+  let parsedSkills: string[] = [];
+  if (skills) {
+    try {
+      if (typeof skills === 'string') {
+        parsedSkills = JSON.parse(skills);
+      } else if (Array.isArray(skills)) {
+        parsedSkills = skills;
+      }
+    } catch (error) {
+      console.error('[TeamMemberTransform] Error parsing skills:', error);
+      parsedSkills = [];
+    }
+  }
 
   return {
     id: id as string,
@@ -138,7 +204,9 @@ export function transformTeamMemberNode(node: Neo4jNode): GraphNode<RFTeamMember
       y: typeof positionY === 'number' ? positionY : 0,
     },
     data: {
-      ...properties,
+      // Using a type assertion here for Neo4j properties that will be included in node data
+      // This is safe since we're handling the JSON fields like roles and skills separately
+      ...(properties as Record<string, unknown>),
       roles: parsedRoles,
       skills: parsedSkills,
     } as RFTeamMemberNodeData,

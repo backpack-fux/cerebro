@@ -95,6 +95,13 @@ export class OptionService {
     return this.storage.deleteEdge(edgeId);
   }
 
+  // Add getById method to retrieve a node by ID
+  async getById(id: string): Promise<RFOptionNode | null> {
+    const node = await this.storage.getNode(id);
+    if (!node) return null;
+    return node as RFOptionNode;
+  }
+
   // Option-specific operations
   async addGoal(optionId: string, goal: Goal): Promise<RFOptionNode> {
     const option = await this.storage.getNode(optionId) as RFOptionNode;

@@ -340,10 +340,18 @@ export async function DELETE(request: NextRequest) {
       );
     }
 
-    // Use the teamService to delete the node
-    await teamService.delete(id);
-    
-    console.log('[API] Successfully deleted TeamNode:', id);
+    try {
+      // Use the teamService to delete the node
+      await teamService.delete(id);
+      console.log('[API] Successfully deleted TeamNode:', id);
+    } catch (deleteError) {
+      console.error('[API] Error using teamService.delete:', deleteError);
+      
+      // If edge retrieval failed but we still want to delete the node directly
+      console.log('[API] Attempting direct node deletion as fallback');
+      await neo4jStorage.deleteNode(id);
+      console.log('[API] Successfully deleted TeamNode via direct storage call:', id);
+    }
 
     // Return success response
     return NextResponse.json({ success: true });

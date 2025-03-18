@@ -270,10 +270,16 @@ export class Neo4jGraphStorage<T> implements IGraphStorage<T> {
   async getEdges(nodeId: ReactFlowId, type?: string): Promise<GraphEdge[]> {
     const session = this.driver.session();
     try {
+      // Ensure type is explicitly null if undefined to avoid Neo4j parameter errors
+      const params = { 
+        nodeId, 
+        type: type === undefined ? null : type 
+      };
+      
       // Use the centralized query from CYPHER_QUERIES
       const result = await session.run(
         CYPHER_QUERIES.GET_EDGES,
-        { nodeId, type }
+        params
       );
 
       return result.records
