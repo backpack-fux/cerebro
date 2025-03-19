@@ -5,7 +5,29 @@
  */
 
 import { NodeType } from '@/services/graph/neo4j/api-urls';
-import { PARENT_CHILD_EDGE_TYPE, ParentChildEdgeData, calculateRollupEstimate } from './hierarchy.types';
+import { calculateRollupEstimate } from './hierarchy.types';
+
+// Define interfaces for hierarchy node data
+export interface HierarchyNodeData {
+  id: string;
+  title: string;
+  name?: string;
+  type?: string;
+  data?: {
+    cost?: number;
+    hierarchy?: {
+      parentId?: string | null;
+      childIds?: string[];
+      isRollup?: boolean;
+    };
+    [key: string]: unknown;
+  };
+  rollupEstimate?: number;
+  originalEstimate?: number;
+  rollupContribution?: boolean;
+  weight?: number;
+  [key: string]: unknown;
+}
 
 /**
  * Checks if the given fields include any hierarchy-related fields
@@ -57,7 +79,7 @@ export async function createParentChildRelationship(
 export async function getNodeChildren(
   nodeType: NodeType,
   nodeId: string
-): Promise<any[]> {
+): Promise<HierarchyNodeData[]> {
   // Need to use absolute URLs in Node.js environment
   const baseUrl = typeof window !== 'undefined' ? '' : (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000');
   
@@ -77,7 +99,7 @@ export async function getNodeChildren(
 export async function getNodeParent(
   nodeType: NodeType,
   nodeId: string
-): Promise<any | null> {
+): Promise<HierarchyNodeData | null> {
   // Need to use absolute URLs in Node.js environment
   const baseUrl = typeof window !== 'undefined' ? '' : (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000');
   
@@ -115,7 +137,7 @@ export async function removeParentChildRelationship(
 export async function updateRollupEstimate(
   nodeType: NodeType,
   nodeId: string,
-  nodeData: any
+  nodeData: HierarchyNodeData
 ): Promise<void> {
   // Need to use absolute URLs in Node.js environment
   const baseUrl = typeof window !== 'undefined' ? '' : (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000');
@@ -210,14 +232,14 @@ export async function recalculateParentRollup(
     // Get all children through the service directly
     const childrenResponse = await fetch(`${baseUrl}/api/graph/${nodeType}/${parentId}/children`);
     const childrenData = await childrenResponse.json();
-    const children = childrenData.success ? childrenData.data : [];
+    const children = childrenData.success ? childrenData.data as HierarchyNodeData[] : [];
     
     console.log(`[HierarchyService] Found ${children.length} children for ${nodeType} ${parentId}`);
     
     // Extract costs from children
     const childCosts = children
-      .filter((child: any) => child.rollupContribution !== false)
-      .map((child: any) => {
+      .filter((child: HierarchyNodeData) => child.rollupContribution !== false)
+      .map((child: HierarchyNodeData) => {
         const cost = child.data?.cost || 0;
         console.log(`[HierarchyService] Child ${child.id} has cost: ${cost}`);
         return cost;

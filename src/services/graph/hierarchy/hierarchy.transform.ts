@@ -5,9 +5,9 @@
  * between database format and React Flow format.
  */
 
-import { PARENT_CHILD_EDGE_TYPE, ParentChildEdgeData, HierarchicalNodeData } from './hierarchy.types';
+import { PARENT_CHILD_EDGE_TYPE, HierarchicalNodeData } from './hierarchy.types';
 import { GraphEdge, GraphNode } from '../neo4j/graph.interface';
-import { Edge as RFEdge, Node as RFNode } from "@xyflow/react";
+import { Edge as RFEdge } from "@xyflow/react";
 import { Relationship as Neo4jRelationship } from "neo4j-driver";
 
 /**

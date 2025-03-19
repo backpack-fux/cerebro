@@ -254,7 +254,7 @@ export enum NodeUpdateType {
     }
     
     // Add this method to help debug issues with node observer and API routes
-    logApiRouteError(message: string, params: any) {
+    logApiRouteError(message: string, params: Record<string, unknown>) {
       console.error(`[NodeObserver] API Route Error: ${message}`, params);
       
       // Check for common issues with dynamic route params in Next.js

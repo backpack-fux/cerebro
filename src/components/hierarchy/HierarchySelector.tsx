@@ -12,6 +12,17 @@ interface HierarchySelectorProps {
   onChange?: () => void;
 }
 
+// Define interfaces for hierarchy node data
+interface HierarchyNodeData {
+  id: string;
+  title: string;
+  name?: string;
+  type?: string;
+  data?: Record<string, unknown>;
+  rollupContribution?: boolean;
+  weight?: number;
+}
+
 /**
  * Component for selecting parent-child relationships for a node
  */
@@ -39,7 +50,7 @@ export function HierarchySelector({ nodeId, nodeType, availableNodes, onChange }
         
         // Get children
         const childrenData = await getNodeChildren(nodeType, nodeId);
-        setChildren(childrenData.map((child: any) => ({
+        setChildren(childrenData.map((child: HierarchyNodeData) => ({
           id: child.id,
           title: child.title
         })));

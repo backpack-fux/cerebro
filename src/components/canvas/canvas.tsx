@@ -23,6 +23,7 @@ import { Toaster } from "@/components/ui/sonner";
 import { toast } from "sonner";
 import { nodeObserver, NodeUpdateType, NodeUpdateMetadata } from '@/services/graph/observer/node-observer';
 import { ReactFlowNodeBase } from '@/services/graph/base-node/reactflow.types';
+import { GraphNode, GraphEdge } from '@/services/graph/neo4j/graph.interface';
 
 // Import node type definitions from their respective files
 import { RFTeamMemberNodeData } from '@/services/graph/team-member/team-member.types';
@@ -271,15 +272,15 @@ export default function Canvas() {
                 throw new Error(`Failed to fetch graph data: ${response.status} ${response.statusText}`);
             }
             
-            const data = await response.json();
+            const data = await response.json() as { nodes: GraphNode<unknown>[]; edges: GraphEdge[] };
             console.log('Loaded graph data: ', { nodes: data.nodes?.length, edges: data.edges?.length });
             
             // Filter out blacklisted nodes
-            const filteredNodes = (data.nodes || []).filter((node: any) => !GraphApiClient.isNodeBlacklisted(node.id));
+            const filteredNodes = (data.nodes || []).filter((node: GraphNode<unknown>) => !GraphApiClient.isNodeBlacklisted(node.id));
             console.log(`Filtered out ${(data.nodes || []).length - filteredNodes.length} blacklisted nodes`);
             
             // Transform nodes to React Flow format
-            const reactflowNodes = filteredNodes.map((node: any) => ({
+            const reactflowNodes = filteredNodes.map((node: GraphNode<unknown>) => ({
                 id: node.id,
                 type: node.type,
                 position: node.position,
@@ -287,7 +288,7 @@ export default function Canvas() {
             })) as Node<GraphNodeData>[];
             
             // Transform edges to React Flow format
-            const reactflowEdges = (data.edges || []).map((edge: any) => {
+            const reactflowEdges = (data.edges || []).map((edge: GraphEdge) => {
                 // Check if this is a SOURCE or PARENT_CHILD type edge
                 const isHierarchical = edge.type === 'SOURCE' || edge.type === 'PARENT_CHILD';
                 

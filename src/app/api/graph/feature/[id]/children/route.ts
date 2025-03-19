@@ -1,6 +1,7 @@
 import { NextResponse, NextRequest } from 'next/server';
 import { featureService, createFeatureStorage } from '@/services/graph/neo4j/neo4j.provider';
 import { PARENT_CHILD_EDGE_TYPE } from '@/services/graph/hierarchy/hierarchy.types';
+import { HierarchicalNodeRelationship } from '@/services/graph/hierarchy/hierarchy.types';
 
 // Initialize the feature service with the correct storage type
 const featureStorage = createFeatureStorage();
@@ -10,10 +11,7 @@ const featureStorage = createFeatureStorage();
  * 
  * Retrieves all child nodes of a feature node.
  */
-export async function GET(
-  request: NextRequest,
-  { params }: { params: { id: string } }
-) {
+export async function GET(request: NextRequest) {
   // Use URL path to extract ID - more reliable way in Next.js 13+
   const url = new URL(request.url);
   const segments = url.pathname.split('/');
@@ -23,7 +21,13 @@ export async function GET(
   
   if (!featureId) {
     return NextResponse.json(
-      { success: false, error: 'Missing feature ID' },
+      { 
+        success: false, 
+        error: { 
+          code: "400", 
+          message: 'Missing feature ID' 
+        } 
+      },
       { status: 400 }
     );
   }
@@ -72,7 +76,13 @@ export async function GET(
   } catch (error) {
     console.error(`[API] Error getting children of feature ${featureId}:`, error);
     return NextResponse.json(
-      { success: false, error: 'Failed to get feature children' },
+      { 
+        success: false, 
+        error: { 
+          code: "500", 
+          message: 'Failed to get feature children' 
+        } 
+      },
       { status: 500 }
     );
   }
@@ -83,10 +93,7 @@ export async function GET(
  * 
  * Creates a parent-child relationship between a parent feature and a child feature.
  */
-export async function POST(
-  request: NextRequest,
-  { params }: { params: { id: string } }
-) {
+export async function POST(request: NextRequest) {
   // Use URL path to extract ID - more reliable way in Next.js 13+
   const url = new URL(request.url);
   const segments = url.pathname.split('/');
@@ -96,7 +103,13 @@ export async function POST(
   
   if (!parentId) {
     return NextResponse.json(
-      { success: false, error: 'Missing parent feature ID' },
+      { 
+        success: false, 
+        error: { 
+          code: "400", 
+          message: 'Missing parent feature ID' 
+        } 
+      },
       { status: 400 }
     );
   }
@@ -107,7 +120,13 @@ export async function POST(
     
     if (!childId) {
       return NextResponse.json(
-        { success: false, error: 'Child ID is required' },
+        { 
+          success: false, 
+          error: { 
+            code: "400", 
+            message: 'Child ID is required' 
+          } 
+        },
         { status: 400 }
       );
     }
@@ -122,7 +141,10 @@ export async function POST(
       return NextResponse.json(
         { 
           success: false, 
-          error: !parentNode ? 'Parent node not found' : 'Child node not found' 
+          error: { 
+            code: "404", 
+            message: !parentNode ? 'Parent node not found' : 'Child node not found' 
+          } 
         },
         { status: 404 }
       );
@@ -132,7 +154,13 @@ export async function POST(
     const existingEdges = await featureStorage.getEdges(parentId, PARENT_CHILD_EDGE_TYPE);
     if (existingEdges && existingEdges.some(edge => edge.to === childId)) {
       return NextResponse.json(
-        { success: false, error: 'Parent-child relationship already exists' },
+        { 
+          success: false, 
+          error: { 
+            code: "409", 
+            message: 'Parent-child relationship already exists' 
+          } 
+        },
         { status: 409 }
       );
     }
@@ -159,10 +187,11 @@ export async function POST(
     // Update the hierarchy data for both parent and child
     // Update child to reference parent
     if (childNode.data && childNode.data.hierarchy) {
+      const childHierarchy: HierarchicalNodeRelationship = childNode.data.hierarchy;
       await featureService.update({
         id: childId,
         hierarchy: {
-          ...childNode.data.hierarchy,
+          ...childHierarchy,
           parentId
         }
       });
@@ -179,15 +208,16 @@ export async function POST(
     
     // Update parent to reference child
     if (parentNode.data && parentNode.data.hierarchy) {
+      const parentHierarchy: HierarchicalNodeRelationship = parentNode.data.hierarchy;
       const updatedChildIds = [
-        ...(parentNode.data.hierarchy.childIds || []),
+        ...(parentHierarchy.childIds || []),
         childId
       ];
       
       await featureService.update({
         id: parentId,
         hierarchy: {
-          ...parentNode.data.hierarchy,
+          ...parentHierarchy,
           childIds: updatedChildIds,
           isRollup: true
         }
@@ -216,7 +246,13 @@ export async function POST(
   } catch (error) {
     console.error(`[API] Error creating parent-child relationship for feature ${parentId}:`, error);
     return NextResponse.json(
-      { success: false, error: 'Failed to create parent-child relationship' },
+      { 
+        success: false, 
+        error: { 
+          code: "500", 
+          message: 'Failed to create parent-child relationship' 
+        } 
+      },
       { status: 500 }
     );
   }

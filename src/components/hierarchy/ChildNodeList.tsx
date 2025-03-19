@@ -42,13 +42,17 @@ export function ChildNodeList({
         const childrenData = await getNodeChildren(nodeType, nodeId);
         
         // Map data to our simpler format
-        const formattedChildren = childrenData.map((child: any) => ({
-          id: child.id,
-          title: child.title,
-          originalEstimate: child.originalEstimate,
-          rollupEstimate: child.rollupEstimate,
-          rollupContribution: child.rollupContribution
-        }));
+        const formattedChildren = childrenData.map((child) => {
+          // Create a properly typed child object
+          const typedChild: ChildNode = {
+            id: child.id,
+            title: child.data?.title?.toString() || child.title || 'Untitled',
+            originalEstimate: typeof child.data?.originalEstimate === 'number' ? child.data.originalEstimate : undefined,
+            rollupEstimate: typeof child.data?.rollupEstimate === 'number' ? child.data.rollupEstimate : undefined,
+            rollupContribution: child.rollupContribution
+          };
+          return typedChild;
+        });
         
         setChildren(formattedChildren);
         setLoading(false);

@@ -115,7 +115,7 @@ export function RollupSummary({ nodeData, className = '' }: RollupSummaryProps) 
           ) : (
             <p>
               This is a parent feature that aggregates work from {hierarchy?.childIds.length} sub-features.
-              It doesn't have its own direct time estimate.
+              It doesn&apos;t have its own direct time estimate.
             </p>
           )}
         </div>
