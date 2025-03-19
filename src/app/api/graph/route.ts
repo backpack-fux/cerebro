@@ -37,9 +37,37 @@ export async function GET() {
       });
     });
 
+    // Transform edges to React Flow format and deduplicate them
+    const transformedEdges = graphData.edges.map(edge => ({
+      id: edge.id,
+      source: edge.from,
+      target: edge.to,
+      type: 'default', // Use default edge type for ReactFlow rendering
+      data: {
+        label: edge.properties?.label,
+        edgeType: edge.type.toLowerCase()
+      }
+    }));
+
+    // Deduplicate edges based on source+target combination
+    const edgeMap = new Map();
+    transformedEdges.forEach(edge => {
+      const key = `${edge.source}-${edge.target}`;
+      if (!edgeMap.has(key) || edge.id > edgeMap.get(key).id) {
+        edgeMap.set(key, edge);
+      }
+    });
+    
+    const uniqueEdges = Array.from(edgeMap.values());
+    console.log('[API] Edge transformation complete:', {
+      originalCount: graphData.edges.length,
+      uniqueCount: uniqueEdges.length,
+      droppedCount: graphData.edges.length - uniqueEdges.length 
+    });
+
     const response = {
       nodes: validNodes,
-      edges: graphData.edges
+      edges: uniqueEdges
     };
 
     console.log('[API] Sending response with:', {

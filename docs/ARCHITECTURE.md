@@ -123,6 +123,32 @@ The system supports several node types, each with specific responsibilities:
    - Roadmap planning
    - Cross-node relationships
 
+### 4. Edge Management
+
+1. **Edge Storage**
+   - Edges are stored as Neo4j relationships
+   - Each edge has a unique ID
+   - Edges maintain type information
+   - Properties are stored as JSON strings
+
+2. **Edge Transformation**
+   - Neo4j edges use `from/to` properties
+   - React Flow edges use `source/target` properties
+   - Transformation happens in API layer
+   - Type information is preserved
+
+3. **Edge Deduplication**
+   - Edges are deduplicated based on source-target pairs
+   - Only the most recent edge between nodes is kept
+   - The graph API automatically filters duplicates
+   - A dedicated utility endpoint handles cleanup
+
+4. **Edge Types**
+   - Different relationships use specialized edge types
+   - Team relationships have allocation metadata
+   - Feature relationships have dependency metadata
+   - Edge type determines visual rendering and behavior
+
 ## Data Flow
 
 1. **Node Updates**
