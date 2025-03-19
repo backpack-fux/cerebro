@@ -303,10 +303,41 @@ export default function Canvas() {
                     
                     console.log(`Filtered out ${data.nodes.length - filteredNodes.length} blacklisted nodes`);
                     setNodes(filteredNodes);
-                }
                 
-                if (data.edges && Array.isArray(data.edges)) {
-                    setEdges(data.edges);
+                    if (data.edges && Array.isArray(data.edges)) {
+                        // Make sure edges have the correct format for React Flow
+                        // ReactFlow expects source/target while Neo4j uses from/to
+                        const processedEdges = data.edges.map((edge: Edge | Record<string, unknown>) => {
+                            // If the edge already has source/target properties, use them
+                            if ('source' in edge && 'target' in edge) {
+                                return edge as Edge;
+                            }
+                            
+                            // Otherwise, transform from Neo4j format to ReactFlow format
+                            return {
+                                id: String(edge.id),
+                                source: String(edge.from || edge.source),
+                                target: String(edge.to || edge.target),
+                                type: 'default',
+                                data: {
+                                    ...(edge.data || {}),
+                                    edgeType: (edge.type as string)?.toLowerCase() || 'default',
+                                    label: (edge.properties as Record<string, unknown>)?.label || (edge.data as Record<string, unknown>)?.label
+                                }
+                            } as Edge;
+                        }).filter((edge: Edge) => {
+                            // Only keep edges where both source and target nodes exist
+                            const sourceExists = filteredNodes.some((node: Node<GraphNodeData>) => node.id === edge.source);
+                            const targetExists = filteredNodes.some((node: Node<GraphNodeData>) => node.id === edge.target);
+                            return sourceExists && targetExists;
+                        });
+
+                        console.log(`Processed ${processedEdges.length} edges for React Flow`);
+                        setEdges(processedEdges);
+                    }
+                } else if (data.edges && Array.isArray(data.edges)) {
+                    // If there are no nodes but there are edges, just set edges to empty array
+                    setEdges([]);
                 }
             } catch (error) {
                 console.error('Error fetching graph data:', error);

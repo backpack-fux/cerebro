@@ -183,6 +183,31 @@ src/
    - Optimize bundle size
    - Use proper tree shaking
 
+### Edge Handling
+
+1. **Edge Persistence**
+   - Edges are stored in Neo4j with `from/to` properties
+   - React Flow uses `source/target` properties
+   - The API transforms between these formats
+   - Edges are properly persisted between sessions
+
+2. **Edge Deduplication**
+   - The graph API automatically deduplicates edges based on source-target pairs
+   - A utility endpoint `/api/graph/dedupe-edges` can clean up existing duplicate edges
+   - The console includes a "Fix Duplicate Edges" button for manual cleanup
+   - Edge filtering ensures both source and target nodes exist
+
+3. **Edge Types**
+   - Default edges use the `default` type in React Flow
+   - Custom edge types can be specified based on connected node types
+   - Edge metadata is stored in the `data` property
+
+4. **Edge Creation Rules**
+   - Team-Member to Team edges have special allocation properties
+   - Different node combinations create different edge types
+   - Only create edges between existing nodes
+   - Properly cleanup edges when nodes are deleted
+
 ### Debugging
 
 1. **React DevTools**
