@@ -132,13 +132,26 @@ export const ProviderNode = memo(function ProviderNode({ id, data, selected }: N
     const result = new Map<string, ImportedMemberAllocationData>();
     
     allocations.forEach((allocation, key) => {
+      // Ensure we're dealing with proper number values
+      const hours = typeof allocation.hours === 'number' ? allocation.hours : 0;
+      const cost = typeof allocation.cost === 'number' ? allocation.cost : 0;
+      
       const converted: ImportedMemberAllocationData = {
-        ...allocation,
+        memberId: allocation.memberId,
+        name: allocation.name || '',
+        hours: hours,
+        cost: cost,
+        percentage: allocation.percentage || 0,
+        weeklyCapacity: allocation.capacity, // Map capacity to weeklyCapacity
         memberCapacity: allocation.memberCapacity ? {
-          hoursPerDay: allocation.memberCapacity as number,
+          hoursPerDay: typeof allocation.memberCapacity === 'number' ? 
+            allocation.memberCapacity : 8, // Default value if not a number
           daysPerWeek: 5, // Default value
         } : undefined,
-        cost: allocation.cost || 0, // Ensure cost is defined
+        isOverAllocated: false, // Default value
+        availableHours: 0, // Default value
+        effectiveCapacity: 0, // Default value
+        overAllocatedBy: 0, // Default value
       };
       result.set(key, converted);
     });
@@ -289,6 +302,12 @@ export const ProviderNode = memo(function ProviderNode({ id, data, selected }: N
             <Badge variant="outline" className="font-mono">
               {formatHours(costSummary.totalHours)}
             </Badge>
+            {provider.isLoading && (
+              <RefreshCw className="h-3 w-3 animate-spin text-muted-foreground ml-1" aria-label="Loading data..." />
+            )}
+            {provider.isSavingAllocations && (
+              <RefreshCw className="h-3 w-3 animate-spin text-blue-500 ml-1" aria-label="Saving allocations..." />
+            )}
           </Label>
           
           {provider.connectedTeams.length === 0 && (

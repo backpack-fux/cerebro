@@ -1,10 +1,48 @@
 # Changelog
 
-This document tracks significant changes, bug fixes, and feature additions to the Cerebro project.
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-## [0.1.0] - 2025-03-19
+### Added
+- Comprehensive documentation for Feature Node data flow in ARCHITECTURE.md and API.md
+- JSDoc documentation for Feature Node data structures and publishing mechanisms
+- Detailed type definitions for Feature Node data structures
+- Implementation notes for preventing circular updates in Feature Node
+- Standardized duration handling across all node types with `useDurationPublishing` hook
+- Multiple protection mechanisms to prevent circular updates
+- Consistent API for duration field updates
+- Improved debug logging for update tracking
+- Standardized member allocation handling with new `useMemberAllocationPublishing` hook
+- Protection against circular updates in member allocation flows
+- Standardized member allocation handling across all node types (feature, option, provider) using the `useMemberAllocationPublishing` hook
+- Added date handling functions to option node to align with other node types
+- Improved type safety in allocation management
+
+### Changed
+- Refactored feature, provider, and option nodes to use standardized duration handling
+- Updated API documentation with duration handling best practices
+- Enhanced event filtering to avoid update loops
+- Unified member allocation implementation across all work node types
+- Improved allocation slider behavior and value rendering
+
+### Fixed
+- Resolved circular update loops in feature nodes
+- Fixed inconsistent duration update handling between node types
+- Eliminated redundant API calls and updates
+- Fixed member allocation values not rendering correctly in work nodes
+- Resolved allocation data synchronization issues
+- Date persistence issue in Feature Node UI
+- Member allocation rendering issues across node types
+- Standardized member allocation publishing patterns
+- Fixed circular update issues in option node by implementing standardized allocation publishing pattern
+- Corrected type inconsistencies in member allocation interfaces
+- Added missing functions for date management in option node
+
+## [0.1.0] - 2023-03-19
 
 ### Added
 - Edge deduplication utility accessed through a "Fix Duplicate Edges" button in the console panel
@@ -12,14 +50,8 @@ This document tracks significant changes, bug fixes, and feature additions to th
 - Better filtering of invalid edges during graph loading
 
 ### Fixed
-- Edge persistence issue on page refresh
-  - Edges now properly persist between sessions and appear correctly after page reload
-  - Fixed source/target vs from/to property mismatch between Neo4j and React Flow
-  - Added proper edge transformation in the graph loading process
-- Duplicate edge creation issue
-  - Added deduplication logic in the graph API endpoint
-  - Implemented utility endpoint to clean up existing duplicate edges
-  - Added edge filtering to ensure both source and target nodes exist
+- Implemented utility endpoint to clean up existing duplicate edges
+- Added edge filtering to ensure both source and target nodes exist
 
 ### Technical Improvements
 - Enhanced typings for edge-related operations

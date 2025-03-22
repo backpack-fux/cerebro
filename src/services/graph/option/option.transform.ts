@@ -1,51 +1,60 @@
 import { RFOptionNode, RFOptionNodeData, Neo4jOptionNodeData, RFOptionEdge, Neo4jOptionEdge, Goal, Risk, MemberAllocation, TeamAllocation } from '@/services/graph/option/option.types';
 import { GraphEdge, GraphNode } from '../neo4j/graph.interface';
 import { Node as Neo4jNode, Relationship as Neo4jRelationship } from 'neo4j-driver';
-
-/**
- * Helper function to safely parse JSON strings
- * @param jsonString The string to parse as JSON
- * @param defaultValue The default value to return if parsing fails
- * @returns The parsed JSON object or the default value
- */
-function safeJsonParse<T>(jsonString: string | undefined, defaultValue: T): T {
-  if (!jsonString) return defaultValue;
-  
-  // Check if the string is a valid JSON before attempting to parse
-  if (typeof jsonString !== 'string' || !jsonString.trim().startsWith('{') && !jsonString.trim().startsWith('[')) {
-    return defaultValue;
-  }
-  
-  try {
-    return JSON.parse(jsonString) as T;
-  } catch (e) {
-    console.warn('Failed to parse JSON string:', e);
-    return defaultValue;
-  }
-}
+import { parseDataFromBackend } from '@/utils/utils';
 
 export function reactFlowToNeo4j(optionNode: RFOptionNode): Neo4jOptionNodeData {
   const data = optionNode.data as RFOptionNodeData; // Cast to ensure type safety
   
-  // Helper function to safely handle JSON serialization
-  const safeJsonStringify = (value: unknown): string | undefined => {
-    if (!value) return undefined;
-    
-    if (typeof value === 'string') {
+  // Check if teamAllocations is already a string to prevent double serialization
+  let teamAllocationsValue = undefined;
+  if (data.teamAllocations) {
+    if (typeof data.teamAllocations === 'string') {
+      // If it's already a string, check if it's valid JSON
       try {
         // Try to parse it to validate it's proper JSON
-        JSON.parse(value);
+        JSON.parse(data.teamAllocations);
         // If it parses successfully, use it as is
-        return value;
-      } catch {
+        teamAllocationsValue = data.teamAllocations;
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      } catch (_) {
         // If it's not valid JSON, stringify it
-        return JSON.stringify(value);
+        teamAllocationsValue = JSON.stringify(data.teamAllocations);
       }
     } else {
-      // If it's an object/array, stringify it
-      return JSON.stringify(value);
+      // If it's an array, stringify it
+      teamAllocationsValue = JSON.stringify(data.teamAllocations);
     }
-  };
+  }
+
+  // Similar checks for other JSON fields
+  const teamMembersValue = data.teamMembers ? 
+    (typeof data.teamMembers === 'string' ? 
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      ((() => { try { JSON.parse(data.teamMembers); return data.teamMembers; } catch (_) { return JSON.stringify(data.teamMembers); } })()) : 
+      JSON.stringify(data.teamMembers)) : 
+    undefined;
+
+  const memberAllocationsValue = data.memberAllocations ? 
+    (typeof data.memberAllocations === 'string' ? 
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      ((() => { try { JSON.parse(data.memberAllocations); return data.memberAllocations; } catch (_) { return JSON.stringify(data.memberAllocations); } })()) : 
+      JSON.stringify(data.memberAllocations)) : 
+    undefined;
+    
+  const goalsValue = data.goals ? 
+    (typeof data.goals === 'string' ? 
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      ((() => { try { JSON.parse(data.goals); return data.goals; } catch (_) { return JSON.stringify(data.goals); } })()) : 
+      JSON.stringify(data.goals)) : 
+    undefined;
+    
+  const risksValue = data.risks ? 
+    (typeof data.risks === 'string' ? 
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      ((() => { try { JSON.parse(data.risks); return data.risks; } catch (_) { return JSON.stringify(data.risks); } })()) : 
+      JSON.stringify(data.risks)) : 
+    undefined;
   
   return {
     id: optionNode.id, // Use React Flow's string ID
@@ -56,13 +65,13 @@ export function reactFlowToNeo4j(optionNode: RFOptionNode): Neo4jOptionNodeData 
     transactionFeeRate: data.transactionFeeRate,
     monthlyVolume: data.monthlyVolume,
     duration: data.duration,
-    teamMembers: safeJsonStringify(data.teamMembers),
-    memberAllocations: safeJsonStringify(data.memberAllocations),
-    goals: safeJsonStringify(data.goals),
-    risks: safeJsonStringify(data.risks),
+    teamMembers: teamMembersValue,
+    memberAllocations: memberAllocationsValue,
+    goals: goalsValue,
+    risks: risksValue,
     buildDuration: data.buildDuration,
     timeToClose: data.timeToClose,
-    teamAllocations: safeJsonStringify(data.teamAllocations),
+    teamAllocations: teamAllocationsValue,
     status: data.status,
     createdAt: data.createdAt || new Date().toISOString(), // Default to now if not provided
     updatedAt: data.updatedAt || new Date().toISOString(), // Default to now if not provided
@@ -72,12 +81,11 @@ export function reactFlowToNeo4j(optionNode: RFOptionNode): Neo4jOptionNodeData 
 }
 
 export function neo4jToReactFlow(neo4jData: Neo4jOptionNodeData): RFOptionNode {
-  // Parse JSON strings back to objects using the safe parser
-  const teamMembers = safeJsonParse<string[]>(neo4jData.teamMembers, []);
-  const memberAllocations = safeJsonParse<MemberAllocation[]>(neo4jData.memberAllocations, []);
-  const goals = safeJsonParse<Goal[]>(neo4jData.goals, []);
-  const risks = safeJsonParse<Risk[]>(neo4jData.risks, []);
-  const teamAllocations = safeJsonParse<TeamAllocation[]>(neo4jData.teamAllocations, []);
+  // Define JSON fields that need special handling
+  const jsonFields = ['teamMembers', 'memberAllocations', 'goals', 'risks', 'teamAllocations'];
+  
+  // Parse all JSON fields
+  const parsedData = parseDataFromBackend(neo4jData as unknown as Record<string, unknown>, jsonFields);
 
   return {
     id: neo4jData.id,
@@ -91,13 +99,13 @@ export function neo4jToReactFlow(neo4jData: Neo4jOptionNodeData): RFOptionNode {
       transactionFeeRate: neo4jData.transactionFeeRate,
       monthlyVolume: neo4jData.monthlyVolume,
       duration: neo4jData.duration,
-      teamMembers: teamMembers,
-      memberAllocations: memberAllocations,
-      goals: goals,
-      risks: risks,
+      teamMembers: parsedData.teamMembers,
+      memberAllocations: parsedData.memberAllocations,
+      goals: parsedData.goals,
+      risks: parsedData.risks,
       buildDuration: neo4jData.buildDuration,
       timeToClose: neo4jData.timeToClose,
-      teamAllocations: teamAllocations,
+      teamAllocations: parsedData.teamAllocations,
       status: neo4jData.status,
       createdAt: neo4jData.createdAt,
       updatedAt: neo4jData.updatedAt,
@@ -166,12 +174,58 @@ export function transformOptionNode(node: Neo4jNode): GraphNode<RFOptionNodeData
     ...properties 
   } = node.properties;
 
-  // Parse JSON strings back to objects using the safe parser
-  const teamMembersData = safeJsonParse<string[]>(teamMembers as string, []);
-  const memberAllocationsData = safeJsonParse<MemberAllocation[]>(memberAllocations as string, []);
-  const goalsData = safeJsonParse<Goal[]>(goals as string, []);
-  const risksData = safeJsonParse<Risk[]>(risks as string, []);
-  const teamAllocationsData = safeJsonParse<TeamAllocation[]>(teamAllocations as string, []);
+  // Parse JSON strings back to objects with robust error handling
+  let teamMembersData: string[] = [];
+  let memberAllocationsData: MemberAllocation[] = [];
+  let goalsData: Goal[] = [];
+  let risksData: Risk[] = [];
+  let teamAllocationsData: TeamAllocation[] = [];
+
+  // Helper function to safely parse JSON with better error reporting
+  const safeParseJson = <T>(jsonValue: unknown, defaultValue: T, fieldName: string): T => {
+    if (jsonValue === undefined || jsonValue === null) {
+      return defaultValue;
+    }
+    
+    // If it's already an array, return it directly
+    if (Array.isArray(jsonValue)) {
+      console.log(`[transformOptionNode] ${fieldName} is already an array with ${jsonValue.length} elements`);
+      return jsonValue as unknown as T;
+    }
+    
+    // If it's not a string, we can't parse it as JSON
+    if (typeof jsonValue !== 'string') {
+      console.log(`[transformOptionNode] ${fieldName} is not a string (${typeof jsonValue}), returning default`);
+      return defaultValue;
+    }
+    
+    // Empty strings should return default
+    if (jsonValue.trim() === '') {
+      console.log(`[transformOptionNode] ${fieldName} is an empty string, returning default`);
+      return defaultValue;
+    }
+    
+    // Ensure it's valid JSON before trying to parse
+    if (!jsonValue.trim().startsWith('{') && !jsonValue.trim().startsWith('[')) {
+      console.log(`[transformOptionNode] ${fieldName} is not valid JSON format: ${jsonValue.substring(0, 20)}...`);
+      return defaultValue;
+    }
+    
+    try {
+      return JSON.parse(jsonValue) as T;
+    } catch (error) {
+      console.error(`[transformOptionNode] Error parsing ${fieldName} JSON:`, error);
+      console.log(`[transformOptionNode] ${fieldName} value:`, jsonValue.substring(0, 100));
+      return defaultValue;
+    }
+  };
+
+  // Use the safer parsing function for all fields
+  teamMembersData = safeParseJson<string[]>(teamMembers, [], 'teamMembers');
+  memberAllocationsData = safeParseJson<MemberAllocation[]>(memberAllocations, [], 'memberAllocations');
+  goalsData = safeParseJson<Goal[]>(goals, [], 'goals');
+  risksData = safeParseJson<Risk[]>(risks, [], 'risks');
+  teamAllocationsData = safeParseJson<TeamAllocation[]>(teamAllocations, [], 'teamAllocations');
 
   return {
     id: id as string,

@@ -299,9 +299,9 @@ export function useTeamMemberNode(
     updateWeeklyCapacity(data.hoursPerDay ?? 8, validDays);
   }, [data.hoursPerDay, updateWeeklyCapacity]);
 
-  const handleDailyRateChange = useCallback((rate: number) => {
+  const handleHourlyRateChange = useCallback((rate: number) => {
     if (!isNaN(rate)) {
-      const updatedData: Partial<RFTeamMemberNodeData> = { dailyRate: rate };
+      const updatedData: Partial<RFTeamMemberNodeData> = { hourlyRate: rate };
       updateNodeData(id, { ...data, ...updatedData });
       
       // Clear any existing debounce timer
@@ -357,14 +357,14 @@ export function useTeamMemberNode(
   const memberSummary = useMemo<TeamMemberSummary>(() => ({
     id,
     weeklyCapacity: data.weeklyCapacity || 0,
-    dailyRate: data.dailyRate || 0,
+    dailyRate: data.hourlyRate || 0,
     roles: data.roles || [],
     allocation: data.allocation || 0,
     startDate: data.startDate
   }), [
     id,
     data.weeklyCapacity,
-    data.dailyRate,
+    data.hourlyRate,
     data.roles,
     data.allocation,
     data.startDate
@@ -650,7 +650,7 @@ export function useTeamMemberNode(
     bio: data.bio || '',
     roles: data.roles || [],
     timezone: data.timezone || '',
-    dailyRate: data.dailyRate || 350,
+    hourlyRate: data.hourlyRate || 350,
     hoursPerDay: data.hoursPerDay || 8,
     daysPerWeek: data.daysPerWeek || 5,
     weeklyCapacity: data.weeklyCapacity || 0,
@@ -670,7 +670,7 @@ export function useTeamMemberNode(
     handleBioChange,
     handleHoursPerDayChange,
     handleDaysPerWeekChange,
-    handleDailyRateChange,
+    handleDailyRateChange: handleHourlyRateChange,
     handleStartDateChange,
     handleRolesChange,
     handleTimezoneChange,
@@ -689,7 +689,7 @@ export function useTeamMemberNode(
     data.bio,
     data.roles,
     data.timezone,
-    data.dailyRate,
+    data.hourlyRate,
     data.hoursPerDay,
     data.daysPerWeek,
     data.weeklyCapacity,
@@ -705,7 +705,7 @@ export function useTeamMemberNode(
     handleBioChange,
     handleHoursPerDayChange,
     handleDaysPerWeekChange,
-    handleDailyRateChange,
+    handleHourlyRateChange,
     handleStartDateChange,
     handleRolesChange,
     handleTimezoneChange,

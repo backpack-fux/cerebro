@@ -14,11 +14,14 @@ import { useTeamAllocation } from "@/hooks/useTeamAllocation";
 import { useNodeStatus, NodeStatus } from "@/hooks/useNodeStatus";
 import { useDurationInput } from "@/hooks/useDurationInput";
 import { useResourceAllocation } from "@/hooks/useResourceAllocation";
+import { useMemberAllocationPublishing, NodeDataWithTeamAllocations } from "@/hooks/useMemberAllocationPublishing";
 import { v4 as uuidv4 } from 'uuid';
-import { prepareDataForBackend, parseDataFromBackend, parseJsonIfString } from "@/utils/utils";
+import { parseDataFromBackend, parseJsonIfString } from "@/utils/utils";
 import { isProviderNode } from "@/utils/type-guards";
 import { TeamAllocation } from "@/utils/types/allocation";
 import { useNodeObserver } from '@/hooks/useNodeObserver';
+import { useDurationPublishing } from '@/utils/hooks/useDurationPublishing';
+import { NodeUpdateMetadata } from '@/services/graph/observer/node-observer';
 
 // Extend RFProviderNodeData to ensure status is of type NodeStatus
 interface ExtendedRFProviderNodeData extends RFProviderNodeData {
@@ -38,18 +41,18 @@ export function useProviderNode(id: string, data: ExtendedRFProviderNodeData) {
   // Define JSON fields that need special handling
   const jsonFields = useMemo(() => ['costs', 'ddItems', 'teamAllocations', 'memberAllocations'], []);
   
+  // Add loading state
+  const [isLoading, setIsLoading] = useState(true);
+  
   // Parse complex objects if they are strings
   const parsedData = useMemo(() => {
     return parseDataFromBackend(data, jsonFields) as RFProviderNodeData;
   }, [data, jsonFields]);
   
   // Validate that the node is a provider node
-  useEffect(() => {
-    const nodeFromGraph = getNodes().find(n => n.id === id);
-    if (nodeFromGraph && !isProviderNode(nodeFromGraph)) {
-      console.warn(`Node ${id} exists but is not a provider node. Found type: ${nodeFromGraph.type}`);
-    }
-  }, [id, getNodes]);
+  if (!parsedData.title) {
+    console.error('Invalid provider node data:', parsedData);
+  }
   
   // State for provider data
   const [title, setTitle] = useState(parsedData.title || '');
@@ -60,6 +63,8 @@ export function useProviderNode(id: string, data: ExtendedRFProviderNodeData) {
   const [ddItems, setDDItems] = useState<DDItem[]>(
     Array.isArray(parsedData.ddItems) ? parsedData.ddItems : []
   );
+  const [startDate, setStartDate] = useState<string>(parsedData.startDate || '');
+  const [endDate, setEndDate] = useState<string>(parsedData.endDate || '');
   
   // State for editing costs
   const [isEditingCost, setIsEditingCost] = useState(false);
@@ -73,56 +78,27 @@ export function useProviderNode(id: string, data: ExtendedRFProviderNodeData) {
   const titleDebounceRef = useRef<NodeJS.Timeout | null>(null);
   const descriptionDebounceRef = useRef<NodeJS.Timeout | null>(null);
   
-  // Save to backend function
-  const saveToBackend = useCallback(async (updates: Partial<RFProviderNodeData>) => {
-    try {
-      // Prepare data for backend by stringifying JSON fields
-      const apiData = prepareDataForBackend(updates, jsonFields);
-      
-      // Send to backend
-      await GraphApiClient.updateNode('provider' as NodeType, id, apiData);
-      
-      // Update React Flow state with the original object data (not stringified)
-      updateNodeData(id, updates);
-      
-      // Determine which fields were updated
-      const affectedFields = Object.keys(updates).map(key => {
-        // Map the property name to the field ID in the manifest
-        // This is a simplified approach - you might need a more sophisticated mapping
-        return key.toLowerCase();
-      });
-      
-      // Publish the update to subscribers
-      const updatedData = { ...parsedData, ...updates };
-      publishManifestUpdate(updatedData, affectedFields);
-      
-      return true;
-    } catch (error) {
-      console.error('Error saving provider node:', error);
-      toast.error('Failed to save provider data');
-      return false;
+  // Cast to the extended type with additional fields
+  const safeProviderData = parsedData as ExtendedRFProviderNodeData;
+
+  // Use the standardized member allocation publishing hook
+  const allocationPublishing = useMemberAllocationPublishing(
+    id,
+    'provider',
+    safeProviderData as NodeDataWithTeamAllocations,
+    publishManifestUpdate as (
+      data: Partial<RFProviderNodeData>,
+      fieldIds: string[],
+      metadata?: Partial<NodeUpdateMetadata>
+    ) => void,
+    {
+      fieldName: 'teamAllocations',
+      debugName: 'ProviderNode'
     }
-  }, [id, jsonFields, updateNodeData, parsedData, publishManifestUpdate]);
-  
-  // Save team allocations to backend
-  const saveTeamAllocationsToBackend = useCallback(async (allocations: TeamAllocation[]) => {
-    try {
-      await GraphApiClient.updateNode('provider' as NodeType, id, {
-        teamAllocations: allocations
-      });
-    } catch (error) {
-      console.error('Failed to save team allocations to backend:', error);
-    }
-  }, [id]);
+  );
   
   // Use the team allocation hook to manage team allocations
   const teamAllocationHook = useTeamAllocation(id, parsedData);
-  
-  // Add the saveTeamAllocationsToBackend function to the teamAllocationHook
-  const enhancedTeamAllocationHook = teamAllocationHook as unknown as typeof teamAllocationHook & {
-    saveTeamAllocationsToBackend: typeof saveTeamAllocationsToBackend
-  };
-  enhancedTeamAllocationHook.saveTeamAllocationsToBackend = saveTeamAllocationsToBackend;
   
   // Extract the processed team allocations from the hook
   const teamAllocationsFromHook = teamAllocationHook.processedTeamAllocations;
@@ -133,8 +109,84 @@ export function useProviderNode(id: string, data: ExtendedRFProviderNodeData) {
   // Get costs from the team allocation hook
   const costSummary = teamAllocationHook.costs;
   
+  // Function to save node data to backend
+  const saveToBackend = useCallback(async (updateData: Partial<RFProviderNodeData>) => {
+    // Skip save for blacklisted nodes
+    if (GraphApiClient.isNodeBlacklisted(id)) {
+      console.warn(`[ProviderNode][${id}] Skipping save - node is blacklisted`);
+      return;
+    }
+    
+    try {
+      console.log(`[ProviderNode][${id}] 📤 Saving to backend:`, {
+        keys: Object.keys(updateData),
+        hasTeamAllocations: 'teamAllocations' in updateData,
+        id
+      });
+
+      // Special handling for teamAllocations
+      if ('teamAllocations' in updateData && updateData.teamAllocations) {
+        console.log(`[ProviderNode][${id}] ⚠️ Saving teamAllocations from saveToBackend is not recommended`, {
+          teamAllocationsLength: Array.isArray(updateData.teamAllocations) ? updateData.teamAllocations.length : 'not array',
+          teamAllocationsType: typeof updateData.teamAllocations
+        });
+
+        // Ensure teamAllocations is a properly formatted array
+        if (Array.isArray(updateData.teamAllocations)) {
+          // Validate the structure to match what the API expects
+          updateData.teamAllocations = updateData.teamAllocations.map(allocation => {
+            // Ensure minimum required fields with correct types
+            const formatted = {
+              teamId: typeof allocation.teamId === 'string' ? allocation.teamId : String(allocation.teamId || ''),
+              requestedHours: typeof allocation.requestedHours === 'number' ? allocation.requestedHours : 0,
+              allocatedMembers: Array.isArray(allocation.allocatedMembers) ? allocation.allocatedMembers : []
+            };
+
+            // Ensure allocatedMembers have correct format
+            formatted.allocatedMembers = formatted.allocatedMembers.map(member => {
+              // Use type assertion to include optional properties
+              const memberWithOptionalProps = member as { memberId: string; hours: number; name?: string };
+              
+              return {
+                memberId: typeof memberWithOptionalProps.memberId === 'string' ? memberWithOptionalProps.memberId : String(memberWithOptionalProps.memberId || ''),
+                hours: typeof memberWithOptionalProps.hours === 'number' ? memberWithOptionalProps.hours : 0,
+                // Only include name if it exists
+                ...(memberWithOptionalProps.name ? { name: memberWithOptionalProps.name } : {})
+              };
+            });
+
+            return formatted;
+          });
+        }
+      }
+
+      // Update node data through API
+      await GraphApiClient.updateNode('provider', id, updateData);
+      console.log(`[ProviderNode][${id}] ✅ Successfully saved to backend`);
+    } catch (error) {
+      console.error(`[ProviderNode][${id}] ❌ Error saving to backend:`, error);
+    }
+  }, [id]);
+  
   // Use the resource allocation hook to manage resource allocations
-  const resourceAllocation = useResourceAllocation(parsedData, teamAllocationHook, getNodes);
+  const resourceAllocation = useResourceAllocation(
+    id,
+    'provider',
+    parsedData,
+    teamAllocationHook,
+    getNodes,
+    publishManifestUpdate as (
+      data: Partial<RFProviderNodeData>,
+      fieldIds: string[],
+      metadata?: Partial<NodeUpdateMetadata>
+    ) => void
+  );
+  
+  // Set loading to false after initial data processing
+  useEffect(() => {
+    // Set loading to false once initial data is processed
+    setIsLoading(false);
+  }, []);
   
   // Use the node status hook to manage status
   const { status, getStatusColor, cycleStatus } = useNodeStatus(
@@ -155,23 +207,72 @@ export function useProviderNode(id: string, data: ExtendedRFProviderNodeData) {
     tip: "Duration in days of the provider contract"
   });
   
+  // Use the standardized duration publishing hook
+  const durationPublishing = useDurationPublishing(
+    id, 
+    'provider', 
+    parsedData, 
+    publishManifestUpdate,
+    { 
+      fieldName: 'duration',
+      debugName: 'ProviderNode'
+    }
+  );
+  
+  // Override the duration change handler
+  const handleDurationChange = useCallback((value: string) => {
+    durationPublishing.handleDurationChange(value, duration.handleDurationChange);
+  }, [duration.handleDurationChange, durationPublishing]);
+  
+  // Add the custom handler to the duration object
+  const enhancedDuration = useMemo(() => ({
+    ...duration,
+    handleDurationChange
+  }), [duration, handleDurationChange]);
+  
   // Save duration to backend when it changes
   useEffect(() => {
-    if (parsedData.duration !== undefined) {
-      // Debounce the save to avoid excessive API calls
-      const durationDebounceRef = setTimeout(async () => {
-        try {
-          await GraphApiClient.updateNode('provider' as NodeType, id, {
-            duration: parsedData.duration
-          });
-        } catch (error) {
-          console.error(`Failed to update provider duration:`, error);
-        }
-      }, 1000);
-      
-      return () => clearTimeout(durationDebounceRef);
+    return durationPublishing.saveToBackend();
+  }, [parsedData.duration, durationPublishing]);
+  
+  // Add logging effect to watch for teamAllocations changes
+  useEffect(() => {
+    // Skip the first render
+    if (!teamAllocationsFromHook || teamAllocationsFromHook.length === 0) {
+      console.log(`[ProviderNode][${id}] 🔍 teamAllocations is empty or undefined, skipping save`, {
+        teamAllocationsFromHook
+      });
+      return;
     }
-  }, [id, parsedData.duration]);
+
+    console.log(`[ProviderNode][${id}] 🔄 teamAllocations changed, will attempt to save to backend`, {
+      teamAllocationsLength: teamAllocationsFromHook.length,
+      teamAllocations: teamAllocationsFromHook,
+      isAllocationPublishingDefined: !!allocationPublishing,
+      saveToBackendAsyncExists: !!(allocationPublishing && allocationPublishing.saveToBackendAsync),
+      isUpdating: allocationPublishing?.isUpdating?.current,
+    });
+
+    // Check for active updates to prevent loops
+    if (allocationPublishing?.isUpdating?.current) {
+      console.log(`[ProviderNode][${id}] ⚠️ Skipping save because an update is already in progress`);
+      return;
+    }
+
+    // Save to backend with detailed logging
+    console.log(`[ProviderNode][${id}] 📤 ATTEMPTING to save teamAllocations to backend`);
+    allocationPublishing.saveToBackendAsync(teamAllocationsFromHook)
+      .then(success => {
+        console.log(`[ProviderNode][${id}] ${success ? '✅ Successfully saved' : '❌ Failed to save'} teamAllocations to backend`, {
+          success,
+          teamAllocationsLength: teamAllocationsFromHook.length
+        });
+      })
+      .catch(error => {
+        console.error(`[ProviderNode][${id}] 🚨 Error saving teamAllocations to backend:`, error);
+      });
+
+  }, [teamAllocationsFromHook, id, allocationPublishing]);
   
   // Handle title change
   const handleTitleChange = useCallback((newTitle: string) => {
@@ -333,32 +434,35 @@ export function useProviderNode(id: string, data: ExtendedRFProviderNodeData) {
     };
   }, []);
   
-  // Function to refresh data from the server
+  // Load updated data from the backend
   const refreshData = useCallback(async () => {
     try {
       // Check if this is a known blacklisted node
       if (GraphApiClient.isNodeBlacklisted(id)) {
         console.warn(`Skipping refresh for blacklisted node ${id}`);
-        return;
+        return false;
       }
       
       // Verify that we're working with a provider node
       const nodeFromGraph = getNodes().find(n => n.id === id);
       if (nodeFromGraph && !isProviderNode(nodeFromGraph)) {
         console.warn(`Node ${id} exists but is not a provider node. Found type: ${nodeFromGraph.type}`);
-        return;
+        return false;
       }
+      
+      console.log(`[ProviderNode][${id}] Refreshing data from backend`);
+      setIsLoading(true);
       
       // Use the GraphApiClient to fetch node data
       const serverData = await GraphApiClient.getNode('provider' as NodeType, id);
       
       // Type-check and assert the shape of the returned data
-      if (!serverData || typeof serverData !== 'object') {
+      if (!serverData || !serverData.success || !serverData.data) {
         throw new Error('Invalid server data received');
       }
       
       // Create a properly typed server data object
-      const typedServerData = serverData as {
+      const typedServerData = serverData.data as {
         title?: string;
         description?: string;
         duration?: number;
@@ -366,6 +470,8 @@ export function useProviderNode(id: string, data: ExtendedRFProviderNodeData) {
         ddItems?: string | DDItem[];
         teamAllocations?: string | TeamAllocation[];
         status?: string;
+        startDate?: string;
+        endDate?: string;
       };
       
       // Process costs and due diligence items
@@ -378,6 +484,8 @@ export function useProviderNode(id: string, data: ExtendedRFProviderNodeData) {
       setDescription(typedServerData.description || '');
       setCosts(processedCosts);
       setDDItems(processedDDItems);
+      setStartDate(typedServerData.startDate || '');
+      setEndDate(typedServerData.endDate || '');
       
       // Update node data in ReactFlow
       updateNodeData(id, {
@@ -387,15 +495,26 @@ export function useProviderNode(id: string, data: ExtendedRFProviderNodeData) {
         costs: processedCosts,
         ddItems: processedDDItems,
         teamAllocations: processedTeamAllocations,
-        duration: typedServerData.duration || parsedData.duration
+        duration: typedServerData.duration || parsedData.duration,
+        startDate: typedServerData.startDate || parsedData.startDate,
+        endDate: typedServerData.endDate || parsedData.endDate
       });
       
-      console.log(`Successfully refreshed provider data for ${id}`);
+      console.log(`[ProviderNode][${id}] Successfully refreshed provider data`);
+      
+      if (typedServerData.teamAllocations) {
+        console.log(`[ProviderNode][${id}] Updated team allocations from backend:`, processedTeamAllocations);
+      }
+      
+      return true;
     } catch (error) {
-      console.error(`Error refreshing provider node data for ${id}:`, error);
+      console.error(`[ProviderNode][${id}] Error refreshing data:`, error);
       toast.error(`Failed to refresh provider ${id}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      return false;
+    } finally {
+      setIsLoading(false);
     }
-  }, [id, parsedData, updateNodeData, getNodes]);
+  }, [id, parsedData, updateNodeData, getNodes, setTitle, setDescription, setCosts, setDDItems]);
   
   // Subscribe to updates from other nodes based on manifest
   useEffect(() => {
@@ -408,6 +527,12 @@ export function useProviderNode(id: string, data: ExtendedRFProviderNodeData) {
       const { subscriberId, publisherType, publisherId, relevantFields, data } = event.detail;
       
       if (subscriberId !== id) return;
+      
+      // Use the standardized shouldProcessUpdate functions
+      if (!durationPublishing.shouldProcessUpdate(publisherId, relevantFields) || 
+          !resourceAllocation.shouldProcessUpdate(publisherId, relevantFields)) {
+        return;
+      }
       
       console.log(`Provider node ${id} received update from ${publisherType} ${publisherId}:`, {
         relevantFields,
@@ -424,70 +549,109 @@ export function useProviderNode(id: string, data: ExtendedRFProviderNodeData) {
       unsubscribe();
       window.removeEventListener('nodeDataUpdated', handleNodeDataUpdated as EventListener);
     };
-  }, [id, subscribeBasedOnManifest]);
+  }, [id, subscribeBasedOnManifest, durationPublishing, resourceAllocation]);
   
-  // Return the hook API
-  return useMemo(() => ({
-    // State
-    title,
-    description,
-    costs,
-    ddItems,
-    isEditingCost,
-    currentCost,
-    isEditingDDItem,
-    currentDDItem,
-    status,
-    processedTeamAllocations: teamAllocationsFromHook,
-    connectedTeams,
-    costSummary,
+  // Create a simple boolean for saving status
+  const isSavingAllocations = useMemo(() => {
+    return allocationPublishing.isUpdating.current === true;
+  }, [allocationPublishing.isUpdating]);
+  
+  // Handle start date change
+  const updateStartDate = useCallback((newStartDate: string) => {
+    // Update local state
+    setStartDate(newStartDate);
     
-    // For compatibility with provider-node.tsx
-    processedCosts: costs,
-    processedDDItems: ddItems,
+    // Update ReactFlow state
+    updateNodeData(id, { 
+      ...parsedData, 
+      startDate: newStartDate 
+    });
     
-    // Handlers
-    handleTitleChange,
-    handleDescriptionChange,
-    addCost,
-    editCost,
-    saveCost,
-    deleteCost,
-    addDDItem,
-    editDDItem,
-    saveDDItem,
-    deleteDDItem,
-    handleDelete,
+    // Save to backend
+    saveToBackend({ startDate: newStartDate });
+  }, [id, parsedData, updateNodeData, saveToBackend]);
+  
+  // Handle end date change
+  const updateEndDate = useCallback((newEndDate: string) => {
+    // Update local state
+    setEndDate(newEndDate);
     
-    // For compatibility with provider-node.tsx
-    updateCost: (costId: string, updates: Partial<ProviderCost>) => {
-      const cost = costs.find(c => c.id === costId);
-      if (cost) {
-        saveCost({ ...cost, ...updates });
-      }
-    },
-    removeCost: (costId: string) => deleteCost(costId),
-    updateDDItem: saveDDItem,
-    removeDDItem: deleteDDItem,
+    // Update ReactFlow state
+    updateNodeData(id, { 
+      ...parsedData, 
+      endDate: newEndDate 
+    });
     
-    // Resource allocation handlers
-    handleAllocationChangeLocal: resourceAllocation.handleAllocationChangeLocal,
-    handleAllocationCommit: resourceAllocation.handleAllocationCommit,
-    calculateMemberAllocations: resourceAllocation.calculateMemberAllocations,
-    calculateCostSummary: resourceAllocation.calculateCostSummary,
-    requestTeamAllocation: teamAllocationHook.requestTeamAllocation,
-    saveTeamAllocationsToBackend,
-    
-    // Status
-    getStatusColor,
-    cycleStatus,
-    
-    // Duration
-    duration,
-    
-    // New refreshData function
-    refreshData,
-  }), [
+    // Save to backend
+    saveToBackend({ endDate: newEndDate });
+  }, [id, parsedData, updateNodeData, saveToBackend]);
+  
+  // Return the provider node functionality
+  return useMemo(() => {
+    return {
+      title,
+      description,
+      costs,
+      ddItems,
+      isEditingCost,
+      currentCost,
+      isEditingDDItem,
+      currentDDItem,
+      status,
+      teamAllocationsFromHook,
+      connectedTeams,
+      costSummary,
+      isLoading,
+      isSavingAllocations,
+      startDate,
+      endDate,
+      
+      // For compatibility with provider-node.tsx
+      processedCosts: costs,
+      processedDDItems: ddItems,
+      processedTeamAllocations: teamAllocationsFromHook,
+      
+      handleTitleChange,
+      handleDescriptionChange,
+      addCost,
+      editCost,
+      saveCost,
+      deleteCost,
+      addDDItem,
+      editDDItem,
+      saveDDItem,
+      deleteDDItem,
+      handleDelete,
+      updateStartDate,
+      updateEndDate,
+      
+      // For compatibility with provider-node.tsx
+      updateCost: (costId: string, updates: Partial<ProviderCost>) => {
+        const cost = costs.find(c => c.id === costId);
+        if (cost) {
+          saveCost({ ...cost, ...updates });
+        }
+      },
+      removeCost: (costId: string) => deleteCost(costId),
+      updateDDItem: saveDDItem,
+      removeDDItem: deleteDDItem,
+      
+      handleAllocationChangeLocal: resourceAllocation.handleAllocationChangeLocal,
+      handleAllocationCommit: resourceAllocation.handleAllocationCommit,
+      calculateMemberAllocations: resourceAllocation.calculateMemberAllocations,
+      calculateCostSummary: resourceAllocation.calculateCostSummary,
+      requestTeamAllocation: teamAllocationHook.requestTeamAllocation,
+      
+      getStatusColor,
+      cycleStatus,
+      
+      duration: enhancedDuration,
+      refreshData,
+      
+      // Expose allocation publishing for loading indicator 
+      allocationPublishing
+    };
+  }, [
     title,
     description,
     costs,
@@ -500,6 +664,11 @@ export function useProviderNode(id: string, data: ExtendedRFProviderNodeData) {
     teamAllocationsFromHook,
     connectedTeams,
     costSummary,
+    isLoading,
+    isSavingAllocations,
+    startDate,
+    endDate,
+    
     handleTitleChange,
     handleDescriptionChange,
     addCost,
@@ -511,15 +680,21 @@ export function useProviderNode(id: string, data: ExtendedRFProviderNodeData) {
     saveDDItem,
     deleteDDItem,
     handleDelete,
+    updateStartDate,
+    updateEndDate,
+    
     resourceAllocation.handleAllocationChangeLocal,
     resourceAllocation.handleAllocationCommit,
     resourceAllocation.calculateMemberAllocations,
     resourceAllocation.calculateCostSummary,
     teamAllocationHook.requestTeamAllocation,
-    saveTeamAllocationsToBackend,
+    
     getStatusColor,
     cycleStatus,
-    duration,
+    
+    enhancedDuration,
     refreshData,
+    
+    allocationPublishing
   ]);
 } 

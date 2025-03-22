@@ -108,24 +108,55 @@ function isValidDDItems(items: DDItem[]): items is DDItem[] {
  * @param allocation The team allocation to validate
  * @returns True if valid, false otherwise
  */
-function isValidTeamAllocation(allocation: TeamAllocation): allocation is TeamAllocation {
-  if (!allocation || typeof allocation !== 'object' || !('allocatedMembers' in allocation)) {
+function isValidTeamAllocation(allocation: unknown): allocation is TeamAllocation {
+  if (!allocation || typeof allocation !== 'object') {
+    console.log('[API] Invalid allocation - not an object:', allocation);
     return false;
   }
 
-  return (
-    typeof allocation.teamId === 'string' &&
-    typeof allocation.requestedHours === 'number' &&
-    Array.isArray(allocation.allocatedMembers) &&
-    allocation.allocatedMembers.every((member) => 
-      member !== null &&
-      typeof member === 'object' &&
-      'memberId' in member &&
-      'hours' in member &&
-      typeof member.memberId === 'string' &&
-      typeof member.hours === 'number'
-    )
-  );
+  const typedAllocation = allocation as Partial<TeamAllocation>;
+  
+  // Log the validation details
+  const hasTeamId = typeof typedAllocation.teamId === 'string';
+  const hasRequestedHours = typeof typedAllocation.requestedHours === 'number';
+  const hasAllocatedMembers = Array.isArray(typedAllocation.allocatedMembers);
+  
+  console.log('[API DEBUG] Team allocation validation:', {
+    hasTeamId,
+    teamId: typedAllocation.teamId,
+    hasRequestedHours,
+    requestedHours: typedAllocation.requestedHours,
+    hasAllocatedMembers,
+    allocatedMembersLength: hasAllocatedMembers ? typedAllocation.allocatedMembers?.length : 'n/a'
+  });
+
+  // Check if basic structure is valid
+  if (!hasTeamId || !hasRequestedHours || !hasAllocatedMembers) {
+    return false;
+  }
+
+  // Check if all allocatedMembers are valid
+  const validMembers = typedAllocation.allocatedMembers!.every((member: unknown) => {
+    if (!member || typeof member !== 'object') {
+      console.log('[API] Invalid member - not an object:', member);
+      return false;
+    }
+    
+    const typedMember = member as { memberId?: string; hours?: number };
+    const validMemberId = typeof typedMember.memberId === 'string';
+    const validHours = typeof typedMember.hours === 'number';
+    
+    console.log('[API DEBUG] Member validation:', {
+      validMemberId,
+      memberId: typedMember.memberId,
+      validHours,
+      hours: typedMember.hours
+    });
+    
+    return validMemberId && validHours;
+  });
+
+  return validMembers;
 }
 
 /**
@@ -133,8 +164,51 @@ function isValidTeamAllocation(allocation: TeamAllocation): allocation is TeamAl
  * @param allocations The allocations array to validate
  * @returns True if valid, false otherwise
  */
-function isValidTeamAllocations(allocations: TeamAllocation[]): allocations is TeamAllocation[] {
-  return Array.isArray(allocations) && allocations.every(isValidTeamAllocation);
+function isValidTeamAllocations(allocations: unknown): allocations is TeamAllocation[] {
+  console.log('[API DEBUG] Validating teamAllocations:', {
+    type: typeof allocations,
+    isArray: Array.isArray(allocations),
+    length: Array.isArray(allocations) ? allocations.length : 'n/a',
+    value: typeof allocations === 'string' ? allocations.substring(0, 100) + '...' : 'not a string'
+  });
+
+  // If it's a string, try to parse it first
+  if (typeof allocations === 'string') {
+    try {
+      console.log('[API DEBUG] Before stringify - teamAllocations:', allocations);
+      // Make sure we're not double-stringifying
+      const allocationsStr = allocations.trim();
+      console.log('[API DEBUG] After stringify - teamAllocations:', allocationsStr);
+      
+      const parsed = JSON.parse(allocationsStr);
+      console.log('[API DEBUG] Parsed teamAllocations:', JSON.stringify(parsed).substring(0, 100) + '...');
+      
+      return Array.isArray(parsed) && parsed.every((item) => {
+        const isValid = isValidTeamAllocation(item);
+        if (!isValid) {
+          console.log('[API DEBUG] Invalid team allocation in parsed string:', item);
+        }
+        return isValid;
+      });
+    } catch (e) {
+      console.warn('[API] Failed to parse teamAllocations string:', e);
+      return false;
+    }
+  }
+  
+  // If it's already an array, validate directly
+  if (!Array.isArray(allocations)) {
+    console.log('[API DEBUG] teamAllocations is not an array and not a string');
+    return false;
+  }
+  
+  return allocations.every((item) => {
+    const isValid = isValidTeamAllocation(item);
+    if (!isValid) {
+      console.log('[API DEBUG] Invalid team allocation in array:', item);
+    }
+    return isValid;
+  });
 }
 
 // GET /api/graph/provider/[id] - Get a provider node by ID
@@ -281,12 +355,37 @@ export async function PATCH(request: NextRequest): Promise<NextResponse> {
     }
 
     // Validate team allocations if provided
-    if (updateData.teamAllocations !== undefined && !isValidTeamAllocations(updateData.teamAllocations)) {
-      console.warn('[API] Invalid ProviderNode update request: Invalid teamAllocations array');
-      return NextResponse.json(
-        { error: 'Invalid teamAllocations array. Each allocation must have teamId, requestedHours, and allocatedMembers properties.' },
-        { status: 400 }
-      );
+    if (updateData.teamAllocations !== undefined) {
+      console.log('[API DEBUG] Raw teamAllocations received:', 
+        typeof updateData.teamAllocations === 'string' 
+          ? JSON.stringify(updateData.teamAllocations) 
+          : updateData.teamAllocations);
+          
+      console.log('[API DEBUG] teamAllocations type:', typeof updateData.teamAllocations);
+      console.log('[API DEBUG] Is Array?', Array.isArray(updateData.teamAllocations));
+      
+      // Parse string to array if needed
+      if (typeof updateData.teamAllocations === 'string') {
+        try {
+          const parsedAllocations = JSON.parse(updateData.teamAllocations);
+          if (Array.isArray(parsedAllocations)) {
+            // Replace string with parsed array for validation
+            updateData.teamAllocations = parsedAllocations;
+            console.log('[API DEBUG] Successfully parsed teamAllocations string to array with length:', parsedAllocations.length);
+          }
+        } catch (e) {
+          console.warn('[API] Failed to parse teamAllocations string:', e);
+        }
+      }
+      
+      // Now validate the allocations (whether originally array or parsed from string)
+      if (!isValidTeamAllocations(updateData.teamAllocations)) {
+        console.warn('[API] Invalid ProviderNode update request: Invalid teamAllocations array');
+        return NextResponse.json(
+          { error: 'Invalid teamAllocations array. Each allocation must have teamId, requestedHours, and allocatedMembers properties.' },
+          { status: 400 }
+        );
+      }
     }
 
     // Check if the node exists first

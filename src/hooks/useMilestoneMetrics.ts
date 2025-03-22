@@ -291,8 +291,8 @@ export function useMilestoneMetrics(nodeId: string) {
               
               let hourlyRate = Number(memberNode?.data.hourlyRate);
               
-              if (!hourlyRate && memberNode?.data.dailyRate) {
-                hourlyRate = Number(memberNode.data.dailyRate);
+              if (!hourlyRate && memberNode?.data.hourlyRate) {
+                hourlyRate = Number(memberNode.data.hourlyRate);
               }
               
               if (!hourlyRate) {
@@ -306,7 +306,7 @@ export function useMilestoneMetrics(nodeId: string) {
                 hours: memberHours,
                 hourlyRate,
                 cost: memberCost,
-                dailyRate: memberNode?.data.dailyRate,
+                memberNodeHourlyRate: memberNode?.data.hourlyRate,
                 nodeType: node.type
               });
               

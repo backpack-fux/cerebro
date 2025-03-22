@@ -87,6 +87,9 @@ export async function GET(request: NextRequest) {
     // Transform the node to properly parse JSON strings
     const node = neo4jToReactFlow(rawNode.data as unknown as Neo4jFeatureNodeData);
 
+    // Ensure ID is explicitly set
+    node.id = id;
+
     // Set position if it's missing
     if (!node.position || (node.position.x === undefined && node.position.y === undefined)) {
       node.position = {
@@ -94,11 +97,40 @@ export async function GET(request: NextRequest) {
         y: rawNode.position?.y || 0
       };
     }
+    
+    // Ensure teamAllocations is always a valid array
+    if (!Array.isArray(node.data.teamAllocations)) {
+      console.warn('[API] teamAllocations is not an array, fixing...');
+      
+      // First try to parse if it's a string
+      if (typeof node.data.teamAllocations === 'string') {
+        try {
+          node.data.teamAllocations = JSON.parse(node.data.teamAllocations);
+        } catch (e) {
+          console.error('[API] Failed to parse teamAllocations string:', e);
+          node.data.teamAllocations = [];
+        }
+      } else {
+        // If it's neither an array nor a string we can parse, set to empty array
+        node.data.teamAllocations = [];
+      }
+    }
+    
+    // Validate each allocation object in the array
+    if (Array.isArray(node.data.teamAllocations)) {
+      // Filter out invalid allocations
+      node.data.teamAllocations = node.data.teamAllocations.filter(allocation => {
+        return allocation && 
+               typeof allocation === 'object' && 
+               typeof allocation.teamId === 'string' &&
+               Array.isArray(allocation.allocatedMembers);
+      });
+    }
 
+    // Only log metadata about the arrays instead of their full content
     console.log('[API] Successfully retrieved FeatureNode:', {
       id: node.id,
       type: node.type,
-      position: node.position,
       data: {
         title: node.data.title,
         description: node.data.description,
@@ -106,13 +138,17 @@ export async function GET(request: NextRequest) {
         duration: node.data.duration,
         timeUnit: node.data.timeUnit,
         status: node.data.status,
-        teamMembers: Array.isArray(node.data.teamMembers) ? `${node.data.teamMembers.length} members` : 'not provided',
-        memberAllocations: Array.isArray(node.data.memberAllocations) ? `${node.data.memberAllocations.length} allocations` : 'not provided',
-        teamAllocations: Array.isArray(node.data.teamAllocations) ? `${node.data.teamAllocations.length} allocations` : 'not provided'
+        // Only log array lengths for logging purposes
+        teamMembers: Array.isArray(node.data.teamMembers) ? 
+          `${node.data.teamMembers.length} members` : 'not provided',
+        memberAllocations: Array.isArray(node.data.memberAllocations) ? 
+          `${node.data.memberAllocations.length} allocations` : 'not provided',
+        teamAllocations: Array.isArray(node.data.teamAllocations) ? 
+          `${node.data.teamAllocations.length} allocations` : 'not provided'
       }
     });
 
-    // Return the transformed node
+    // Return the transformed node with the complete data
     return NextResponse.json(node);
   } catch (error) {
     console.error('[API] Error getting FeatureNode:', {
@@ -217,6 +253,8 @@ export async function PATCH(request: NextRequest) {
       duration: updateData.duration,
       timeUnit: updateData.timeUnit,
       status: updateData.status,
+      startDate: updateData.startDate,
+      endDate: updateData.endDate,
       teamMembers: updateData.teamMembers ? `${updateData.teamMembers.length} members` : 'not provided',
       memberAllocations: updateData.memberAllocations ? `${updateData.memberAllocations.length} allocations` : 'not provided',
       teamAllocations: updateData.teamAllocations ? `${updateData.teamAllocations.length} allocations` : 'not provided'
@@ -250,6 +288,32 @@ export async function PATCH(request: NextRequest) {
       }
     }
     
+    // Ensure teamAllocations is always a valid array
+    if (!Array.isArray(updatedNode.data.teamAllocations)) {
+      console.warn('[API] PATCH: teamAllocations is not an array after parsing, fixing...');
+      updatedNode.data.teamAllocations = [];
+    }
+    
+    // Validate each allocation object in the array
+    if (Array.isArray(updatedNode.data.teamAllocations)) {
+      // Filter out invalid allocations
+      const beforeLength = updatedNode.data.teamAllocations.length;
+      updatedNode.data.teamAllocations = updatedNode.data.teamAllocations.filter(allocation => {
+        return allocation && 
+               typeof allocation === 'object' && 
+               typeof allocation.teamId === 'string' &&
+               Array.isArray(allocation.allocatedMembers);
+      });
+      
+      if (beforeLength !== updatedNode.data.teamAllocations.length) {
+        console.warn(`[API] PATCH: Removed ${beforeLength - updatedNode.data.teamAllocations.length} invalid team allocations`);
+      }
+    }
+    
+    // Ensure ID is explicitly set
+    updatedNode.id = id;
+    
+    // Only log metadata about the arrays instead of their full content
     console.log('[API] Successfully updated FeatureNode:', {
       id: updatedNode.id,
       type: updatedNode.type,
@@ -260,13 +324,17 @@ export async function PATCH(request: NextRequest) {
         duration: updatedNode.data.duration,
         timeUnit: updatedNode.data.timeUnit,
         status: updatedNode.data.status,
-        teamMembers: Array.isArray(updatedNode.data.teamMembers) ? `${updatedNode.data.teamMembers.length} members` : 'not provided',
-        memberAllocations: Array.isArray(updatedNode.data.memberAllocations) ? `${updatedNode.data.memberAllocations.length} allocations` : 'not provided',
-        teamAllocations: Array.isArray(updatedNode.data.teamAllocations) ? `${updatedNode.data.teamAllocations.length} allocations` : 'not provided'
+        // Only log array lengths for logging purposes
+        teamMembers: Array.isArray(updatedNode.data.teamMembers) ? 
+          `${updatedNode.data.teamMembers.length} members` : 'not provided',
+        memberAllocations: Array.isArray(updatedNode.data.memberAllocations) ? 
+          `${updatedNode.data.memberAllocations.length} allocations` : 'not provided',
+        teamAllocations: Array.isArray(updatedNode.data.teamAllocations) ? 
+          `${updatedNode.data.teamAllocations.length} allocations` : 'not provided'
       }
     });
 
-    // Return the updated node
+    // Return the updated node with the complete data
     return NextResponse.json(updatedNode);
   } catch (error) {
     console.error('[API] Error updating FeatureNode:', {

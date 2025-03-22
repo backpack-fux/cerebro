@@ -1,6 +1,6 @@
 "use client";
 
-import React from 'react';
+import React, { useCallback, useRef, useState, useEffect } from 'react';
 import { User } from "lucide-react";
 import { Slider } from "@/components/ui/slider";
 import { formatHours } from "@/utils/utils";
@@ -19,12 +19,15 @@ export interface MemberAllocationProps {
   member: AvailableMember;
   allocation?: IMemberAllocationData;
   isAllocated?: boolean;
-  projectDurationDays: number;
+  projectDurationDays?: number;
   onValueChange: (memberId: string, value: number) => void;
   onValueCommit: (memberId: string, value: number) => void;
   isOverAllocated?: boolean;
   availableHours?: number;
   overAllocatedBy?: number;
+  // New optional props for better UX
+  debounceMs?: number;
+  feedbackOnDrag?: boolean;
 }
 
 /**
@@ -45,14 +48,31 @@ export const MemberAllocation: React.FC<MemberAllocationProps> = ({
   member,
   allocation,
   isAllocated = false,
-  projectDurationDays,
   onValueChange,
   onValueCommit,
   isOverAllocated = false,
   availableHours,
-  overAllocatedBy = 0
+  overAllocatedBy = 0,
+  debounceMs = 100,
+  feedbackOnDrag = true
 }) => {
   const hours = allocation?.hours || 0;
+  
+  // For local state management during dragging
+  const [localValue, setLocalValue] = useState<number>(hours);
+  
+  // Use refs for debouncing
+  const debounceRef = useRef<NodeJS.Timeout | null>(null);
+  const isUpdatingRef = useRef<boolean>(false);
+  const lastReceivedValueRef = useRef<number>(hours);
+  
+  // Update local value when props change, but avoid updates during user interaction
+  useEffect(() => {
+    if (!isUpdatingRef.current && hours !== lastReceivedValueRef.current) {
+      lastReceivedValueRef.current = hours;
+      setLocalValue(hours);
+    }
+  }, [hours]);
   
   // Calculate effective weekly capacity based on the member's settings
   const memberWeeklyCapacity = member.weeklyCapacity || 
@@ -64,22 +84,6 @@ export const MemberAllocation: React.FC<MemberAllocationProps> = ({
   // Use the utility function to calculate effective capacity
   const effectiveWeeklyCapacity = calculateEffectiveCapacity(memberWeeklyCapacity, teamAllocationPercent);
   
-  // Enhanced DEBUG: Log values to understand calculation in more detail
-  console.log('MemberAllocation Debug:', {
-    memberId: member.memberId,
-    name: member.name,
-    memberWeeklyCapacity,
-    teamAllocationPercent,
-    effectiveWeeklyCapacity,
-    projectDurationDays,
-    daysPerWeek: member.daysPerWeek || 5,
-    dailyHours: memberWeeklyCapacity / (member.daysPerWeek || 5),
-    effectiveDailyHours: (teamAllocationPercent / 100) * (memberWeeklyCapacity / (member.daysPerWeek || 5)),
-    calculationCheck: (teamAllocationPercent / 100) * (memberWeeklyCapacity / (member.daysPerWeek || 5)) * projectDurationDays,
-    providedAvailableHours: availableHours,
-    hours
-  });
-  
   // Calculate max hours for the slider based on available hours
   // If availableHours is explicitly provided, use that plus current allocation
   // Otherwise, use the calculated effective weekly capacity
@@ -87,23 +91,50 @@ export const MemberAllocation: React.FC<MemberAllocationProps> = ({
     ? (hours + availableHours)
     : effectiveWeeklyCapacity;
   
-  // Handle slider value change
-  const handleValueChange = (value: number[]) => {
-    if (onValueChange) {
-      // Ensure the value is within bounds
-      const boundedValue = Math.min(value[0], maxHours);
-      onValueChange(member.memberId, boundedValue);
+  // Handle slider value change with debounce
+  const handleValueChange = useCallback((value: number[]) => {
+    // Set local value immediately for responsive UI
+    const boundedValue = Math.min(value[0], maxHours);
+    setLocalValue(boundedValue);
+    
+    // Mark that we're in the middle of an update
+    isUpdatingRef.current = true;
+    
+    // Clear existing timeout
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    
+    // Only update parent if feedbackOnDrag is enabled
+    if (feedbackOnDrag && onValueChange) {
+      // Debounce the update to prevent too many calls
+      debounceRef.current = setTimeout(() => {
+        onValueChange(member.memberId, boundedValue);
+        debounceRef.current = null;
+      }, debounceMs);
     }
-  };
+  }, [member.memberId, maxHours, onValueChange, debounceMs, feedbackOnDrag]);
   
   // Handle slider value commit
-  const handleValueCommit = (value: number[]) => {
-    if (onValueCommit) {
-      // Ensure the value is within bounds
-      const boundedValue = Math.min(value[0], maxHours);
-      onValueCommit(member.memberId, boundedValue);
+  const handleValueCommit = useCallback((value: number[]) => {
+    // Clear any pending debounced updates
+    if (debounceRef.current) {
+      clearTimeout(debounceRef.current);
+      debounceRef.current = null;
     }
-  };
+    
+    // Ensure the value is within bounds
+    const boundedValue = Math.min(value[0], maxHours);
+    lastReceivedValueRef.current = boundedValue;
+    
+    // Call parent handler
+    if (onValueCommit) {
+      onValueCommit(member.memberId, boundedValue);
+      
+      // Reset updating flag after a delay to allow state to settle
+      setTimeout(() => {
+        isUpdatingRef.current = false;
+      }, 300);
+    }
+  }, [member.memberId, maxHours, onValueCommit]);
   
   // Get available hours safely
   const displayAvailableHours = availableHours !== undefined 
@@ -180,7 +211,7 @@ export const MemberAllocation: React.FC<MemberAllocationProps> = ({
         <div className="flex items-center gap-1">
           {isAllocated && (
             <Badge variant="outline" className="text-xs">
-              {safeFormatHours(hours)}
+              {isUpdatingRef.current ? safeFormatHours(localValue) : safeFormatHours(hours)}
             </Badge>
           )}
           <span className="text-xs text-muted-foreground">
@@ -192,7 +223,7 @@ export const MemberAllocation: React.FC<MemberAllocationProps> = ({
       <div className="pt-2">
         <Slider
           defaultValue={[0]}
-          value={[hours]}
+          value={[localValue]}
           max={maxHours}
           step={1}
           onValueChange={handleValueChange}

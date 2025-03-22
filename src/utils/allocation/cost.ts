@@ -35,14 +35,14 @@ export function calculateCostSummary(
       // Calculate allocated days and cost
       const hoursPerDay = member.hoursPerDay || teamMember.hoursPerDay || 8; // Default to 8 hours per day
       const allocatedDays = member.hours / hoursPerDay;
-      const cost = allocatedDays * teamMember.dailyRate;
+      const cost = allocatedDays * (teamMember.hourlyRate || teamMember.dailyRate || 0);
       
       // Add to cost summary
       costSummary.allocations.push({
         member: {
           memberId: member.memberId,
           name: teamMember.name,
-          dailyRate: teamMember.dailyRate,
+          dailyRate: teamMember.hourlyRate || teamMember.dailyRate || 0,
         },
         allocation: (member.hours / teamMember.availableHours) * 100,
         allocatedDays,

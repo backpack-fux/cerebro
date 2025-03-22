@@ -125,6 +125,7 @@ export interface AvailableMember {
   daysPerWeek: number;
   weeklyCapacity: number;
   allocation?: number; // Team allocation percentage (0-100)
+  hourlyRate?: number; // Hourly rate calculated from daily rate
 }
 
 /**

@@ -95,8 +95,8 @@ export function neo4jToReactFlow(neo4jData: Neo4jProviderNodeData): RFProviderNo
   });
 
   // Parse JSON strings back to objects using the safe parser
-  const costs = safeJsonParse<ProviderCost[]>(neo4jData.costs, []);
-  const ddItems = safeJsonParse<DDItem[]>(neo4jData.ddItems, []);
+  const costs = safeJsonParse<ProviderCost[]>(neo4jData.costs as string, []);
+  const ddItems = safeJsonParse<DDItem[]>(neo4jData.ddItems as string, []);
   
   // Enhanced handling for teamAllocations to ensure it's always an array
   let teamAllocations: TeamAllocation[] = [];
@@ -142,6 +142,8 @@ export function neo4jToReactFlow(neo4jData: Neo4jProviderNodeData): RFProviderNo
       ddItems: ddItems,
       teamAllocations: teamAllocations,
       status: neo4jData.status,
+      startDate: neo4jData.startDate,
+      endDate: neo4jData.endDate,
       createdAt: neo4jData.createdAt,
       updatedAt: neo4jData.updatedAt,
     } as RFProviderNodeData,
@@ -291,6 +293,8 @@ export function transformProviderNode(node: Neo4jNode): GraphNode<RFProviderNode
       ddItems: ddItemsData,
       teamAllocations: teamAllocationsData,
       status: properties.status as string | undefined,
+      startDate: properties.startDate as string | undefined,
+      endDate: properties.endDate as string | undefined,
       createdAt: properties.createdAt as string,
       updatedAt: properties.updatedAt as string,
     } as RFProviderNodeData,

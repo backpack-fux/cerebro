@@ -149,6 +149,167 @@ The system supports several node types, each with specific responsibilities:
    - Feature relationships have dependency metadata
    - Edge type determines visual rendering and behavior
 
+### 5. Circular Update Prevention
+
+1. **Standardized Duration Handling**
+   - All node types use the `useDurationPublishing` hook
+   - Consistent pattern to avoid circular update loops
+   - Multiple protection mechanisms working together
+   - Direct API calls for backend updates
+   - Intelligent event filtering
+
+2. **Standardized Member Allocation Handling**
+   - All work nodes use the `useMemberAllocationPublishing` hook
+   - Consistent handling of team and member allocations
+   - Prevents issues with allocation rendering
+   - Ensures slider values display correctly
+   - Protects against rapid consecutive updates
+
+3. **Update Origin Tracking**
+   - System tracks the origin of updates
+   - Fields track their last update timestamp
+   - Updates are debounced appropriately
+   - Self-updates are detected and skipped
+
+4. **Value-Based Triggering**
+   - Updates only trigger on actual value changes
+   - Redundant updates are eliminated
+   - Comparison happens before publishing
+   - Update flags prevent simultaneous updates
+
+4. **Isolation by Field**
+   - Each field has its own update tracking
+   - Critical fields have special handling
+   - Separate publishing mechanisms for distinct field types
+   - Field update frequency is monitored and limited
+
+### 6. Feature Node Data Flow
+
+#### Overview
+The Feature Node implements a standardized data flow for managing properties and allocations, with special handling for team allocations, member allocations, and duration.
+
+#### Data Structure
+```typescript
+/**
+ * @typedef {Object} FeatureNodeData
+ * @property {string} title - The display title of the feature
+ * @property {string} description - Detailed feature description
+ * @property {string} [buildType] - The build approach (e.g., "internal", "external")
+ * @property {number} duration - The planned duration in time units
+ * @property {string} [timeUnit] - Unit of time measurement (e.g., "days", "weeks")
+ * @property {string} [status] - Current feature status (e.g., "planning", "in-progress")
+ * @property {string} [startDate] - Planned start date in ISO format
+ * @property {string} [endDate] - Planned end date in ISO format
+ * @property {TeamMember[]} teamMembers - Array of team members assigned to the feature
+ * @property {MemberAllocation[]} memberAllocations - Detailed allocation of team members
+ * @property {TeamAllocation[]} teamAllocations - Allocations at the team level
+ * @property {string} createdAt - Feature creation timestamp
+ * @property {string} updatedAt - Last update timestamp
+ */
+```
+
+#### Publishing Mechanisms
+
+The Feature node uses specialized hooks for managing different aspects of its data:
+
+1. **Duration Publishing**
+   ```typescript
+   /**
+    * @function useDurationPublishing
+    * @description Manages duration updates for feature nodes with protection against circular updates
+    * @param {string} nodeId - The ID of the feature node
+    * @param {number} initialDuration - Initial duration value
+    * @param {function} updateCallback - Optional callback after successful update
+    * @returns {Object} Duration state and update functions
+    * @property {number} duration - Current duration value
+    * @property {function} setDuration - Function to update duration locally
+    * @property {function} publishDuration - Function to publish duration to backend
+    */
+   ```
+
+2. **Member Allocation Publishing**
+   ```typescript
+   /**
+    * @function useMemberAllocationPublishing
+    * @description Standardized hook for managing member allocations across feature nodes
+    * @param {string} nodeId - The ID of the feature node
+    * @param {MemberAllocation[]} initialAllocations - Initial member allocations
+    * @param {function} updateCallback - Optional callback after successful update
+    * @returns {Object} Allocation state and update functions
+    * @property {MemberAllocation[]} allocations - Current member allocations
+    * @property {function} setAllocations - Function to update allocations locally
+    * @property {function} publishAllocations - Function to publish allocations to backend
+    */
+   ```
+
+3. **Date Publishing**
+   ```typescript
+   /**
+    * @function useDatePublishing
+    * @description Manages start and end date updates for feature nodes
+    * @param {string} nodeId - The ID of the feature node
+    * @param {Object} initialDates - Initial date values
+    * @param {string} initialDates.startDate - Initial start date
+    * @param {string} initialDates.endDate - Initial end date
+    * @param {function} updateCallback - Optional callback after successful update
+    * @returns {Object} Date state and update functions
+    * @property {string} startDate - Current start date
+    * @property {string} endDate - Current end date
+    * @property {function} setDates - Function to update dates locally
+    * @property {function} publishDates - Function to publish dates to backend
+    */
+   ```
+
+#### Data Flow Lifecycle
+
+1. **Initialization**
+   - Feature node data is retrieved from the backend API
+   - Data is transformed from Neo4j format to React Flow format
+   - Specialized hooks initialize with current values
+   - Initial state is rendered in the UI
+
+2. **User Interaction**
+   - User modifies a feature node property (e.g., duration or allocation)
+   - Local state is updated immediately for responsive UI
+   - Debounced publishing mechanism is triggered
+   - Origin tracking prevents circular updates
+
+3. **Backend Persistence**
+   - Changes are sent to backend API endpoints
+   - Neo4j database is updated with new values
+   - Success/failure is communicated back to the UI
+   - Relevant notifications are displayed to the user
+
+4. **Update Propagation**
+   - Node manifest system identifies affected nodes
+   - Changes are propagated to dependent nodes
+   - Team resource system updates resource availability
+   - Milestone nodes recalculate costs and timelines
+
+#### Type Transformations
+
+```typescript
+/**
+ * @function transformFeatureNode
+ * @description Transforms feature node data between Neo4j and React Flow formats
+ * @param {Object} rawNode - Raw node data from Neo4j
+ * @param {string} direction - Transformation direction ("neo4jToReactFlow" or "reactFlowToNeo4j")
+ * @returns {Object} Transformed node data
+ */
+```
+
+#### API Integration
+
+```typescript
+/**
+ * @function updateFeatureNode
+ * @description Updates a feature node in the backend
+ * @param {string} id - Node ID
+ * @param {Partial<FeatureNodeData>} data - Data to update
+ * @returns {Promise<FeatureNode>} Updated feature node
+ */
+```
+
 ## Data Flow
 
 1. **Node Updates**
@@ -222,4 +383,31 @@ src/
 3. **Developer Experience**
    - Enhanced debugging tools
    - Better visualization options
-   - Improved documentation 
+   - Improved documentation
+
+## Node Alignment
+
+### Member Allocation Standardization
+
+The feature, option, and provider nodes have been aligned to use a standardized approach for handling member allocations. This standardization improves consistency across node types and prevents circular updates.
+
+Key components of this standardization:
+
+1. **useMemberAllocationPublishing Hook**: All node types now use this hook to manage member allocation updates and persistence.
+
+2. **Circular Update Prevention**: The hook implements several protection mechanisms:
+   - Timestamp tracking to prevent rapid updates
+   - Debouncing for backend API calls
+   - Flags to track update state
+
+3. **Type Consistency**: All node types use consistent interfaces for allocation data:
+   - `MemberAllocationData` for member allocation details
+   - `TeamAllocation` for team allocation data
+
+4. **Date Handling**: Standardized date handling functions across node types:
+   - `updateStartDate` and `updateEndDate` functions
+   - Consistent use of `calculateEndDate` utility
+
+This alignment ensures that all node types behave consistently when handling allocations, reducing bugs and improving maintainability.
+
+## Document Structure 

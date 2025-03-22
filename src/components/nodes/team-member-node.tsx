@@ -143,21 +143,21 @@ const TeamMemberNode = memo(({ id, data, selected }: NodeProps) => {
             )}
           </div>
           <div>
-            <Label htmlFor={`rate-${id}`}>Daily Rate</Label>
+            <Label htmlFor={`rate-${id}`}>Hourly Rate</Label>
             <Input
               id={`rate-${id}`}
               type="number"
               min={0}
-              value={teamMember.dailyRate}
+              value={teamMember.hourlyRate}
               onChange={(e) => {
                 const value = parseFloat(e.target.value);
                 teamMember.handleDailyRateChange(value);
                 teamMember.validateDailyRate(value);
               }}
-              className={getErrorMessage('dailyRate') ? 'border-red-500' : ''}
+              className={getErrorMessage('hourlyRate') ? 'border-red-500' : ''}
             />
-            {getErrorMessage('dailyRate') && (
-              <p className="text-xs text-red-500">{getErrorMessage('dailyRate')}</p>
+            {getErrorMessage('hourlyRate') && (
+              <p className="text-xs text-red-500">{getErrorMessage('hourlyRate')}</p>
             )}
           </div>
         </div>
