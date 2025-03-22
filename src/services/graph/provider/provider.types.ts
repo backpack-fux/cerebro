@@ -80,6 +80,8 @@ export interface RFProviderNodeData extends ReactFlowNodeBase {
   teamAllocations?: TeamAllocation[];
   status?: string; // For tracking planning, in-progress, completed, etc.
   position?: XYPosition;
+  startDate?: string; // Provider contract start date
+  endDate?: string; // Provider contract end date
 }
 
 // Use a type alias instead of an empty interface
@@ -111,19 +113,21 @@ export type UpdateProviderNodeParams = UpdatableProviderNodeData & {
 
 // Backend types for Neo4j operations
 export interface Neo4jProviderNodeData {
-  id: string; // String ID for React Flow compatibility
-  name: string;
-  description?: string;
+  id: string;
   title: string;
+  description?: string;
+  name?: string;
   duration?: number;
-  costs?: string; // JSON string of ProviderCost array
-  ddItems?: string; // JSON string of DDItem array
-  teamAllocations?: string; // JSON string of TeamAllocation array
   status?: string;
-  createdAt: string;
-  updatedAt: string;
+  costs?: string | ProviderCost[]; // Can be stringified JSON or array
+  ddItems?: string | DDItem[]; // Can be stringified JSON or array
+  teamAllocations?: string | TeamAllocation[]; // Can be stringified JSON or array
+  createdAt?: string;
+  updatedAt?: string;
   positionX: number;
   positionY: number;
+  startDate?: string; // Provider contract start date
+  endDate?: string; // Provider contract end date
 }
 
 // EDGE TYPES HERE

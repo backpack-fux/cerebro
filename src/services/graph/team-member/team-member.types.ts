@@ -41,7 +41,7 @@ export interface RFTeamMemberNodeData extends ReactFlowNodeBase {
   roles: Role[];
   bio?: string;
   timezone?: string;
-  dailyRate?: number;
+  hourlyRate?: number;
   hoursPerDay: number;
   daysPerWeek: number;
   weeklyCapacity: number;

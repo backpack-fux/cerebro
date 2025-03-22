@@ -111,6 +111,9 @@ export class GraphApiClient {
   }
 
   static async updateNode(nodeType: NodeType, id: string, params: NodeData): Promise<NodeData> {
+    // Simplified logging for updates
+    console.log(`[GraphApiClient][${nodeType}][${id}] 🔍 Updating node`);
+    
     // Skip request if node is blacklisted
     if (this.isNodeBlacklisted(id)) {
       console.warn(`🚫 Skipping update request for blacklisted node ${id}`);
@@ -120,11 +123,15 @@ export class GraphApiClient {
     try {
       // Special handling for teamAllocations to ensure it's properly formatted
       if (params.teamAllocations) {
-        console.log('[GraphApiClient] teamAllocations before processing:', params.teamAllocations);
-        
         // If teamAllocations is already a string, leave it as is
         if (typeof params.teamAllocations === 'string') {
-          console.log('[GraphApiClient] teamAllocations is already a string');
+          try {
+            // Check if the string is valid JSON
+            JSON.parse(params.teamAllocations);
+          } catch (e) {
+            console.error(`[GraphApiClient][${nodeType}][${id}] ❌ Invalid JSON string for teamAllocations:`, e);
+            throw new Error(`Invalid JSON string for teamAllocations: ${e instanceof Error ? e.message : 'Unknown error'}`);
+          }
         } 
         // If it's an array, we need to ensure it's properly formatted
         else if (Array.isArray(params.teamAllocations)) {
@@ -137,19 +144,129 @@ export class GraphApiClient {
           
           const isValid = params.teamAllocations.every((allocation: unknown) => {
             const teamAlloc = allocation as TeamAllocation;
-            return teamAlloc && 
-              typeof teamAlloc === 'object' && 
-              typeof teamAlloc.teamId === 'string' && 
-              typeof teamAlloc.requestedHours === 'number' && 
-              Array.isArray(teamAlloc.allocatedMembers);
+            const hasTeamId = typeof teamAlloc === 'object' && teamAlloc && typeof teamAlloc.teamId === 'string';
+            const hasRequestedHours = typeof teamAlloc === 'object' && teamAlloc && typeof teamAlloc.requestedHours === 'number';
+            const hasAllocatedMembers = typeof teamAlloc === 'object' && teamAlloc && Array.isArray(teamAlloc.allocatedMembers);
+            
+            return hasTeamId && hasRequestedHours && hasAllocatedMembers;
           });
           
           if (!isValid) {
-            console.error('[GraphApiClient] Invalid teamAllocations array:', params.teamAllocations);
+            console.error(`[GraphApiClient][${nodeType}][${id}] ❌ Invalid teamAllocations array`);
             throw new Error('Invalid teamAllocations array. Each allocation must have teamId, requestedHours, and allocatedMembers properties.');
           }
           
-          console.log('[GraphApiClient] teamAllocations is valid');
+          // Special handling for provider node based on transform differences
+          if (nodeType === 'provider') {
+            console.log(`[GraphApiClient][${nodeType}][${id}] 🔄 Converting teamAllocations to string for provider node`);
+            
+            try {
+              // For provider nodes, make sure teamAllocations is properly structured first
+              // Create a completely new array to avoid mutation issues
+              const formattedAllocations = params.teamAllocations.map((allocation: unknown) => {
+                // Basic validation of fields
+                if (!allocation || typeof allocation !== 'object') {
+                  console.warn(`[GraphApiClient][${nodeType}][${id}] ⚠️ Invalid allocation object`);
+                  return {
+                    teamId: '',
+                    requestedHours: 0,
+                    allocatedMembers: []
+                  };
+                }
+                
+                // Type assertion for the allocation object
+                type AllocationLike = {
+                  teamId?: string | number | unknown;
+                  requestedHours?: number | unknown;
+                  allocatedMembers?: unknown[] | unknown;
+                };
+                
+                const alloc = allocation as AllocationLike;
+                
+                // Ensure required fields are present and correctly typed
+                const formattedAllocation = {
+                  teamId: typeof alloc.teamId === 'string' ? alloc.teamId : String(alloc.teamId || ''),
+                  requestedHours: typeof alloc.requestedHours === 'number' ? alloc.requestedHours : 0,
+                  allocatedMembers: Array.isArray(alloc.allocatedMembers) ? alloc.allocatedMembers : []
+                };
+                
+                // If requestedHours is 0 or invalid, calculate it from member hours
+                if (formattedAllocation.requestedHours === 0 && Array.isArray(alloc.allocatedMembers)) {
+                  formattedAllocation.requestedHours = alloc.allocatedMembers.reduce((sum: number, m: unknown) => {
+                    const memberLike = m as { hours?: number | string };
+                    const hours = typeof memberLike.hours === 'number' ? memberLike.hours : 
+                      typeof memberLike.hours === 'string' ? parseFloat(memberLike.hours) : 0;
+                    return sum + (isNaN(hours) ? 0 : hours);
+                  }, 0);
+                }
+                
+                // Ensure allocated members are properly formatted
+                formattedAllocation.allocatedMembers = formattedAllocation.allocatedMembers.map((m: unknown) => {
+                  if (!m || typeof m !== 'object') {
+                    console.warn(`[GraphApiClient][${nodeType}][${id}] ⚠️ Invalid member object`);
+                    return { memberId: '', name: '', hours: 0 };
+                  }
+                  
+                  // Type assertion for the member object
+                  type MemberLike = {
+                    memberId?: string | number | unknown;
+                    name?: string | unknown;
+                    hours?: number | string | unknown;
+                  };
+                  
+                  const memberLike = m as MemberLike;
+                  
+                  return {
+                    memberId: typeof memberLike.memberId === 'string' ? memberLike.memberId : String(memberLike.memberId || ''),
+                    name: typeof memberLike.name === 'string' ? memberLike.name : String(memberLike.name || ''),
+                    hours: typeof memberLike.hours === 'number' ? memberLike.hours : 
+                      (typeof memberLike.hours === 'string' && !isNaN(parseFloat(memberLike.hours))) ? 
+                        parseFloat(memberLike.hours) : 0
+                  };
+                });
+                
+                return formattedAllocation;
+              });
+              
+              // Double-check that we have valid allocations
+              type ValidatedAllocation = {
+                teamId: string;
+                requestedHours: number;
+                allocatedMembers: unknown[];
+              };
+              
+              const validatedAllocations = formattedAllocations.filter((allocation: unknown): allocation is ValidatedAllocation => {
+                const alloc = allocation as Partial<ValidatedAllocation>;
+                return !!allocation && 
+                       typeof allocation === 'object' &&
+                       typeof alloc.teamId === 'string' && 
+                       alloc.teamId.trim() !== '' &&
+                       typeof alloc.requestedHours === 'number' &&
+                       !isNaN(alloc.requestedHours) &&
+                       Array.isArray(alloc.allocatedMembers);
+              });
+              
+              if (validatedAllocations.length !== formattedAllocations.length) {
+                console.warn(`[GraphApiClient][${nodeType}][${id}] ⚠️ Filtered out ${formattedAllocations.length - validatedAllocations.length} invalid allocations`);
+              }
+              
+              // Update the params with the validated allocations
+              params.teamAllocations = validatedAllocations;
+              
+              // Then stringify the properly structured array
+              const stringified = JSON.stringify(params.teamAllocations);
+              
+              // Final verification that it's valid JSON before assigning
+              JSON.parse(stringified); // Will throw if invalid
+              
+              params.teamAllocations = stringified;
+              
+              console.log(`[GraphApiClient][${nodeType}][${id}] ✅ Stringified teamAllocations for provider node`);
+            } catch (error) {
+              console.error(`[GraphApiClient][${nodeType}][${id}] 🚨 Error processing teamAllocations:`, error);
+              throw new Error(`Failed to process teamAllocations: ${error instanceof Error ? error.message : 'Unknown error'}`);
+            }
+          }
         }
       }
       

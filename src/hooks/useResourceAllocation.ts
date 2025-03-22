@@ -4,18 +4,12 @@ import { useCallback } from "react";
 import { calculateWeeklyCapacity } from '@/utils/utils';
 import { calculateEffectiveCapacity } from '@/utils/allocation/capacity';
 import { ConnectedTeam } from '@/hooks/useTeamAllocation';
-import { AvailableMember } from '@/utils/types/allocation';
+import { AvailableMember, TeamAllocation as GlobalTeamAllocation } from '@/utils/types/allocation';
+import { useMemberAllocationPublishing, NodeDataWithTeamAllocations } from '@/hooks/useMemberAllocationPublishing';
+import { NodeType } from '@/services/graph/neo4j/api-urls';
+import { NodeUpdateMetadata } from '@/services/graph/observer/node-observer';
 
 // Define interfaces for our data structures
-interface TeamAllocation {
-  teamId: string;
-  allocatedMembers: Array<{
-    memberId: string;
-    name?: string;
-    hours: number;
-  }>;
-}
-
 interface MemberAllocationData {
   memberId: string;
   name: string;
@@ -34,7 +28,7 @@ interface MemberAllocationData {
 }
 
 interface NodeData {
-  teamAllocations?: TeamAllocation[];
+  teamAllocations?: GlobalTeamAllocation[];
   [key: string]: unknown;
 }
 
@@ -49,7 +43,8 @@ interface TeamAllocationHook {
       hours?: number;
     }>,
     saveToBackend?: boolean
-  ) => TeamAllocation[] | undefined;
+  ) => GlobalTeamAllocation[] | undefined;
+  saveTeamAllocationsToBackend?: (allocations: GlobalTeamAllocation[]) => Promise<boolean>;
 }
 
 // Update AvailableMember interface to include hourlyRate
@@ -67,17 +62,37 @@ const roundToOneDecimal = (num: number): number => {
  * Shared between feature and option nodes
  */
 export function useResourceAllocation(
+  nodeId: string,
+  nodeType: NodeType,
   data: NodeData,
   teamAllocationHook: TeamAllocationHook,
-  getNodes: () => Array<{ id: string; data?: { title?: string } }>
+  getNodes: () => Array<{ id: string; data?: { title?: string } }>,
+  publishFn?: (data: NodeData, fields: string[], metadata?: Partial<NodeUpdateMetadata>) => void
 ) {
+  // Use the standardized member allocation publishing hook
+  const allocationPublishing = useMemberAllocationPublishing(
+    nodeId,
+    nodeType,
+    data as NodeDataWithTeamAllocations,
+    publishFn as (
+      data: NodeDataWithTeamAllocations, 
+      fields: string[], 
+      metadata?: Partial<NodeUpdateMetadata>
+    ) => void,
+    {
+      fieldName: 'teamAllocations',
+      debugName: `${nodeType}Node`
+    }
+  );
+  
   /**
    * Handle allocation change - local state only (no backend save)
+   * Original implementation - will be wrapped by the publishing hook
    * @param teamId The ID of the team
    * @param memberId The ID of the member to update
    * @param hours The allocation hours
    */
-  const handleAllocationChangeLocal = useCallback((teamId: string, memberId: string, hours: number) => {
+  const handleAllocationChangeInternal = useCallback((teamId: string, memberId: string, hours: number) => {
     // Find the team member in the team allocation
     const team = teamAllocationHook.connectedTeams.find((t: ConnectedTeam) => t.teamId === teamId);
     if (!team) {
@@ -100,12 +115,6 @@ export function useResourceAllocation(
     
     // Round hours to one decimal place for better display
     const roundedHours = roundToOneDecimal(hours);
-    
-    console.log(`[ResourceAllocation] Local allocation change for member ${memberId}:`, {
-      hours: roundedHours,
-      teamId,
-      memberName
-    });
     
     // Use the teamAllocationHook to update the allocation in the UI only
     teamAllocationHook.requestTeamAllocation(
@@ -123,20 +132,21 @@ export function useResourceAllocation(
 
   /**
    * Handle allocation commit - save to backend when the user finishes dragging
+   * Original implementation - will be wrapped by the publishing hook
    * @param memberId The ID of the member to update
    * @param hours The allocation hours
    */
-  const handleAllocationCommit = useCallback((teamId: string, memberId: string, hours: number) => {
+  const handleAllocationCommitInternal = useCallback((teamId: string, memberId: string, hours: number) => {
     // Find the team member in the team allocation
     const team = teamAllocationHook.connectedTeams.find((t: ConnectedTeam) => t.teamId === teamId);
     if (!team) {
-      console.warn(`⚠️ Could not find team ${teamId}`);
+      console.warn(`[ResourceAllocation][${nodeId}] ⚠️ Could not find team ${teamId}`);
       return;
     }
     
     const teamMember = team.availableBandwidth.find((m: AvailableMember) => m.memberId === memberId);
     if (!teamMember) {
-      console.warn(`⚠️ Could not find team member ${memberId} in team ${teamId}`);
+      console.warn(`[ResourceAllocation][${nodeId}] ⚠️ Could not find team member ${memberId} in team ${teamId}`);
       return;
     }
     
@@ -150,13 +160,8 @@ export function useResourceAllocation(
     // Round hours to one decimal place for better display
     const roundedHours = roundToOneDecimal(hours);
     
-    console.log(`🔄 Committing allocation for member ${memberId} in team ${teamId}:`, {
-      hours: roundedHours,
-      memberName
-    });
-    
-    // Use the teamAllocationHook to update the allocation and save to backend
-    teamAllocationHook.requestTeamAllocation(
+    // Use the teamAllocationHook to update the allocation
+    const updatedAllocations = teamAllocationHook.requestTeamAllocation(
       teamId, 
       roundedHours, 
       [{
@@ -164,10 +169,80 @@ export function useResourceAllocation(
         name: memberName,
         hours: roundedHours
       }],
-      true // Save to backend
+      // Always save directly to make the implementation consistent between node types
+      true
     );
+
+    // Provider nodes need special handling to ensure allocations are saved properly
+    // Explicit call to saveTeamAllocationsToBackend for reliability
+    if (nodeType === 'provider' && teamAllocationHook.saveTeamAllocationsToBackend && updatedAllocations) {
+      console.log(`[ResourceAllocation][${nodeId}][${nodeType}] 🔍 Provider node explicit save`);
+      
+      // Use setTimeout to ensure this happens after the current execution cycle
+      setTimeout(() => {
+        teamAllocationHook.saveTeamAllocationsToBackend!(updatedAllocations)
+          .then(success => {
+            if (!success) {
+              console.error(`[ResourceAllocation][${nodeId}][${nodeType}] ❌ Provider explicit save failed`);
+            }
+          })
+          .catch(error => {
+            console.error(`[ResourceAllocation][${nodeId}][${nodeType}] 🚨 Error during provider explicit save:`, error);
+          });
+      }, 50);
+    }
+    // For other node types, call the save function if available
+    else if (teamAllocationHook.saveTeamAllocationsToBackend && updatedAllocations) {
+      teamAllocationHook.saveTeamAllocationsToBackend(updatedAllocations)
+        .catch(error => {
+          console.error(`[ResourceAllocation][${nodeId}][${nodeType}] 🚨 Error during explicit save:`, error);
+        });
+    }
+
+    // Update is handled by the standardized allocation publishing hook
+    // through the teamAllocationHook's request function that calls saveToBackendAsync
+  }, [teamAllocationHook, getNodes, nodeId, nodeType]);
+  
+  // Use the standardized hooks to prevent circular updates
+  const handleAllocationChangeLocal = useCallback((teamId: string, memberId: string, hours: number) => {
+    allocationPublishing.handleAllocationChange(teamId, memberId, hours, handleAllocationChangeInternal);
+  }, [allocationPublishing, handleAllocationChangeInternal]);
+  
+  const handleAllocationCommit = useCallback((teamId: string, memberId: string, hours: number) => {
+    allocationPublishing.handleAllocationCommit(teamId, memberId, hours, handleAllocationCommitInternal);
+  }, [allocationPublishing, handleAllocationCommitInternal]);
+
+  /**
+   * Handle allocation commit and return a Promise - for imperative usage
+   * @param teamId The ID of the team
+   * @param memberId The ID of the member
+   * @param hours The allocation hours
+   * @returns Promise that resolves when the commit is complete
+   */
+  const handleAllocationCommitAsync = useCallback(async (teamId: string, memberId: string, hours: number): Promise<boolean> => {
+    // Skip if we're in the middle of an update
+    if (allocationPublishing.isUpdating.current) {
+      return false;
+    }
+
+    // Check if update is too recent
+    if (allocationPublishing.isUpdateTooRecent(`commit_${teamId}_${memberId}`)) {
+      return false;
+    }
+
+    // Set updating flag to prevent circular updates
+    allocationPublishing.isUpdating.current = true;
     
-  }, [teamAllocationHook, getNodes]);
+    // Call the internal handler to update local state
+    handleAllocationCommitInternal(teamId, memberId, hours);
+    
+    // Reset the updating flag after a delay
+    setTimeout(() => {
+      allocationPublishing.isUpdating.current = false;
+    }, 150);
+    
+    return true;
+  }, [allocationPublishing, handleAllocationCommitInternal]);
 
   /**
    * Calculate member allocations for display and cost calculation
@@ -179,7 +254,7 @@ export function useResourceAllocation(
    */
   const calculateMemberAllocations = useCallback((
     connectedTeams: ConnectedTeam[],
-    processedTeamAllocations: TeamAllocation[],
+    processedTeamAllocations: GlobalTeamAllocation[],
     projectDurationDays: number,
     formatMemberName: (memberId: string, memberData?: { title?: string }) => string
   ) => {
@@ -191,7 +266,10 @@ export function useResourceAllocation(
         const team = connectedTeams.find(t => t.teamId === allocation.teamId);
         const teamMember = team?.availableBandwidth.find(m => m.memberId === member.memberId) as ExtendedAvailableMember | undefined;
         
-        if (!teamMember) return;
+        if (!teamMember) {
+          console.warn(`[ResourceAllocation][${nodeId}] Could not find team member ${member.memberId} in team ${allocation.teamId}`);
+          return;
+        }
         
         const current = allocations.get(member.memberId);
         const currentHours = current?.hours || 0;
@@ -211,24 +289,27 @@ export function useResourceAllocation(
           teamMember.daysPerWeek || 5
         );
         
-        const hourlyRate = teamMember.hourlyRate || 0;
+        // Calculate cost: hours * hourlyRate
+        const newHours = currentHours + member.hours;
+        const hourlyRate = teamMember.hourlyRate || teamMember.dailyRate || 0; // Take hourlyRate directly or dailyRate as fallback
+        const newCost = currentCost + (member.hours * hourlyRate);
         
         allocations.set(member.memberId, {
           memberId: member.memberId,
           name: memberName,
-          hours: currentHours + member.hours,
-          cost: currentCost + (member.hours * hourlyRate),
+          hours: newHours,
+          cost: newCost,
           capacity,
           allocation: teamMember.allocation || 100,
-          daysEquivalent: (currentHours + member.hours) / (teamMember.hoursPerDay || 8),
-          percentage: ((currentHours + member.hours) / effectiveCapacity) * 100,
+          daysEquivalent: newHours / (teamMember.hoursPerDay || 8),
+          percentage: (newHours / effectiveCapacity) * 100,
           hourlyRate
         });
       });
     });
     
     return allocations;
-  }, []);
+  }, [nodeId]);
 
   /**
    * Calculate cost summary for display
@@ -242,23 +323,31 @@ export function useResourceAllocation(
     const allocations = Array.from(memberAllocations.values());
     
     allocations.forEach(allocation => {
-      totalCost += allocation.cost || 0;
-      totalHours += allocation.hours || 0;
+      const memberHours = allocation.hours || 0;
+      const memberHourlyRate = allocation.hourlyRate || 0;
+      const memberCost = memberHours * memberHourlyRate;
+      
+      totalCost += memberCost;
+      totalHours += memberHours;
       totalDays += allocation.daysEquivalent || 0;
     });
     
-    return {
+    const result = {
       totalCost: roundToOneDecimal(totalCost),
       totalHours: roundToOneDecimal(totalHours),
       totalDays: roundToOneDecimal(totalDays),
       allocations
     };
+    
+    return result;
   }, []);
 
   return {
     handleAllocationChangeLocal,
     handleAllocationCommit,
+    handleAllocationCommitAsync,
     calculateMemberAllocations,
-    calculateCostSummary
+    calculateCostSummary,
+    shouldProcessUpdate: allocationPublishing.shouldProcessUpdate
   };
 } 

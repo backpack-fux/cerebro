@@ -36,6 +36,18 @@ export const FeatureFields: Record<string, DataField> = {
     description: 'The unit of time used for duration (days, weeks, etc.)',
     path: 'timeUnit'
   },
+  START_DATE: {
+    id: 'startDate',
+    name: 'Start Date',
+    description: 'When this feature is scheduled to start',
+    path: 'startDate'
+  },
+  END_DATE: {
+    id: 'endDate',
+    name: 'End Date',
+    description: 'When this feature is scheduled to end',
+    path: 'endDate'
+  },
   TEAM_MEMBERS: {
     id: 'teamMembers',
     name: 'Team Members',
@@ -83,6 +95,8 @@ export const FeaturePublishes = {
     FeatureFields.COST,
     FeatureFields.DURATION,
     FeatureFields.TIME_UNIT,
+    FeatureFields.START_DATE,
+    FeatureFields.END_DATE,
     FeatureFields.TEAM_MEMBERS,
     FeatureFields.MEMBER_ALLOCATIONS,
     FeatureFields.TEAM_ALLOCATIONS,

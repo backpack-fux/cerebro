@@ -41,7 +41,7 @@ export class TeamMemberService {
           roles: roles,
           bio: params.bio || '',
           timezone: params.timezone,
-          dailyRate: params.dailyRate,
+          hourlyRate: params.dailyRate,
           hoursPerDay: params.hoursPerDay || 8,
           daysPerWeek: params.daysPerWeek || 5,
           weeklyCapacity: (params.hoursPerDay || 8) * (params.daysPerWeek || 5),

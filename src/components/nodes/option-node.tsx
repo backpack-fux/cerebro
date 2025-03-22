@@ -92,7 +92,7 @@ export const OptionNode = memo(function OptionNode({ id, data, selected }: NodeP
   const option = useOptionNode(id, typedData);
   
   // Use the shared resource allocation hook
-  const resourceAllocation = useResourceAllocation(data, option, getNodes);
+  const resourceAllocation = useResourceAllocation(id, 'option', data, option, getNodes);
   
   // Local state for input values to prevent clearing during re-renders
   const [localTransactionFee, setLocalTransactionFee] = useState<string>(
@@ -186,13 +186,26 @@ export const OptionNode = memo(function OptionNode({ id, data, selected }: NodeP
     const result = new Map<string, ImportedMemberAllocationData>();
     
     allocations.forEach((allocation, key) => {
+      // Ensure we're dealing with proper number values
+      const hours = typeof allocation.hours === 'number' ? allocation.hours : 0;
+      const cost = typeof allocation.cost === 'number' ? allocation.cost : 0;
+      
       const converted: ImportedMemberAllocationData = {
-        ...allocation,
+        memberId: allocation.memberId,
+        name: allocation.name || '',
+        hours: hours,
+        cost: cost,
+        percentage: allocation.percentage || 0,
+        weeklyCapacity: allocation.capacity, // Map capacity to weeklyCapacity
         memberCapacity: allocation.memberCapacity ? {
-          hoursPerDay: allocation.memberCapacity as number,
+          hoursPerDay: typeof allocation.memberCapacity === 'number' ? 
+            allocation.memberCapacity : 8, // Default value if not a number
           daysPerWeek: 5, // Default value
         } : undefined,
-        cost: allocation.cost || 0, // Ensure cost is defined
+        isOverAllocated: false, // Default value
+        availableHours: 0, // Default value
+        effectiveCapacity: 0, // Default value
+        overAllocatedBy: 0, // Default value
       };
       result.set(key, converted);
     });

@@ -21,7 +21,8 @@ import {
   calculateCalendarDuration,
   getEndDateFromDuration
 } from '@/utils/time/calendar';
-import { GraphApiClient } from '@/services/graph/neo4j/api-client';
+import { useMemberAllocationPublishing, NodeDataWithTeamAllocations } from '@/hooks/useMemberAllocationPublishing';
+import { NodeType } from '@/services/graph/neo4j/api-urls';
 
 // Define our own RosterMember interface to match the actual usage in the code
 interface TeamRosterMember {
@@ -54,6 +55,27 @@ export interface ConnectedTeam {
 export function useTeamAllocation(nodeId: string, data: FeatureNodeData) {
   const { updateNodeData, getNodes } = useReactFlow();
   const connections = useNodeConnections({ id: nodeId });
+  
+  // Determine the node type based on the data structure
+  const nodeType = useMemo((): NodeType => {
+    // Simple heuristic to determine node type
+    if ('buildType' in data) return 'feature';
+    if ('isDisruptive' in data) return 'option';
+    if ('costs' in data) return 'provider';
+    return 'feature'; // Default to feature if unknown
+  }, [data]);
+  
+  // Use the standardized member allocation publishing hook
+  const allocationPublishing = useMemberAllocationPublishing(
+    nodeId,
+    nodeType,
+    data as NodeDataWithTeamAllocations,
+    undefined, // No external publish function
+    {
+      fieldName: 'teamAllocations',
+      debugName: `${nodeType}Node-TeamAllocation`
+    }
+  );
   
   // Refs for caching connected teams
   const prevConnectionsStringRef = useRef<string>('');
@@ -163,16 +185,20 @@ export function useTeamAllocation(nodeId: string, data: FeatureNodeData) {
                 dailyRate: Number(memberNode?.data?.dailyRate) || 350
               }, 5); // Default to 5 days for weekly capacity
               
+              // The field is named dailyRate but it actually contains hourly rate directly
+              const hourlyRate = Number(memberNode?.data?.dailyRate) || 350;
+              
               return {
                 memberId: member.memberId,
-                name: memberName as string, // Ensure name is explicitly a string
+                name: memberName as string,
                 availableHours,
-                dailyRate: Number(memberNode?.data?.dailyRate) || 350,
+                dailyRate: hourlyRate, // Field named incorrectly, but contains hourly rate
                 hoursPerDay,
                 daysPerWeek,
                 weeklyCapacity,
-                allocation: teamAllocationPercentage // Add the team allocation percentage for reference
-              } as AvailableMember; // Explicitly cast to AvailableMember
+                allocation: teamAllocationPercentage,
+                hourlyRate // Add to ensure the correct rate is available for calculations
+              } as AvailableMember;
             });
           } catch {
             // Error handled silently, returns empty array
@@ -194,85 +220,11 @@ export function useTeamAllocation(nodeId: string, data: FeatureNodeData) {
     return teamNodes;
   }, [connections, getNodes, processedTeamAllocations]);
 
-  // Save team allocations to backend
+  // Save team allocations to backend with circular update protection
   const saveTeamAllocationsToBackend = useCallback((allocations: TeamAllocation[]) => {
-    // Ensure we have valid allocations
-    if (!allocations || !Array.isArray(allocations)) {
-      console.error('[TeamAllocation] Invalid allocations data:', allocations);
-      return;
-    }
-
-    try {
-      // Log the raw allocations for debugging
-      console.log('[TeamAllocation] Raw allocations before validation:', JSON.parse(JSON.stringify(allocations)));
-      
-      // Create a new array with exactly the structure the API expects
-      const validAllocations = allocations.map((allocation, index) => {
-        // Check for required fields
-        if (!allocation.teamId) {
-          console.error(`[TeamAllocation] Missing teamId in allocation at index ${index}:`, allocation);
-          throw new Error(`Missing teamId in allocation at index ${index}`);
-        }
-        
-        if (allocation.requestedHours === undefined || typeof allocation.requestedHours !== 'number') {
-          console.error(`[TeamAllocation] Invalid requestedHours in allocation at index ${index}:`, allocation);
-          throw new Error(`Invalid requestedHours in allocation at index ${index}`);
-        }
-        
-        if (!allocation.allocatedMembers || !Array.isArray(allocation.allocatedMembers)) {
-          console.error(`[TeamAllocation] Missing or invalid allocatedMembers in allocation at index ${index}:`, allocation);
-          throw new Error(`Missing or invalid allocatedMembers in allocation at index ${index}`);
-        }
-
-        // Ensure each member allocation has required fields and create clean objects
-        const validMembers = allocation.allocatedMembers.map((member, memberIndex) => {
-          if (!member.memberId) {
-            console.error(`[TeamAllocation] Missing memberId in member at index ${memberIndex} of allocation ${index}:`, member);
-            throw new Error(`Missing memberId in member at index ${memberIndex} of allocation ${index}`);
-          }
-          
-          if (member.hours === undefined || typeof member.hours !== 'number') {
-            console.error(`[TeamAllocation] Invalid hours in member at index ${memberIndex} of allocation ${index}:`, member);
-            throw new Error(`Invalid hours in member at index ${memberIndex} of allocation ${index}`);
-          }
-          
-          // Create a clean member object with ONLY the required fields
-          return {
-            memberId: member.memberId,
-            name: member.name || '',
-            hours: member.hours
-          };
-        });
-
-        // Create a clean allocation object with ONLY the required fields
-        // This ensures we don't send any extra properties that might confuse the API
-        return {
-          teamId: allocation.teamId,
-          requestedHours: allocation.requestedHours,
-          allocatedMembers: validMembers
-        };
-      });
-        
-      console.log('[TeamAllocation] Validated allocations:', validAllocations);
-      
-      // Important: The API expects teamAllocations to be an array, not a string
-      // We need to send the array directly, not as a JSON string
-      const apiData = {
-        teamAllocations: validAllocations
-      };
-        
-      // Send to backend
-      GraphApiClient.updateNode('feature', nodeId, apiData)
-        .then(() => {
-          console.log('[TeamAllocation] Successfully saved team allocations');
-        })
-        .catch((error: Error) => {
-          console.error(`[TeamAllocation] Failed to update team allocations for node ${nodeId}:`, error);
-        });
-    } catch (error: unknown) {
-      console.error(`[TeamAllocation] Error preparing team allocations for node ${nodeId}:`, error);
-    }
-  }, [nodeId]);
+    // Use the standardized publishing hook to handle saving
+    return allocationPublishing.saveToBackendAsync(allocations);
+  }, [allocationPublishing]);
   
   // Request team allocation
   const requestTeamAllocation = useCallback((
@@ -281,6 +233,24 @@ export function useTeamAllocation(nodeId: string, data: FeatureNodeData) {
     memberData: string[] | Array<{ memberId: string; name?: string; hours?: number }> = [],
     saveToBackend: boolean = true
   ) => {
+    // Enhanced logging to track usage
+    console.log(`[TeamAllocation][${nodeId}] 🔍 requestTeamAllocation called with:`, {
+      teamId,
+      requestedHours,
+      memberDataLength: Array.isArray(memberData) ? memberData.length : 0,
+      memberDataType: typeof memberData,
+      memberDataIsArray: Array.isArray(memberData),
+      saveToBackend,
+      currentNodeType: data.type || 'unknown',
+      isUpdating: allocationPublishing.isUpdating.current
+    });
+
+    // Skip if we're in the middle of an update cycle already
+    if (allocationPublishing.isUpdating.current) {
+      console.log(`[TeamAllocation][${nodeId}] ⚠️ Skipping allocation request - already updating`);
+      return;
+    }
+    
     if (!teamId) {
       console.error('[TeamAllocation] Missing teamId in requestTeamAllocation');
       return;
@@ -288,6 +258,12 @@ export function useTeamAllocation(nodeId: string, data: FeatureNodeData) {
 
     if (typeof requestedHours !== 'number') {
       console.error('[TeamAllocation] Invalid requestedHours in requestTeamAllocation:', requestedHours);
+      return;
+    }
+    
+    // Check if update is too recent to prevent circular updates
+    if (allocationPublishing.isUpdateTooRecent(`request_${teamId}`)) {
+      console.log(`[TeamAllocation][${nodeId}] ⚠️ Update too recent for team ${teamId}, skipping`);
       return;
     }
     
@@ -353,14 +329,14 @@ export function useTeamAllocation(nodeId: string, data: FeatureNodeData) {
             allocatedMembers[existingMemberIndex] = {
               ...allocatedMembers[existingMemberIndex],
               name: name || allocatedMembers[existingMemberIndex].name,
-              hours
+              hours: hours || 0
             };
           } else {
             // Add new member
             allocatedMembers.push({
               memberId,
               name: name || '',
-              hours
+              hours: hours || 0
             });
           }
         }
@@ -388,26 +364,63 @@ export function useTeamAllocation(nodeId: string, data: FeatureNodeData) {
       });
     }
     
-    // Update the node data
+    // Set updating flag to prevent circular updates
+    allocationPublishing.isUpdating.current = true;
+    
+    // Update the node data first to maintain UI state
     updateNodeData(nodeId, {
       ...data,
       teamAllocations: newAllocations
     });
     
-    // Save to backend if requested
+    // Save to backend if requested, with proper Promise handling
     if (saveToBackend) {
-      saveTeamAllocationsToBackend(newAllocations);
+      console.log(`[TeamAllocation][${nodeId}] 📤 SAVING TO BACKEND via saveTeamAllocationsToBackend`, {
+        allocationsCount: newAllocations.length
+      });
+      
+      saveTeamAllocationsToBackend(newAllocations)
+        .then(success => {
+          console.log(`[TeamAllocation][${nodeId}] ${success ? '✅ Successfully saved' : '❌ Failed to save'} allocations to backend`);
+        })
+        .catch(error => {
+          console.error(`[TeamAllocation][${nodeId}] 🚨 Error saving allocations:`, error);
+        })
+        .finally(() => {
+          // Reset updating flag after a delay regardless of success/failure
+          setTimeout(() => {
+            allocationPublishing.isUpdating.current = false;
+            console.log(`[TeamAllocation][${nodeId}] 🔄 Reset updating flag after team allocation request`);
+          }, 300);
+        });
+    } else {
+      console.log(`[TeamAllocation][${nodeId}] ℹ️ saveToBackend=false, skipping backend save`);
+      // If not saving to backend, still reset the updating flag after a delay
+      setTimeout(() => {
+        allocationPublishing.isUpdating.current = false;
+      }, 300);
     }
     
     // Return the updated allocations
     return newAllocations;
-  }, [data, getNodes, nodeId, updateNodeData, processedTeamAllocations, saveTeamAllocationsToBackend]);
+  }, [data, getNodes, nodeId, updateNodeData, processedTeamAllocations, saveTeamAllocationsToBackend, allocationPublishing]);
 
   // Remove member allocation
   const removeMemberAllocation = useCallback((
     teamId: string,
     memberId: string
   ) => {
+    // Skip if we're in the middle of an update cycle
+    if (allocationPublishing.isUpdating.current) {
+      console.log(`[TeamAllocation] Skipping member allocation removal - already updating`);
+      return;
+    }
+
+    // Check if update is too recent to prevent circular updates
+    if (allocationPublishing.isUpdateTooRecent(`remove_${teamId}_${memberId}`)) {
+      return;
+    }
+
     // Get the team node
     const teamNode = getNodes().find(n => n.id === teamId);
     if (!isTeamNode(teamNode)) return;
@@ -415,6 +428,9 @@ export function useTeamAllocation(nodeId: string, data: FeatureNodeData) {
     // Get the member node
     const memberNode = getNodes().find(n => n.id === memberId);
     if (!isMemberNode(memberNode)) return;
+
+    // Set updating flag to prevent circular updates
+    allocationPublishing.isUpdating.current = true;
 
     // Update the team roster to remove this allocation
     const updatedRoster = teamNode.data.roster.map(member => {
@@ -475,12 +491,22 @@ export function useTeamAllocation(nodeId: string, data: FeatureNodeData) {
       };
     });
 
-    // Update the feature node
+    // Update the node data FIRST, before saving to backend
     updateNodeData(nodeId, {
       ...data,
       teamAllocations: updatedTeamAllocations
     });
-  }, [nodeId, data, getNodes, updateNodeData, processedTeamAllocations]);
+    
+    // THEN save to backend with proper Promise handling
+    saveTeamAllocationsToBackend(updatedTeamAllocations)
+      .finally(() => {
+        // Reset updating flag after a delay regardless of success/failure
+        setTimeout(() => {
+          allocationPublishing.isUpdating.current = false;
+          console.log(`[TeamAllocation] Reset updating flag after removal`);
+        }, 300);
+      });
+  }, [nodeId, data, getNodes, updateNodeData, processedTeamAllocations, saveTeamAllocationsToBackend, allocationPublishing]);
 
   // Update member allocation
   const updateMemberAllocation = useCallback((
@@ -490,6 +516,17 @@ export function useTeamAllocation(nodeId: string, data: FeatureNodeData) {
     startDate?: string,
     endDate?: string
   ) => {
+    // Skip if we're in the middle of an update cycle
+    if (allocationPublishing.isUpdating.current) {
+      console.log(`[TeamAllocation] Skipping member allocation update - already updating`);
+      return;
+    }
+
+    // Check if update is too recent to prevent circular updates
+    if (allocationPublishing.isUpdateTooRecent(`update_${teamId}_${memberId}`)) {
+      return;
+    }
+
     // Validate inputs
     if (!teamId || !memberId || typeof hours !== 'number') {
       console.error('[TeamAllocation] Invalid inputs to updateMemberAllocation:', { teamId, memberId, hours });
@@ -509,6 +546,9 @@ export function useTeamAllocation(nodeId: string, data: FeatureNodeData) {
       console.error('[TeamAllocation] Member node not found or invalid:', memberId);
       return;
     }
+
+    // Set updating flag to prevent circular updates
+    allocationPublishing.isUpdating.current = true;
 
     // Use feature dates or calculate reasonable defaults
     const featureStartDate = startDate || data.startDate || new Date().toISOString().split('T')[0];
@@ -632,7 +672,7 @@ export function useTeamAllocation(nodeId: string, data: FeatureNodeData) {
         0
       );
       
-      // Update the team allocations with only the required fields
+      // Create the updated team allocations object
       const updatedTeamAllocations = teamAllocationsArray.map((a: TeamAllocation) => {
         if (a.teamId !== teamId) return a;
         
@@ -643,14 +683,23 @@ export function useTeamAllocation(nodeId: string, data: FeatureNodeData) {
         };
       });
       
-      // Update the feature node
+      // Update the node data FIRST, before saving to backend
+      // This ensures the UI stays in sync with user actions
       updateNodeData(nodeId, {
         ...data,
         teamAllocations: updatedTeamAllocations
       });
 
-      // Save to backend
-      saveTeamAllocationsToBackend(updatedTeamAllocations);
+      // THEN save to backend, allowing the saveTeamAllocationsToBackend function
+      // to handle its own UI updates as needed for the specific node
+      saveTeamAllocationsToBackend(updatedTeamAllocations)
+        .finally(() => {
+          // Reset updating flag after a delay regardless of success/failure
+          setTimeout(() => {
+            allocationPublishing.isUpdating.current = false;
+            console.log(`[TeamAllocation] Reset updating flag after save`);
+          }, 300);
+        });
     } else {
       // Create new team allocation with this member, using only the required fields
       const newTeamAllocation = {
@@ -666,16 +715,23 @@ export function useTeamAllocation(nodeId: string, data: FeatureNodeData) {
       // Create a new array with the new allocation
       const updatedTeamAllocations = [...teamAllocationsArray, newTeamAllocation];
       
-      // Update the feature node
+      // Update the node data FIRST, before saving to backend
       updateNodeData(nodeId, {
         ...data,
         teamAllocations: updatedTeamAllocations
       });
 
-      // Save to backend
-      saveTeamAllocationsToBackend(updatedTeamAllocations);
+      // THEN save to backend with proper Promise handling
+      saveTeamAllocationsToBackend(updatedTeamAllocations)
+        .finally(() => {
+          // Reset updating flag after a delay regardless of success/failure
+          setTimeout(() => {
+            allocationPublishing.isUpdating.current = false;
+            console.log(`[TeamAllocation] Reset updating flag after save`);
+          }, 300);
+        });
     }
-  }, [nodeId, data, getNodes, updateNodeData, processedTeamAllocations, saveTeamAllocationsToBackend]);
+  }, [nodeId, data, getNodes, updateNodeData, processedTeamAllocations, saveTeamAllocationsToBackend, allocationPublishing]);
 
   // Calculate costs based on team allocations
   const costs = useMemo(() => {
@@ -730,6 +786,8 @@ export function useTeamAllocation(nodeId: string, data: FeatureNodeData) {
     removeMemberAllocation,
     updateMemberAllocation,
     costs,
-    CostSummary: CostSummaryComponent
+    CostSummary: CostSummaryComponent,
+    // Add standardized protection against circular updates
+    shouldProcessUpdate: allocationPublishing.shouldProcessUpdate
   };
 } 

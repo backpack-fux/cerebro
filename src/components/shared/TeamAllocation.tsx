@@ -7,6 +7,7 @@ import { MemberAllocation, MemberAllocationData } from "./MemberAllocation";
 import { useAllocationEngine } from '@/hooks/useAllocationEngine';
 import { AvailableMember } from '@/utils/types/allocation';
 import type { TeamAllocation as ITeamAllocation } from '@/utils/types/allocation';
+import { useMemo } from "react";
 
 /**
  * Interface for team data
@@ -46,19 +47,21 @@ export const TeamAllocation: React.FC<TeamAllocationProps> = ({
   formatMemberName,
   onMemberValueChange,
   onMemberValueCommit,
-  timeframe
+  // timeframe parameter is kept in the interface for future use but not destructured here
 }) => {
   const { teamMembers } = useAllocationEngine();
-  const allocatedMembers = teamAllocation?.allocatedMembers || [];
-  const totalTeamHours = allocatedMembers.reduce((sum, m) => sum + m.hours, 0);
   
-  // DEBUG: Log the project duration received by the component
-  console.log('TeamAllocation - Project Duration:', {
-    teamId: team.teamId,
-    teamName: team.name,
-    projectDurationDays,
-    timeframe
-  });
+  // Use useMemo to memoize the allocatedMembers array
+  const allocatedMembers = useMemo(() => 
+    teamAllocation?.allocatedMembers || [],
+    [teamAllocation]
+  );
+  
+  // Calculate total team hours with useMemo
+  const totalTeamHours = useMemo(() => 
+    allocatedMembers.reduce((sum, m) => sum + (m.hours || 0), 0),
+    [allocatedMembers]
+  );
   
   return (
     <div className="space-y-2 bg-muted/30 p-3 rounded-md">
@@ -75,10 +78,10 @@ export const TeamAllocation: React.FC<TeamAllocationProps> = ({
       {/* Member Allocation Controls */}
       <div className="space-y-3 mt-2">
         {team.availableBandwidth.map(member => {
-          console.group(`👤 Member Allocation: ${member.name}`);
-          console.log('Member Data:', member);
-          console.log('Current Allocation:', memberAllocations.get(member.memberId));
-          console.log('Team Allocation:', teamAllocation);
+          // Find the team member data to get their actual allocation percentage
+          const teamMember = teamMembers.find(tm => tm.id === member.memberId);
+          const teamAllocationPercent = teamMember?.teamAllocation || 
+                                      (typeof member.allocation === 'number' ? member.allocation : 100);
           
           // Use pre-calculated values from the memberAllocations map
           const allocation = memberAllocations.get(member.memberId);
@@ -87,22 +90,8 @@ export const TeamAllocation: React.FC<TeamAllocationProps> = ({
           const memberAllocation = allocatedMembers.find(m => m.memberId === member.memberId);
           const isAllocated = !!memberAllocation;
           
-          // Find the team member data to get their actual allocation percentage
-          const teamMember = teamMembers.find(tm => tm.id === member.memberId);
-          const teamAllocationPercent = teamMember?.teamAllocation || 
-                                      (typeof member.allocation === 'number' ? member.allocation : 100);
-          
           // Calculate effective weekly capacity
-          const effectiveWeeklyCapacity = ((member.allocation || 100) / 100) * (member.weeklyCapacity || 40);
-          
-          // DEBUG: Log the weekly capacity values
-          console.log(`[TeamAllocation] Weekly capacity for ${member.name}:`, {
-            rawWeeklyCapacity: member.weeklyCapacity,
-            defaultedWeeklyCapacity: member.weeklyCapacity || 40,
-            memberHoursPerDay: member.hoursPerDay,
-            memberDaysPerWeek: member.daysPerWeek,
-            calculatedDailyCapacity: (member.weeklyCapacity || 40) / (member.daysPerWeek || 5)
-          });
+          const effectiveWeeklyCapacity = ((teamAllocationPercent) / 100) * (member.weeklyCapacity || 40);
           
           // Always use weekly capacity for consistency with feature node
           const totalAvailableHours = effectiveWeeklyCapacity;
@@ -112,23 +101,8 @@ export const TeamAllocation: React.FC<TeamAllocationProps> = ({
           const overAllocatedBy = isOverAllocated ? allocation.hours - totalAvailableHours : 0;
           
           // Calculate available hours (total capacity minus allocated hours)
-          const availableHours = Math.max(0, totalAvailableHours - (allocation?.hours || 0));
+          const availableHours = Math.max(0, totalAvailableHours - (memberAllocation?.hours || 0));
           
-          // DEBUG: Log what we're passing to MemberAllocation
-          console.log(`[TeamAllocation] Passing to MemberAllocation for ${member.name}:`, {
-            member: {
-              ...member,
-              allocation: teamAllocationPercent
-            },
-            allocation,
-            isAllocated,
-            projectDurationDays,
-            isOverAllocated,
-            availableHours,
-            overAllocatedBy
-          });
-          
-          console.groupEnd();
           return (
             <MemberAllocation
               key={member.memberId}

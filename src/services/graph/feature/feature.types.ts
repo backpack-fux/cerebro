@@ -42,6 +42,8 @@ export interface RFFeatureNodeData extends ReactFlowNodeBase {
   cost?: number;
   duration?: number;
   timeUnit?: TimeUnit;
+  startDate?: string;
+  endDate?: string;
   teamMembers?: string[]; // Array of team member node IDs
   memberAllocations?: MemberAllocation[];
   teamAllocations?: TeamAllocation[];
@@ -59,6 +61,8 @@ export type CreateFeatureNodeParams = {
   buildType?: BuildType;
   duration?: number;
   timeUnit?: TimeUnit;
+  startDate?: string;
+  endDate?: string;
   status?: string;
   position: XYPosition;
 };
@@ -75,6 +79,8 @@ interface UpdatableFeatureNodeData {
   teamAllocations?: TeamAllocation[];
   status?: string;
   position?: XYPosition;
+  startDate?: string;
+  endDate?: string;
 }
 
 export type UpdateFeatureNodeParams = UpdatableFeatureNodeData & {
@@ -91,6 +97,8 @@ export interface Neo4jFeatureNodeData {
   cost?: number;
   duration?: number;
   timeUnit?: string;
+  startDate?: string;
+  endDate?: string;
   teamMembers?: string; // JSON string of team member IDs
   memberAllocations?: string; // JSON string of MemberAllocation array
   teamAllocations?: string; // JSON string of TeamAllocation array

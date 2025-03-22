@@ -14,6 +14,7 @@ import { toast } from "sonner";
 import { useTeamAllocation } from "@/hooks/useTeamAllocation";
 import { useNodeStatus, NodeStatus } from './useNodeStatus';
 import { useDurationInput } from './useDurationInput';
+import { useResourceAllocation } from '@/hooks/useResourceAllocation';
 import { v4 as uuidv4 } from 'uuid';
 import { 
   prepareDataForBackend,
@@ -23,7 +24,8 @@ import {
 import { isOptionNode } from "@/utils/type-guards";
 import { TeamAllocation } from "@/utils/types/allocation";
 import { useNodeObserver } from '@/hooks/useNodeObserver';
-import { NodeUpdateType } from '@/services/graph/observer/node-observer';
+import { NodeUpdateType, NodeUpdateMetadata } from '@/services/graph/observer/node-observer';
+import { useDurationPublishing } from '@/utils/hooks/useDurationPublishing';
 
 // Extend RFOptionNodeData to ensure status is of type NodeStatus
 interface ExtendedRFOptionNodeData extends RFOptionNodeData {
@@ -95,33 +97,72 @@ export function useOptionNode(id: string, data: ExtendedRFOptionNodeData) {
     teamAllocations: processedTeamAllocations
   }), [parsedData, processedGoals, processedRisks, processedTeamMembers, processedMemberAllocations, processedTeamAllocations]);
 
+  // Refs for updating state
+  const titleDebounceRef = useRef<NodeJS.Timeout | null>(null);
+  const descriptionDebounceRef = useRef<NodeJS.Timeout | null>(null);
+  const transactionFeeDebounceRef = useRef<NodeJS.Timeout | null>(null);
+  const monthlyVolumeDebounceRef = useRef<NodeJS.Timeout | null>(null);
+  const teamAllocationsDebounceRef = useRef<{ timeout: NodeJS.Timeout | null }>({ timeout: null });
+  const defaultOptionTypeSetRef = useRef<boolean>(false);
+  
+  // Add ref for tracking team allocation updates
+  const isTeamAllocationUpdatingRef = useRef<boolean>(false);
+  
   // Save team allocations to backend
-  const saveTeamAllocationsToBackend = useCallback(async (allocations: TeamAllocation[]) => {
+  const saveTeamAllocationsToBackend = useCallback((teamAllocations: TeamAllocation[]): Promise<boolean> => {
+    // Skip if we're already updating
+    if (isTeamAllocationUpdatingRef.current) {
+      console.log(`[OptionNode][${id}] Skipping save to backend - already updating`);
+      return Promise.resolve(false);
+    }
+
+    // Set flag to prevent circular updates during save
+    isTeamAllocationUpdatingRef.current = true;
+
+    // Update local state immediately to avoid flicker
+    const updatedData = {
+      ...safeOptionData,
+      teamAllocations
+    };
+    
+    // Update node data right away to prevent UI flicker
+    updateNodeData(id, updatedData);
+    
+    // Log the team allocations before sending to backend
+    console.log('Team allocations being sent to backend:', JSON.stringify(teamAllocations, null, 2));
+    
     try {
-      // Log the team allocations before sending to backend
-      console.log('Team allocations being sent to backend:', JSON.stringify(allocations, null, 2));
-      
       // Prepare data for backend
-      const apiData = prepareDataForBackend({ teamAllocations: allocations }, jsonFields);
+      const apiData = prepareDataForBackend({ teamAllocations }, jsonFields);
       
-      // Send to backend
-      await GraphApiClient.updateNode('option' as NodeType, id, apiData);
-      
-      // Update React Flow state
-      updateNodeData(id, { teamAllocations: allocations });
-      
-      // Publish the update to subscribers
-      publishManifestUpdate(
-        { ...safeOptionData, teamAllocations: allocations },
-        ['teamAllocations', 'teamAllocationTeamId', 'teamAllocationRequestedHours', 'teamAllocationMembers']
-      );
-      
-      console.log('✅ Successfully saved team allocations to backend');
-      return true;
+      // Return a promise that resolves when the operation completes
+      return GraphApiClient.updateNode('option' as NodeType, id, apiData)
+        .then(() => {
+          // Publish the update to subscribers
+          publishManifestUpdate(
+            { ...safeOptionData, teamAllocations },
+            ['teamAllocations', 'teamAllocationTeamId', 'teamAllocationRequestedHours', 'teamAllocationMembers']
+          );
+          
+          console.log('✅ Successfully saved team allocations to backend');
+          return true;
+        })
+        .catch((error) => {
+          console.error('❌ Failed to save team allocations to backend:', error);
+          toast.error('Failed to save team allocations');
+          return false;
+        })
+        .finally(() => {
+          // Reset updating flag after a delay to allow state to settle
+          setTimeout(() => {
+            isTeamAllocationUpdatingRef.current = false;
+            console.log(`[OptionNode][${id}] Reset updating flag after save`);
+          }, 300);
+        });
     } catch (error) {
-      console.error('❌ Failed to save team allocations to backend:', error);
-      toast.error('Failed to save team allocations');
-      return false;
+      console.error('❌ Error preparing team allocations data:', error);
+      isTeamAllocationUpdatingRef.current = false;
+      return Promise.resolve(false);
     }
   }, [id, jsonFields, updateNodeData, publishManifestUpdate, safeOptionData]);
 
@@ -143,6 +184,20 @@ export function useOptionNode(id: string, data: ExtendedRFOptionNodeData) {
   // Get costs from the team allocation hook
   const costs = teamAllocationHook.costs;
   
+  // Use the resource allocation hook to manage resource allocations with standardized publishing
+  const resourceAllocation = useResourceAllocation(
+    id,
+    'option',
+    safeOptionData,
+    teamAllocationHook,
+    getNodes,
+    publishManifestUpdate as (
+      data: Partial<RFOptionNodeData>,
+      fieldIds: string[],
+      metadata?: Partial<NodeUpdateMetadata>
+    ) => void
+  );
+
   // Use the node status hook to manage status
   const { status, getStatusColor, cycleStatus: originalCycleStatus } = useNodeStatus(
     id, 
@@ -182,58 +237,69 @@ export function useOptionNode(id: string, data: ExtendedRFOptionNodeData) {
     }
   );
   
+  // Use the standardized duration publishing hooks
+  const durationPublishing = useDurationPublishing(
+    id, 
+    'option', 
+    safeOptionData, 
+    publishManifestUpdate,
+    { 
+      fieldName: 'duration',
+      debugName: 'OptionNode'
+    }
+  );
+  
+  const buildDurationPublishing = useDurationPublishing(
+    id, 
+    'option', 
+    safeOptionData, 
+    publishManifestUpdate,
+    { 
+      fieldName: 'buildDuration',
+      debugName: 'OptionNode'
+    }
+  );
+  
+  const timeToClosePublishing = useDurationPublishing(
+    id, 
+    'option', 
+    safeOptionData, 
+    publishManifestUpdate,
+    { 
+      fieldName: 'timeToClose',
+      debugName: 'OptionNode'
+    }
+  );
+  
+  // Override the duration change handlers
+  const handleTimeToCloseChange = useCallback((value: string) => {
+    timeToClosePublishing.handleDurationChange(value, timeToClose.handleDurationChange);
+  }, [timeToClose.handleDurationChange, timeToClosePublishing]);
+  
+  // Add the custom handler to the timeToClose object
+  const enhancedTimeToClose = useMemo(() => ({
+    ...timeToClose,
+    handleDurationChange: handleTimeToCloseChange
+  }), [timeToClose, handleTimeToCloseChange]);
+  
   // Save duration fields to backend when they change
   useEffect(() => {
-    if (data.duration !== undefined || data.buildDuration !== undefined || data.timeToClose !== undefined) {
-      // Debounce the save to avoid excessive API calls
-      const durationDebounceRef = setTimeout(async () => {
-        try {
-          const updateData: Partial<RFOptionNodeData> = {};
-          const affectedFields: string[] = [];
-          
-          if (data.duration !== undefined) {
-            updateData.duration = data.duration;
-            affectedFields.push('duration');
-          }
-          if (data.buildDuration !== undefined) {
-            updateData.buildDuration = data.buildDuration;
-            affectedFields.push('buildDuration');
-          }
-          if (data.timeToClose !== undefined) {
-            updateData.timeToClose = data.timeToClose;
-            affectedFields.push('timeToClose');
-          }
-          
-          // Prepare data for backend
-          const apiData = prepareDataForBackend(updateData, jsonFields);
-          
-          // Send to backend
-          await GraphApiClient.updateNode('option' as NodeType, id, apiData);
-          
-          // Publish the update to subscribers
-          publishManifestUpdate(
-            { ...safeOptionData, ...updateData },
-            affectedFields
-          );
-          
-          console.log(`Updated option ${id} duration fields:`, updateData);
-        } catch (error) {
-          console.error(`Failed to update option ${id} duration fields:`, error);
-          toast.error('Failed to update duration fields');
-        }
-      }, 1000);
-      
-      return () => clearTimeout(durationDebounceRef);
+    if (data.timeToClose !== undefined) {
+      return timeToClosePublishing.saveToBackend();
     }
-  }, [id, data.duration, data.buildDuration, data.timeToClose, jsonFields, publishManifestUpdate, safeOptionData]);
-
-  // Refs for debouncing
-  const titleDebounceRef = useRef<NodeJS.Timeout | null>(null);
-  const descriptionDebounceRef = useRef<NodeJS.Timeout | null>(null);
-  const teamAllocationsDebounceRef = useRef<{ timeout: NodeJS.Timeout | null }>({ timeout: null });
-  const defaultOptionTypeSetRef = useRef<boolean>(false);
-  const transactionFeeDebounceRef = useRef<NodeJS.Timeout | null>(null);
-  const monthlyVolumeDebounceRef = useRef<NodeJS.Timeout | null>(null);
+  }, [data.timeToClose, timeToClosePublishing]);
+  
+  useEffect(() => {
+    if (data.duration !== undefined) {
+      return durationPublishing.saveToBackend();
+    }
+  }, [data.duration, durationPublishing]);
+  
+  useEffect(() => {
+    if (data.buildDuration !== undefined) {
+      return buildDurationPublishing.saveToBackend();
+    }
+  }, [data.buildDuration, buildDurationPublishing]);
 
   // Subscribe to updates from other nodes based on manifest
   useEffect(() => {
@@ -246,6 +312,38 @@ export function useOptionNode(id: string, data: ExtendedRFOptionNodeData) {
       const { subscriberId, publisherType, publisherId, relevantFields, data: publisherData } = event.detail;
       
       if (subscriberId !== id) return;
+      
+      // Combine all publishing hooks to create a comprehensive check
+      const relevantDurationFields = relevantFields.filter((field: string) => 
+        ['duration', 'buildDuration', 'timeToClose'].includes(field)
+      );
+      
+      const isDurationUpdate = relevantDurationFields.length > 0;
+      
+      // Skip duration updates that could cause loops
+      if (isDurationUpdate) {
+        // Check with the appropriate publishing hook
+        if (relevantFields.includes('duration') && 
+            !durationPublishing.shouldProcessUpdate(publisherId, relevantFields)) {
+          return;
+        }
+        
+        if (relevantFields.includes('buildDuration') && 
+            !buildDurationPublishing.shouldProcessUpdate(publisherId, relevantFields)) {
+          return;
+        }
+        
+        if (relevantFields.includes('timeToClose') && 
+            !timeToClosePublishing.shouldProcessUpdate(publisherId, relevantFields)) {
+          return;
+        }
+      }
+      
+      // Skip allocation updates that could cause loops
+      if (relevantFields.includes('teamAllocations') &&
+          !resourceAllocation.shouldProcessUpdate(publisherId, relevantFields)) {
+        return;
+      }
       
       console.log(`Option node ${id} received update from ${publisherType} ${publisherId}:`, {
         relevantFields,
@@ -337,7 +435,7 @@ export function useOptionNode(id: string, data: ExtendedRFOptionNodeData) {
       unsubscribe();
       window.removeEventListener('nodeDataUpdated', handleNodeDataUpdated as EventListener);
     };
-  }, [id, subscribeBasedOnManifest, teamAllocationsFromHook, updateNodeData]);
+  }, [id, subscribeBasedOnManifest, durationPublishing, buildDurationPublishing, timeToClosePublishing, resourceAllocation, teamAllocationsFromHook, updateNodeData]);
 
   // Update the saveToBackend function to use the observer system
   const saveToBackend = useCallback(async (updates: Partial<RFOptionNodeData>) => {
@@ -748,7 +846,13 @@ export function useOptionNode(id: string, data: ExtendedRFOptionNodeData) {
     cycleStatus,
   
     // Time to Close
-    timeToClose,
+    timeToClose: enhancedTimeToClose,
+    
+    // Resource allocation
+    handleAllocationChangeLocal: resourceAllocation.handleAllocationChangeLocal,
+    handleAllocationCommit: resourceAllocation.handleAllocationCommit,
+    calculateMemberAllocations: resourceAllocation.calculateMemberAllocations,
+    calculateCostSummary: resourceAllocation.calculateCostSummary,
   }), [
     title,
     description,
@@ -780,6 +884,7 @@ export function useOptionNode(id: string, data: ExtendedRFOptionNodeData) {
     removeRisk,
     getStatusColor,
     cycleStatus,
-    timeToClose,
+    enhancedTimeToClose,
+    resourceAllocation,
   ]);
 } 
