@@ -18,6 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Improved debug logging for update tracking
 - Standardized member allocation handling with new `useMemberAllocationPublishing` hook
 - Protection against circular updates in member allocation flows
+- Standardized member allocation handling across all node types (feature, option, provider) using the `useMemberAllocationPublishing` hook
+- Added date handling functions to option node to align with other node types
+- Improved type safety in allocation management
 
 ### Changed
 - Refactored feature, provider, and option nodes to use standardized duration handling
@@ -35,6 +38,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Date persistence issue in Feature Node UI
 - Member allocation rendering issues across node types
 - Standardized member allocation publishing patterns
+- Fixed circular update issues in option node by implementing standardized allocation publishing pattern
+- Corrected type inconsistencies in member allocation interfaces
+- Added missing functions for date management in option node
 
 ## [0.1.0] - 2023-03-19
 

@@ -26,6 +26,10 @@ import { TeamAllocation } from "@/utils/types/allocation";
 import { useNodeObserver } from '@/hooks/useNodeObserver';
 import { NodeUpdateType, NodeUpdateMetadata } from '@/services/graph/observer/node-observer';
 import { useDurationPublishing } from '@/utils/hooks/useDurationPublishing';
+import { useMemberAllocationPublishing, NodeDataWithTeamAllocations } from "@/hooks/useMemberAllocationPublishing";
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+import { format } from 'date-fns';
+import { calculateEndDate } from '@/utils/time/duration';
 
 // Extend RFOptionNodeData to ensure status is of type NodeStatus
 interface ExtendedRFOptionNodeData extends RFOptionNodeData {
@@ -56,9 +60,7 @@ export function useOptionNode(id: string, data: ExtendedRFOptionNodeData) {
   const [optionType, setOptionType] = useState<OptionType | undefined>(parsedData.optionType || 'customer');
   const [transactionFeeRate, setTransactionFeeRate] = useState<number | undefined>(parsedData.transactionFeeRate);
   const [monthlyVolume, setMonthlyVolume] = useState<number | undefined>(parsedData.monthlyVolume);
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [goals, setGoals] = useState<Goal[]>(parsedData.goals || []);
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [risks, setRisks] = useState<Risk[]>(parsedData.risks || []);
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [teamAllocations, setTeamAllocations] = useState<TeamAllocation[]>(
@@ -97,6 +99,22 @@ export function useOptionNode(id: string, data: ExtendedRFOptionNodeData) {
     teamAllocations: processedTeamAllocations
   }), [parsedData, processedGoals, processedRisks, processedTeamMembers, processedMemberAllocations, processedTeamAllocations]);
 
+  // Use the standardized member allocation publishing hook
+  const allocationPublishing = useMemberAllocationPublishing(
+    id,
+    'option',
+    safeOptionData as NodeDataWithTeamAllocations,
+    publishManifestUpdate as (
+      data: Partial<RFOptionNodeData>,
+      fieldIds: string[],
+      metadata?: Partial<NodeUpdateMetadata>
+    ) => void,
+    {
+      fieldName: 'teamAllocations',
+      debugName: 'OptionNode'
+    }
+  );
+
   // Refs for updating state
   const titleDebounceRef = useRef<NodeJS.Timeout | null>(null);
   const descriptionDebounceRef = useRef<NodeJS.Timeout | null>(null);
@@ -105,76 +123,15 @@ export function useOptionNode(id: string, data: ExtendedRFOptionNodeData) {
   const teamAllocationsDebounceRef = useRef<{ timeout: NodeJS.Timeout | null }>({ timeout: null });
   const defaultOptionTypeSetRef = useRef<boolean>(false);
   
-  // Add ref for tracking team allocation updates
-  const isTeamAllocationUpdatingRef = useRef<boolean>(false);
-  
-  // Save team allocations to backend
-  const saveTeamAllocationsToBackend = useCallback((teamAllocations: TeamAllocation[]): Promise<boolean> => {
-    // Skip if we're already updating
-    if (isTeamAllocationUpdatingRef.current) {
-      console.log(`[OptionNode][${id}] Skipping save to backend - already updating`);
-      return Promise.resolve(false);
-    }
-
-    // Set flag to prevent circular updates during save
-    isTeamAllocationUpdatingRef.current = true;
-
-    // Update local state immediately to avoid flicker
-    const updatedData = {
-      ...safeOptionData,
-      teamAllocations
-    };
-    
-    // Update node data right away to prevent UI flicker
-    updateNodeData(id, updatedData);
-    
-    // Log the team allocations before sending to backend
-    console.log('Team allocations being sent to backend:', JSON.stringify(teamAllocations, null, 2));
-    
-    try {
-      // Prepare data for backend
-      const apiData = prepareDataForBackend({ teamAllocations }, jsonFields);
-      
-      // Return a promise that resolves when the operation completes
-      return GraphApiClient.updateNode('option' as NodeType, id, apiData)
-        .then(() => {
-          // Publish the update to subscribers
-          publishManifestUpdate(
-            { ...safeOptionData, teamAllocations },
-            ['teamAllocations', 'teamAllocationTeamId', 'teamAllocationRequestedHours', 'teamAllocationMembers']
-          );
-          
-          console.log('✅ Successfully saved team allocations to backend');
-          return true;
-        })
-        .catch((error) => {
-          console.error('❌ Failed to save team allocations to backend:', error);
-          toast.error('Failed to save team allocations');
-          return false;
-        })
-        .finally(() => {
-          // Reset updating flag after a delay to allow state to settle
-          setTimeout(() => {
-            isTeamAllocationUpdatingRef.current = false;
-            console.log(`[OptionNode][${id}] Reset updating flag after save`);
-          }, 300);
-        });
-    } catch (error) {
-      console.error('❌ Error preparing team allocations data:', error);
-      isTeamAllocationUpdatingRef.current = false;
-      return Promise.resolve(false);
-    }
-  }, [id, jsonFields, updateNodeData, publishManifestUpdate, safeOptionData]);
-
   // Use the team allocation hook to manage team allocations
   const teamAllocationHook = useTeamAllocation(id, data);
   
-  // Add the saveTeamAllocationsToBackend function to the teamAllocationHook
-  const enhancedTeamAllocationHook = teamAllocationHook as unknown as typeof teamAllocationHook & {
-    saveTeamAllocationsToBackend: typeof saveTeamAllocationsToBackend
-  };
-  enhancedTeamAllocationHook.saveTeamAllocationsToBackend = saveTeamAllocationsToBackend;
-  
+  // Add a saveTeamAllocationsToBackend function that delegates to allocationPublishing for compatibility
+  const saveTeamAllocationsToBackend = useCallback((teamAllocations: TeamAllocation[]): Promise<boolean> => {
+    console.log(`[OptionNode][${id}] 🔄 saveTeamAllocationsToBackend called with ${teamAllocations.length} allocations`);
+    return allocationPublishing.saveToBackendAsync(teamAllocations);
+  }, [allocationPublishing, id]);
+
   // Extract the processed team allocations from the hook
   const teamAllocationsFromHook = teamAllocationHook.processedTeamAllocations;
   
@@ -301,6 +258,20 @@ export function useOptionNode(id: string, data: ExtendedRFOptionNodeData) {
     }
   }, [data.buildDuration, buildDurationPublishing]);
 
+  // Add an effect to save team allocations when they change
+  useEffect(() => {
+    // Use the parseJsonIfString utility to ensure we have a proper array
+    const teamAllocations = parseJsonIfString<TeamAllocation[]>(data.teamAllocations, []);
+    
+    // Use the allocation publishing hook to handle saving
+    if (teamAllocations.length > 0) {
+      console.log(`[OptionNode][${id}] 💾 Saving team allocations:`, teamAllocations);
+      
+      // Only save if we actually have allocations
+      return allocationPublishing.saveToBackend(teamAllocations);
+    }
+  }, [data.teamAllocations, allocationPublishing, id]);
+
   // Subscribe to updates from other nodes based on manifest
   useEffect(() => {
     if (!id) return;
@@ -339,9 +310,10 @@ export function useOptionNode(id: string, data: ExtendedRFOptionNodeData) {
         }
       }
       
-      // Skip allocation updates that could cause loops
+      // Skip allocation updates that could cause loops or that come from the allocation publishing system
       if (relevantFields.includes('teamAllocations') &&
-          !resourceAllocation.shouldProcessUpdate(publisherId, relevantFields)) {
+          !allocationPublishing.shouldProcessUpdate(publisherId, relevantFields)) {
+        console.log(`[OptionNode][${id}] 🚫 Skipping potential allocation update loop from ${publisherId}`);
         return;
       }
       
@@ -356,25 +328,37 @@ export function useOptionNode(id: string, data: ExtendedRFOptionNodeData) {
           // Handle team updates
           if (relevantFields.includes('title') || relevantFields.includes('roster') || relevantFields.includes('bandwidth')) {
             // Refresh team allocations if team data changes
-            const updatedTeamAllocations = teamAllocationsFromHook.map((allocation: TeamAllocation) => {
-              if (allocation.teamId === publisherId) {
-                // Create an updated allocation with the new team data
-                // Only update properties that exist on the TeamAllocation type
-                return {
-                  ...allocation,
-                  // Custom properties might be stored in the allocatedMembers or as custom properties
-                  // We'll update what we can safely
-                  requestedHours: allocation.requestedHours
-                };
+            // DO NOT overwrite the entire teamAllocations array, only update relevant parts
+            if (teamAllocationsFromHook.length > 0) {
+              const updatedTeamAllocations = teamAllocationsFromHook.map((allocation: TeamAllocation) => {
+                if (allocation.teamId === publisherId) {
+                  // Create an updated allocation with the new team data
+                  // Only update properties that exist on the TeamAllocation type
+                  return {
+                    ...allocation,
+                    // Custom properties might be stored in the allocatedMembers or as custom properties
+                    // We'll update what we can safely
+                    requestedHours: allocation.requestedHours
+                  };
+                }
+                return allocation;
+              });
+              
+              // IMPORTANT: Preserve member allocations by checking if we actually have changes
+              const hasChanges = JSON.stringify(updatedTeamAllocations) !== JSON.stringify(teamAllocationsFromHook);
+              
+              if (hasChanges) {
+                console.log(`[OptionNode][${id}] 🔄 Updating team data for ${publisherId}`, updatedTeamAllocations);
+                
+                // Update React Flow state
+                updateNodeData(id, { teamAllocations: updatedTeamAllocations });
+                
+                // Update local state
+                setTeamAllocations(updatedTeamAllocations);
+              } else {
+                console.log(`[OptionNode][${id}] ✓ No changes needed for team ${publisherId}`);
               }
-              return allocation;
-            });
-            
-            // Update React Flow state
-            updateNodeData(id, { teamAllocations: updatedTeamAllocations });
-            
-            // Update local state
-            setTeamAllocations(updatedTeamAllocations);
+            }
           }
           break;
           
@@ -382,38 +366,56 @@ export function useOptionNode(id: string, data: ExtendedRFOptionNodeData) {
           // Handle team member updates
           if (relevantFields.includes('title') || relevantFields.includes('weeklyCapacity') || relevantFields.includes('dailyRate')) {
             // Update team allocations if they contain this team member
-            const updatedTeamAllocations = teamAllocationsFromHook.map((allocation: TeamAllocation) => {
-              // Check if this allocation has the updated member
-              const hasUpdatedMember = allocation.allocatedMembers?.some(
-                member => member.memberId === publisherId
+            if (teamAllocationsFromHook.length > 0) {
+              // Check if any allocation has this member before making updates
+              const hasMember = teamAllocationsFromHook.some((allocation: TeamAllocation) => 
+                allocation.allocatedMembers?.some(m => m.memberId === publisherId)
               );
               
-              if (hasUpdatedMember) {
-                // Update the member information
-                const updatedMembers = allocation.allocatedMembers?.map(member => {
-                  if (member.memberId === publisherId) {
+              if (hasMember) {
+                const updatedTeamAllocations = teamAllocationsFromHook.map((allocation: TeamAllocation) => {
+                  // Check if this allocation has the updated member
+                  const hasUpdatedMember = allocation.allocatedMembers?.some(
+                    member => member.memberId === publisherId
+                  );
+                  
+                  if (hasUpdatedMember) {
+                    // Update the member information
+                    const updatedMembers = allocation.allocatedMembers?.map(member => {
+                      if (member.memberId === publisherId) {
+                        return {
+                          ...member,
+                          name: publisherData.title || member.name
+                        };
+                      }
+                      return member;
+                    });
+                    
                     return {
-                      ...member,
-                      name: publisherData.title || member.name
+                      ...allocation,
+                      allocatedMembers: updatedMembers
                     };
                   }
-                  return member;
+                  
+                  return allocation;
                 });
                 
-                return {
-                  ...allocation,
-                  allocatedMembers: updatedMembers
-                };
+                // Only update if there are actual changes
+                const hasChanges = JSON.stringify(updatedTeamAllocations) !== JSON.stringify(teamAllocationsFromHook);
+                
+                if (hasChanges) {
+                  console.log(`[OptionNode][${id}] 🔄 Updating team member ${publisherId}`, updatedTeamAllocations);
+                  
+                  // Update React Flow state
+                  updateNodeData(id, { teamAllocations: updatedTeamAllocations });
+                  
+                  // Update local state
+                  setTeamAllocations(updatedTeamAllocations);
+                } else {
+                  console.log(`[OptionNode][${id}] ✓ No changes needed for team member ${publisherId}`);
+                }
               }
-              
-              return allocation;
-            });
-            
-            // Update React Flow state
-            updateNodeData(id, { teamAllocations: updatedTeamAllocations });
-            
-            // Update local state
-            setTeamAllocations(updatedTeamAllocations);
+            }
           }
           break;
           
@@ -435,34 +437,65 @@ export function useOptionNode(id: string, data: ExtendedRFOptionNodeData) {
       unsubscribe();
       window.removeEventListener('nodeDataUpdated', handleNodeDataUpdated as EventListener);
     };
-  }, [id, subscribeBasedOnManifest, durationPublishing, buildDurationPublishing, timeToClosePublishing, resourceAllocation, teamAllocationsFromHook, updateNodeData]);
+  }, [id, subscribeBasedOnManifest, durationPublishing, buildDurationPublishing, timeToClosePublishing, allocationPublishing, resourceAllocation, teamAllocationsFromHook, updateNodeData]);
 
-  // Update the saveToBackend function to use the observer system
+  // Create a more robust saveToBackend that carefully preserves allocations
   const saveToBackend = useCallback(async (updates: Partial<RFOptionNodeData>) => {
     try {
+      if (updates === null || Object.keys(updates).length === 0) {
+        console.log(`[OptionNode][${id}] Skipping save - no updates`);
+        return false;
+      }
+
+      console.log(`[OptionNode][${id}] 💾 Saving node:`, updates);
+      const updatesForBackend = { ...updates };
+
+      // Create a defensive deep copy of team allocations if they exist
+      if (updates.teamAllocations) {
+        try {
+          const allocationsString = typeof updates.teamAllocations === 'string' 
+            ? updates.teamAllocations 
+            : JSON.stringify(updates.teamAllocations);
+          
+          const backupAllocations = JSON.parse(allocationsString);
+          console.log(`[OptionNode][${id}] 🛡️ Created backup of ${backupAllocations.length} team allocations`);
+          
+          // Store a backup of allocations (helps debug and can be used for recovery)
+          localStorage.setItem(`option_allocations_backup_${id}`, allocationsString);
+        } catch (e) {
+          console.error(`[OptionNode][${id}] Failed to create backup of allocations`, e);
+        }
+      }
+
       // Prepare data for backend by stringifying JSON fields
-      const apiData = prepareDataForBackend(updates, jsonFields);
-      
+      const apiData = prepareDataForBackend(updatesForBackend, jsonFields);
+
       // Send to backend
-      await GraphApiClient.updateNode('option' as NodeType, id, apiData);
-      
+      await GraphApiClient.updateNode('option', id, apiData);
+
       // Update React Flow state with the original object data (not stringified)
-      updateNodeData(id, updates);
-      
+      updateNodeData(id, updatesForBackend);
+
       // Determine which fields were updated
-      const affectedFields = Object.keys(updates).map(key => {
-        // Map the property name to the field ID in the manifest
-        // This is a simplified approach - you might need a more sophisticated mapping
-        return key.toLowerCase();
-      });
-      
-      // Publish the update to subscribers
-      const updatedData = { ...parsedData, ...updates };
-      publishManifestUpdate(updatedData, affectedFields);
+      const updatedFields = Object.keys(updates);
+      if (updatedFields.length > 0) {
+        console.log(`[OptionNode][${id}] ✅ Updated fields: ${updatedFields.join(', ')}`);
+        
+        // Publish the update to subscribers
+        const updatedData = { ...parsedData, ...updates };
+        publishManifestUpdate(updatedData, updatedFields);
+      }
       
       return true;
     } catch (error) {
-      console.error('Error saving option node:', error);
+      console.error(`[OptionNode][${id}] 🔴 Error saving node:`, error);
+      
+      // If we have a backup of allocations, we could try to recover here
+      const backupAllocations = localStorage.getItem(`option_allocations_backup_${id}`);
+      if (backupAllocations && updates.teamAllocations) {
+        console.log(`[OptionNode][${id}] 🔄 Allocation backup available, could restore ${backupAllocations.length} characters`);
+      }
+      
       toast.error('Failed to save option data');
       return false;
     }
@@ -496,79 +529,95 @@ export function useOptionNode(id: string, data: ExtendedRFOptionNodeData) {
     }, 1000);
   }, [id, safeOptionData, updateNodeData, saveToBackend]);
 
-  // Add a new goal
+  // Add functionality to create, update, and remove goals
   const addGoal = useCallback(() => {
-    const newGoal: Goal = {
-      id: `goal-${uuidv4()}`,
-      description: '',
-      impact: 'medium'
-    };
-    const updatedGoals = [...processedGoals, newGoal];
-    updateNodeData(id, { 
-      ...safeOptionData, 
-      goals: updatedGoals
+    setGoals(prevGoals => {
+      const newGoal: Goal = {
+        id: uuidv4(),
+        description: '',
+        impact: 'medium'
+      };
+      return [...prevGoals, newGoal];
     });
-    saveToBackend({ goals: updatedGoals });
-  }, [id, safeOptionData, processedGoals, updateNodeData, saveToBackend]);
-
-  // Update an existing goal
-  const updateGoal = useCallback((goalId: string, updates: Partial<Goal>) => {
-    const updatedGoals = processedGoals.map(goal => 
-      goal.id === goalId ? { ...goal, ...updates } : goal
+    
+    // Publish the update
+    publishManifestUpdate(
+      { ...safeOptionData, goals: [...goals, { id: uuidv4(), description: '', impact: 'medium' }] },
+      ['goals']
     );
-    updateNodeData(id, {
-      ...safeOptionData,
-      goals: updatedGoals
-    });
-    saveToBackend({ goals: updatedGoals });
-  }, [id, safeOptionData, processedGoals, updateNodeData, saveToBackend]);
-
-  // Remove a goal
+  }, [publishManifestUpdate, safeOptionData, goals]);
+  
   const removeGoal = useCallback((goalId: string) => {
-    const updatedGoals = processedGoals.filter(goal => goal.id !== goalId);
-    updateNodeData(id, {
-      ...safeOptionData,
-      goals: updatedGoals
-    });
-    saveToBackend({ goals: updatedGoals });
-  }, [id, safeOptionData, processedGoals, updateNodeData, saveToBackend]);
-
-  // Add a new risk
-  const addRisk = useCallback(() => {
-    const newRisk: Risk = {
-      id: `risk-${uuidv4()}`,
-      description: '',
-      severity: 'medium'
-    };
-    const updatedRisks = [...processedRisks, newRisk];
-    updateNodeData(id, { 
-      ...safeOptionData, 
-      risks: updatedRisks
-    });
-    saveToBackend({ risks: updatedRisks });
-  }, [id, safeOptionData, processedRisks, updateNodeData, saveToBackend]);
-
-  // Update an existing risk
-  const updateRisk = useCallback((riskId: string, updates: Partial<Risk>) => {
-    const updatedRisks = processedRisks.map(risk => 
-      risk.id === riskId ? { ...risk, ...updates } : risk
+    setGoals(prevGoals => prevGoals.filter(goal => goal.id !== goalId));
+    
+    // Publish the update
+    publishManifestUpdate(
+      { ...safeOptionData, goals: goals.filter(goal => goal.id !== goalId) },
+      ['goals']
     );
-    updateNodeData(id, {
-      ...safeOptionData,
-      risks: updatedRisks
+  }, [publishManifestUpdate, safeOptionData, goals]);
+  
+  const updateGoal = useCallback((goalId: string, updates: Partial<Goal>) => {
+    setGoals(prevGoals => 
+      prevGoals.map(goal => 
+        goal.id === goalId ? { ...goal, ...updates } : goal
+      )
+    );
+    
+    // Publish the update
+    publishManifestUpdate(
+      { 
+        ...safeOptionData, 
+        goals: goals.map(goal => goal.id === goalId ? { ...goal, ...updates } : goal) 
+      },
+      ['goals']
+    );
+  }, [publishManifestUpdate, safeOptionData, goals]);
+  
+  // Add functionality to create, update, and remove risks
+  const addRisk = useCallback(() => {
+    setRisks(prevRisks => {
+      const newRisk: Risk = {
+        id: uuidv4(),
+        description: '',
+        severity: 'medium'
+      };
+      return [...prevRisks, newRisk];
     });
-    saveToBackend({ risks: updatedRisks });
-  }, [id, safeOptionData, processedRisks, updateNodeData, saveToBackend]);
-
-  // Remove a risk
+    
+    // Publish the update
+    publishManifestUpdate(
+      { ...safeOptionData, risks: [...risks, { id: uuidv4(), description: '', severity: 'medium' }] },
+      ['risks']
+    );
+  }, [publishManifestUpdate, safeOptionData, risks]);
+  
   const removeRisk = useCallback((riskId: string) => {
-    const updatedRisks = processedRisks.filter(risk => risk.id !== riskId);
-    updateNodeData(id, {
-      ...safeOptionData,
-      risks: updatedRisks
-    });
-    saveToBackend({ risks: updatedRisks });
-  }, [id, safeOptionData, processedRisks, updateNodeData, saveToBackend]);
+    setRisks(prevRisks => prevRisks.filter(risk => risk.id !== riskId));
+    
+    // Publish the update
+    publishManifestUpdate(
+      { ...safeOptionData, risks: risks.filter(risk => risk.id !== riskId) },
+      ['risks']
+    );
+  }, [publishManifestUpdate, safeOptionData, risks]);
+  
+  const updateRisk = useCallback((riskId: string, updates: Partial<Risk>) => {
+    setRisks(prevRisks => 
+      prevRisks.map(risk => 
+        risk.id === riskId ? { ...risk, ...updates } : risk
+      )
+    );
+    
+    // Publish the update
+    publishManifestUpdate(
+      { 
+        ...safeOptionData, 
+        risks: risks.map(risk => risk.id === riskId ? { ...risk, ...updates } : risk) 
+      },
+      ['risks']
+    );
+  }, [publishManifestUpdate, safeOptionData, risks]);
 
   // Delete the node
   const handleDelete = useCallback(() => {
@@ -802,89 +851,158 @@ export function useOptionNode(id: string, data: ExtendedRFOptionNodeData) {
     }
   }, [id, data, updateNodeData, getNodes, jsonFields, publishUpdate]);
 
+  // Add date handling functions
+  const updateStartDate = useCallback((newStartDate: string) => {
+    // Calculate end date based on start date and duration
+    const currentDuration = data.duration || 0;
+    const endDate = calculateEndDate(new Date(newStartDate), currentDuration);
+
+    // Update node data
+    updateNodeData(id, {
+      ...safeOptionData,
+      startDate: newStartDate,
+      endDate
+    });
+
+    // Save dates to backend
+    const apiData = prepareDataForBackend({ 
+      startDate: newStartDate,
+      endDate
+    }, []);
+
+    GraphApiClient.updateNode('option' as NodeType, id, apiData)
+      .then(() => {
+        // Publish the update
+        publishManifestUpdate(
+          { ...safeOptionData, startDate: newStartDate, endDate },
+          ['startDate', 'endDate']
+        );
+      })
+      .catch((error) => {
+        console.error(`[OptionNode][${id}] Failed to update dates:`, error);
+        toast.error('Failed to update dates');
+      });
+  }, [id, data.duration, safeOptionData, updateNodeData, publishManifestUpdate]);
+
+  const updateEndDate = useCallback((newEndDate: string) => {
+    // Update node data
+    updateNodeData(id, {
+      ...safeOptionData,
+      endDate: newEndDate
+    });
+
+    // Save end date to backend
+    const apiData = prepareDataForBackend({ 
+      endDate: newEndDate
+    }, []);
+
+    GraphApiClient.updateNode('option' as NodeType, id, apiData)
+      .then(() => {
+        // Publish the update
+        publishManifestUpdate(
+          { ...safeOptionData, endDate: newEndDate },
+          ['endDate']
+        );
+      })
+      .catch((error) => {
+        console.error(`[OptionNode][${id}] Failed to update end date:`, error);
+        toast.error('Failed to update end date');
+      });
+  }, [id, safeOptionData, updateNodeData, publishManifestUpdate]);
+
+  // Set up subscribers for node data manifests
+  useEffect(() => {
+    // Subscribe to manifest updates from connected nodes
+    subscribeBasedOnManifest();
+    
+    return () => {
+      // No cleanup needed, handled by the hook
+    };
+  }, [subscribeBasedOnManifest, allocationPublishing]);
+
+  // Protect team allocations - ensure they are always properly parsed
+  useEffect(() => {
+    if (processedTeamAllocations && processedTeamAllocations.length > 0) {
+      // Check if we need to ensure the team allocations are saved
+      const currentAllocationsStr = typeof parsedData.teamAllocations === 'string'
+        ? parsedData.teamAllocations
+        : JSON.stringify(parsedData.teamAllocations || []);
+      
+      const processedAllocationsStr = JSON.stringify(processedTeamAllocations);
+      
+      // Only save if there's a difference to avoid loops
+      if (currentAllocationsStr !== processedAllocationsStr) {
+        console.log(`[OptionNode][${id}] 🔄 Synchronizing team allocations from processed data`);
+        console.log(`[OptionNode][${id}] ↪️ Current allocations: ${currentAllocationsStr}`);
+        console.log(`[OptionNode][${id}] ↪️ Processed allocations: ${processedAllocationsStr}`);
+        
+        // Use a small delay to avoid race conditions with other saves
+        const timer = setTimeout(() => {
+          // Need to use the actual TeamAllocation[] type, not the string
+          saveToBackend({
+            teamAllocations: processedTeamAllocations
+          });
+        }, 800);
+        
+        return () => clearTimeout(timer);
+      }
+    }
+  }, [id, processedTeamAllocations, parsedData.teamAllocations, saveToBackend]);
+
   // Return the hook API
-  return useMemo(() => ({
-    // State
+  return {
     title,
     description,
-    optionType,
-    transactionFeeRate,
-    monthlyVolume,
-    status,
-    processedGoals,
-    processedRisks,
-    processedTeamAllocations: teamAllocationsFromHook,
-    connectedTeams,
-    costs,
-    expectedMonthlyValue,
+    optionType: optionType || 'customer',
+    transactionFeeRate: transactionFeeRate || 0,
+    monthlyVolume: monthlyVolume || 0,
+    expectedMonthlyValue: expectedMonthlyValue,
+    timeToClose: enhancedTimeToClose,
     payoffDetails,
+    status,
+    getStatusColor,
+    cycleStatus,
+    goals: processedGoals,
+    risks: processedRisks,
     
-    // Handlers
+    // Dates
+    startDate: parsedData.startDate || '',
+    endDate: parsedData.endDate || '',
+    updateStartDate,
+    updateEndDate,
+    
+    // Event handlers
     handleTitleChange,
     handleDescriptionChange,
     handleOptionTypeChange,
     handleTransactionFeeChange,
     handleMonthlyVolumeChange,
     handleDelete,
-    refreshData,
     
-    requestTeamAllocation: teamAllocationHook.requestTeamAllocation,
-    saveTeamAllocationsToBackend,
+    // Resource management
+    connectedTeams,
+    processedTeamAllocations,
     
-    // Goal handlers
-    addGoal,
-    updateGoal,
-    removeGoal,
-    
-    // Risk handlers
-    addRisk,
-    updateRisk,
-    removeRisk,
-    
-    // Status
-    getStatusColor,
-    cycleStatus,
-  
-    // Time to Close
-    timeToClose: enhancedTimeToClose,
-    
-    // Resource allocation
+    // Resource allocation handlers - copied directly from useProviderNode.ts
     handleAllocationChangeLocal: resourceAllocation.handleAllocationChangeLocal,
     handleAllocationCommit: resourceAllocation.handleAllocationCommit,
     calculateMemberAllocations: resourceAllocation.calculateMemberAllocations,
     calculateCostSummary: resourceAllocation.calculateCostSummary,
-  }), [
-    title,
-    description,
-    optionType,
-    transactionFeeRate,
-    monthlyVolume,
-    status,
-    processedGoals,
-    processedRisks,
-    teamAllocationsFromHook,
-    connectedTeams,
-    costs,
-    expectedMonthlyValue,
-    payoffDetails,
-    handleTitleChange,
-    handleDescriptionChange,
-    handleOptionTypeChange,
-    handleTransactionFeeChange,
-    handleMonthlyVolumeChange,
-    handleDelete,
-    refreshData,
-    teamAllocationHook.requestTeamAllocation,
+    requestTeamAllocation: teamAllocationHook.requestTeamAllocation,
     saveTeamAllocationsToBackend,
+    
+    // Data operations
+    refreshData,
+    
+    // Goal and risk management
     addGoal,
-    updateGoal,
     removeGoal,
+    updateGoal,
     addRisk,
-    updateRisk,
     removeRisk,
-    getStatusColor,
-    cycleStatus,
-    enhancedTimeToClose,
-    resourceAllocation,
-  ]);
+    updateRisk,
+    
+    // Expose allocation publishing for loading indicator
+    allocationPublishing
+  };
 } 

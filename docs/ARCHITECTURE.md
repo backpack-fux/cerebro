@@ -383,4 +383,31 @@ src/
 3. **Developer Experience**
    - Enhanced debugging tools
    - Better visualization options
-   - Improved documentation 
+   - Improved documentation
+
+## Node Alignment
+
+### Member Allocation Standardization
+
+The feature, option, and provider nodes have been aligned to use a standardized approach for handling member allocations. This standardization improves consistency across node types and prevents circular updates.
+
+Key components of this standardization:
+
+1. **useMemberAllocationPublishing Hook**: All node types now use this hook to manage member allocation updates and persistence.
+
+2. **Circular Update Prevention**: The hook implements several protection mechanisms:
+   - Timestamp tracking to prevent rapid updates
+   - Debouncing for backend API calls
+   - Flags to track update state
+
+3. **Type Consistency**: All node types use consistent interfaces for allocation data:
+   - `MemberAllocationData` for member allocation details
+   - `TeamAllocation` for team allocation data
+
+4. **Date Handling**: Standardized date handling functions across node types:
+   - `updateStartDate` and `updateEndDate` functions
+   - Consistent use of `calculateEndDate` utility
+
+This alignment ensures that all node types behave consistently when handling allocations, reducing bugs and improving maintainability.
+
+## Document Structure 

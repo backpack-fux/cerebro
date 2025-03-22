@@ -126,117 +126,6 @@ export function useMemberAllocationPublishing<T extends NodeDataWithTeamAllocati
   }, [nodeId, fieldName, isUpdateTooRecent, debugName]);
 
   /**
-   * Handle allocation commit while preventing update loops
-   * 
-   * @param teamId - The team ID
-   * @param memberId - The member ID
-   * @param hours - The allocation hours
-   * @param originalHandler - Original handler from the resource allocation hook
-   */
-  const handleAllocationCommit = useCallback((
-    teamId: string,
-    memberId: string, 
-    hours: number,
-    originalHandler: (teamId: string, memberId: string, hours: number) => void
-  ) => {
-    // If we're already in the middle of an update, don't trigger another
-    if (isUpdatingRef.current) {
-      console.log(`[${debugName}][${nodeId}] Skipping allocation commit - already updating`);
-      return;
-    }
-    
-    // Check if update is too recent
-    if (isUpdateTooRecent(`${fieldName}_${teamId}_${memberId}_commit`)) {
-      return;
-    }
-
-    // Mark that we're updating
-    isUpdatingRef.current = true;
-    
-    // Call the original handler to update the node data
-    originalHandler(teamId, memberId, hours);
-    
-    // Reset the updating flag after a delay
-    setTimeout(() => {
-      isUpdatingRef.current = false;
-      console.log(`[${debugName}][${nodeId}] Allocation commit complete, flag reset`);
-    }, 150);
-  }, [nodeId, fieldName, isUpdateTooRecent, debugName]);
-  
-  /**
-   * Save allocations to backend when they change
-   * Can be used in a useEffect
-   * 
-   * @param teamAllocations - The team allocations to save
-   * @returns Cleanup function to cancel any pending updates
-   */
-  const saveToBackend = useCallback((teamAllocations: TeamAllocation[]) => {
-    // Clear existing timeout
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    
-    // Skip if the allocations are undefined or we're already in an update cycle
-    if (!teamAllocations || isUpdatingRef.current) {
-      return () => {
-        if (debounceRef.current) clearTimeout(debounceRef.current);
-      };
-    }
-    
-    // Debounce the save to backend
-    debounceRef.current = setTimeout(() => {
-      // Skip if we're in the middle of an update
-      if (isUpdatingRef.current) {
-        console.log(`[${debugName}][${nodeId}] Skipping API call - already updating`);
-        debounceRef.current = null;
-        return;
-      }
-      
-      // Set the updating flag to true to prevent loops
-      isUpdatingRef.current = true;
-      
-      try {
-        // Create update object with the field
-        const update = { [fieldName]: teamAllocations } as Partial<T>;
-        
-        // Use direct API call to avoid triggering another publish
-        GraphApiClient.updateNode(nodeType, nodeId, update)
-          .then(() => {
-            console.log(`[${debugName}][${nodeId}] Updated ${fieldName}`);
-            
-            // If a publish function was provided, use it to notify subscribers
-            if (publishFn && !isUpdateTooRecent(fieldName, 200)) {
-              publishFn(
-                { ...nodeData, [fieldName]: teamAllocations } as T,
-                [fieldName, `${fieldName}_allocatedMembers`],
-                { updateType, source: 'allocation-update' }
-              );
-            }
-          })
-          .catch(error => {
-            console.error(`[${debugName}][${nodeId}] Failed to update ${fieldName}: ${error}`);
-          })
-          .finally(() => {
-            // Reset flags
-            debounceRef.current = null;
-            
-            // Use a delay before resetting the updating flag to prevent race conditions
-            setTimeout(() => {
-              isUpdatingRef.current = false;
-            }, 100);
-          });
-      } catch (error) {
-        console.error(`[${debugName}][${nodeId}] Error updating ${fieldName}: ${error}`);
-        isUpdatingRef.current = false;
-        debounceRef.current = null;
-      }
-    }, 1000);
-    
-    // Cleanup function to cancel the timeout
-    return () => {
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-    };
-  }, [nodeId, nodeType, nodeData, fieldName, updateType, publishFn, isUpdateTooRecent, debugName]);
-  
-  /**
    * Save allocations to backend with Promise return value
    * Better for imperative calls and chaining
    * 
@@ -245,14 +134,14 @@ export function useMemberAllocationPublishing<T extends NodeDataWithTeamAllocati
    */
   const saveToBackendAsync = useCallback((teamAllocations: TeamAllocation[]): Promise<boolean> => {
     // Skip if the allocations are undefined or we're already in an update cycle
-    if (!teamAllocations || isUpdatingRef.current) {
+    if (!teamAllocations || !Array.isArray(teamAllocations) || teamAllocations.length === 0) {
+      console.log(`[${debugName}][${nodeId}] Skipping saveToBackendAsync - empty or invalid allocations`);
       return Promise.resolve(false);
     }
     
-    // Clear existing timeout to prevent race conditions
-    if (debounceRef.current) {
-      clearTimeout(debounceRef.current);
-      debounceRef.current = null;
+    if (isUpdatingRef.current) {
+      console.log(`[${debugName}][${nodeId}] Skipping saveToBackendAsync - already updating`);
+      return Promise.resolve(false);
     }
     
     // Skip if update is too recent
@@ -260,7 +149,7 @@ export function useMemberAllocationPublishing<T extends NodeDataWithTeamAllocati
       return Promise.resolve(false);
     }
     
-    // Set the updating flag to true to prevent loops
+    // Mark that we're updating
     isUpdatingRef.current = true;
     
     // Return a promise that resolves when the operation completes
@@ -392,6 +281,152 @@ export function useMemberAllocationPublishing<T extends NodeDataWithTeamAllocati
         reject(error);
       }
     });
+  }, [nodeId, nodeType, nodeData, fieldName, updateType, publishFn, isUpdateTooRecent, debugName]);
+
+  /**
+   * Handle allocation commit while preventing update loops
+   * 
+   * @param teamId - The team ID
+   * @param memberId - The member ID
+   * @param hours - The allocation hours
+   * @param originalHandler - Original handler from the resource allocation hook
+   */
+  const handleAllocationCommit = useCallback((
+    teamId: string,
+    memberId: string, 
+    hours: number,
+    originalHandler: (teamId: string, memberId: string, hours: number) => void
+  ) => {
+    // If we're already in the middle of an update, don't trigger another
+    if (isUpdatingRef.current) {
+      console.log(`[${debugName}][${nodeId}] Skipping allocation commit - already updating`);
+      return;
+    }
+    
+    // Check if update is too recent
+    if (isUpdateTooRecent(`${fieldName}_${teamId}_${memberId}_commit`)) {
+      return;
+    }
+
+    // Mark that we're updating
+    isUpdatingRef.current = true;
+    
+    console.log(`[${debugName}][${nodeId}] 🔒 Committing allocation - team:${teamId}, member:${memberId}, hours:${hours}`);
+    
+    try {
+      // Call the original handler to update the node data
+      originalHandler(teamId, memberId, hours);
+      
+      // For option nodes, ensure we always force a save after commit
+      if (nodeType === 'option' && nodeData && nodeData[fieldName]) {
+        const existingAllocations = Array.isArray(nodeData[fieldName]) 
+          ? nodeData[fieldName] as TeamAllocation[]
+          : (typeof nodeData[fieldName] === 'string' 
+            ? JSON.parse(nodeData[fieldName] as string) as TeamAllocation[]
+            : []);
+            
+        // Create a local copy to prevent mutation
+        const allocationsToSave = [...existingAllocations];
+        
+        // Find the team allocation object
+        const teamAllocationIndex = allocationsToSave.findIndex(a => a.teamId === teamId);
+        
+        if (teamAllocationIndex >= 0) {
+          console.log(`[${debugName}][${nodeId}] 🔁 Reinforcing allocation for option node`);
+          
+          // Set a timeout to force a save after the allocation has been processed
+          setTimeout(() => {
+            if (existingAllocations && existingAllocations.length > 0) {
+              console.log(`[${debugName}][${nodeId}] 💾 Force saving allocations after commit`);
+              saveToBackendAsync(existingAllocations).catch(err => {
+                console.error(`[${debugName}][${nodeId}] 🔴 Error in forced allocation save:`, err);
+              });
+            }
+          }, 500);
+        }
+      }
+    } catch (error) {
+      console.error(`[${debugName}][${nodeId}] 🔴 Error in allocation commit:`, error);
+    } finally {
+      // Reset the updating flag after a delay
+      setTimeout(() => {
+        isUpdatingRef.current = false;
+        console.log(`[${debugName}][${nodeId}] ✅ Allocation commit complete, flag reset`);
+      }, 250);
+    }
+  }, [nodeId, fieldName, nodeType, nodeData, isUpdateTooRecent, debugName, saveToBackendAsync]);
+  
+  /**
+   * Save allocations to backend when they change
+   * Can be used in a useEffect
+   * 
+   * @param teamAllocations - The team allocations to save
+   * @returns Cleanup function to cancel any pending updates
+   */
+  const saveToBackend = useCallback((teamAllocations: TeamAllocation[]) => {
+    // Clear existing timeout
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    
+    // Skip if the allocations are undefined or we're already in an update cycle
+    if (!teamAllocations || isUpdatingRef.current) {
+      return () => {
+        if (debounceRef.current) clearTimeout(debounceRef.current);
+      };
+    }
+    
+    // Debounce the save to backend
+    debounceRef.current = setTimeout(() => {
+      // Skip if we're in the middle of an update
+      if (isUpdatingRef.current) {
+        console.log(`[${debugName}][${nodeId}] Skipping API call - already updating`);
+        debounceRef.current = null;
+        return;
+      }
+      
+      // Set the updating flag to true to prevent loops
+      isUpdatingRef.current = true;
+      
+      try {
+        // Create update object with the field
+        const update = { [fieldName]: teamAllocations } as Partial<T>;
+        
+        // Use direct API call to avoid triggering another publish
+        GraphApiClient.updateNode(nodeType, nodeId, update)
+          .then(() => {
+            console.log(`[${debugName}][${nodeId}] Updated ${fieldName}`);
+            
+            // If a publish function was provided, use it to notify subscribers
+            if (publishFn && !isUpdateTooRecent(fieldName, 200)) {
+              publishFn(
+                { ...nodeData, [fieldName]: teamAllocations } as T,
+                [fieldName, `${fieldName}_allocatedMembers`],
+                { updateType, source: 'allocation-update' }
+              );
+            }
+          })
+          .catch(error => {
+            console.error(`[${debugName}][${nodeId}] Failed to update ${fieldName}: ${error}`);
+          })
+          .finally(() => {
+            // Reset flags
+            debounceRef.current = null;
+            
+            // Use a delay before resetting the updating flag to prevent race conditions
+            setTimeout(() => {
+              isUpdatingRef.current = false;
+            }, 100);
+          });
+      } catch (error) {
+        console.error(`[${debugName}][${nodeId}] Error updating ${fieldName}: ${error}`);
+        isUpdatingRef.current = false;
+        debounceRef.current = null;
+      }
+    }, 1000);
+    
+    // Cleanup function to cancel the timeout
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
   }, [nodeId, nodeType, nodeData, fieldName, updateType, publishFn, isUpdateTooRecent, debugName]);
   
   /**
