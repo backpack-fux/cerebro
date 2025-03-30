@@ -1,13 +1,5 @@
-import Canvas from "@/components/canvas/canvas";
-import { ThemeToggle } from "@/components/theme/theme-toggle";
+import { redirect } from 'next/navigation';
 
 export default function Home() {
-  return (
-    <div className="h-screen w-screen">
-      <div className="absolute top-4 right-4 z-10">
-        <ThemeToggle />
-      </div>
-      <Canvas />
-    </div>
-  );
+  redirect('/workflows');
 }

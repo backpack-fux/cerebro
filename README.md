@@ -1,21 +1,34 @@
-# Cerebro - Project Management System
+# Cerebro - Workflow Management System
 
-A modern project management system built with Next.js that helps teams manage resources, track features, and make strategic decisions.
+A modern workflow management system built with Next.js that helps teams visualize and interact with workflows. Cerebro is a lightweight client for Synapso, a robust workflow orchestration backend.
 
 ## Features
 
-- **Node-Based Architecture**: Flexible system for managing different types of nodes (Team, Feature, Option, Provider, etc.)
+- **Node-Based Architecture**: Flexible system for managing different types of nodes (Workflow, Logic, etc.)
 - **Real-time Updates**: Automatic synchronization of data across connected nodes
-- **Resource Management**: Sophisticated team resource allocation and tracking
-- **Visual Interface**: Interactive graph visualization of project relationships
+- **Offline Support**: Continue working even when disconnected from the backend
+- **Visual Interface**: Interactive graph visualization with three-panel layout
 - **Type Safety**: Full TypeScript support with comprehensive type definitions
+- **Agent Integration**: Interact with workflow nodes through the chat interface
+
+## Synapso Integration
+
+Cerebro has been refactored to work as a lightweight client for Synapso, a powerful workflow orchestration system that handles:
+
+- Workflow execution and state management
+- Node and edge persistence
+- Real-time event dispatching
+- Agent orchestration
+- Memory and persistence services
+
+This integration allows Cerebro to focus on providing an excellent user experience while delegating complex state management and business logic to Synapso.
 
 ## Getting Started
 
 ### Prerequisites
 
-- Node.js 18+ or Bun
-- Docker (for Neo4j database)
+- Bun 1.0+ (recommended)
+- Docker and Docker Compose for running Synapso backend (optional)
 - Git
 
 ### Installation
@@ -31,14 +44,20 @@ cd cerebro
 bun install
 ```
 
-3. Start the development server:
+3. Set up environment variables:
 ```bash
-bun dev
+cp .env.local.example .env.local
 ```
+Edit `.env.local` to add your Synapso API key and configure any other necessary settings.
 
-4. Start Neo4j (in a separate terminal):
+4. Start the Synapso backend (optional):
 ```bash
 docker-compose up -d
+```
+
+5. Start the development server:
+```bash
+bun dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the application.
@@ -48,53 +67,54 @@ Open [http://localhost:3000](http://localhost:3000) with your browser to see the
 ```
 src/
 ├── app/                    # Next.js app directory
-├── components/            # React components
-├── hooks/                # Custom React hooks
-├── services/             # Business logic and services
-│   └── graph/           # Graph-related services
-│       ├── observer/    # Node observer system
-│       └── [node-type]/ # Individual node type services
-└── utils/               # Utility functions
+├── components/             # React components
+│   ├── chat/               # Chat interface components
+│   ├── layout/             # Layout components
+│   ├── nodes/              # Node components
+│   └── utility/            # Utility panel components
+├── hooks/                  # Custom React hooks
+├── services/               # Business logic and services
+│   └── api/                # API clients
+│       └── synapso/        # Synapso API client
+└── types/                  # TypeScript type definitions
 ```
 
-## Core Systems
+## UI Architecture
 
-### Node Data Manifest System
+The UI is divided into three main panels:
 
-The Node Data Manifest System manages data dependencies between different node types:
+1. **Canvas (Center)**: Main workspace where nodes and edges are displayed
+2. **Utility Panel (Left)**: Configuration panel for nodes, workflows, and settings
+3. **Chat Interface (Right)**: Agent interaction panel
 
-- **Publishing**: Nodes can publish specific data fields
-- **Subscribing**: Nodes can subscribe to updates from other nodes
-- **Real-time Updates**: Changes are immediately reflected across connected nodes
-- **Type Safety**: Full TypeScript support for data structures
+## Node Types
 
-### Team Resource Observer
+### Workflow Nodes
+Nodes that represent workflow processes and control flow (Teams, Milestones, etc.)
 
-Manages team resource allocations across work nodes:
+### Logic Nodes
+Nodes that contain custom business logic and can be executed by the system
 
-- **Centralized Resource Management**: Single source of truth for team resources
-- **Resource Contention Handling**: Proper management of competing resource requests
-- **Consistent Calculations**: Uniform approach to calculating available hours
-- **Real-time Updates**: Immediate reflection of resource changes
+## Migration Guide
 
-## API Documentation
-
-The API documentation is available at `/api-docs` in the application. It includes:
-
-- Endpoint descriptions
-- Request/response examples
-- Authentication details
-- Rate limiting information
+If you are migrating from the older Neo4j-based version to the Synapso-based architecture, see [Migration Guide](docs/MIGRATION-GUIDE.md).
 
 ## Development
 
+### Working Offline
+
+Cerebro supports offline mode, allowing you to continue working even when the Synapso backend is unavailable:
+
+- UI indicates offline status
+- Basic operations continue to work
+- Changes are stored locally and synced when connection is restored
+
 ### Adding a New Node Type
 
-1. Create a new manifest file in `src/services/graph/[node-type]/[node-type].manifest.ts`
-2. Define the node's fields and relationships
-3. Create the node's service and hook
-4. Implement the UI components
-5. Add API endpoints
+1. Create a new hook in `src/hooks/useSynapso[NodeType].ts`
+2. Create a new component in `src/components/nodes/synapso-[node-type].tsx`
+3. Register the new node type in `src/components/nodes/index.ts`
+4. Ensure the node type is supported by the Synapso backend
 
 ### Testing
 
@@ -112,7 +132,7 @@ The application is configured for deployment on Vercel:
 
 1. Push your changes to GitHub
 2. Connect your repository to Vercel
-3. Configure environment variables
+3. Configure environment variables for Synapso integration
 4. Deploy
 
 ## Contributing
