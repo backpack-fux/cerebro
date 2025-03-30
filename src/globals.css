@@ -103,6 +103,13 @@
     --chart-4: 43 74% 66%;
     --chart-5: 27 87% 67%;
     --radius: 0.5rem;
+    
+    /* ReactFlow color variables */
+    --rf-background: #f8f8f8;
+    --rf-node: #fff;
+    --rf-minimap-mask: rgba(0, 0, 0, 0.1);
+    --rf-edge: #555;
+    --rf-connection: #1a192b;
   }
   .dark {
     --background: 222.2 84% 4.9%;
@@ -129,6 +136,13 @@
     --chart-3: 30 80% 55%;
     --chart-4: 280 65% 60%;
     --chart-5: 340 75% 55%;
+    
+    /* ReactFlow color variables for dark mode */
+    --rf-background: #1a1a1a;
+    --rf-node: #2d2d2d;
+    --rf-minimap-mask: rgba(255, 255, 255, 0.2);
+    --rf-edge: #eee; 
+    --rf-connection: #fff;
   }
 }
 
@@ -148,4 +162,88 @@
   body {
     @apply bg-background text-foreground;
   }
+}
+
+/* ReactFlow dark mode compatibility */
+.dark .react-flow__controls {
+  background-color: hsl(var(--card));
+  border-color: hsl(var(--border));
+}
+
+.dark .react-flow__controls-button {
+  background-color: hsl(var(--card));
+  color: hsl(var(--card-foreground));
+  border-color: hsl(var(--border));
+  fill: hsl(var(--card-foreground));
+}
+
+.dark .react-flow__controls-button:hover {
+  background-color: hsl(var(--muted));
+}
+
+/* MiniMap dark mode compatibility */
+.dark .react-flow__minimap {
+  background-color: hsl(var(--card)) !important;
+  border: 1px solid hsl(var(--border)) !important;
+  border-radius: var(--radius);
+  overflow: hidden;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.dark .react-flow__minimap-mask {
+  fill: var(--rf-minimap-mask);
+  stroke: hsl(var(--primary));
+  stroke-width: 1px;
+}
+
+.dark .react-flow__minimap-node {
+  fill: var(--rf-node);
+  stroke: hsl(var(--border));
+  stroke-width: 1px;
+}
+
+/* Selected nodes in minimap */
+.dark .react-flow__minimap .selected {
+  fill: hsl(var(--primary));
+  stroke: hsl(var(--primary-foreground));
+  stroke-width: 2px;
+}
+
+/* Make the canvas background visible in the minimap */
+.dark .react-flow-minimap .react-flow__viewport {
+  background-color: var(--rf-background);
+}
+
+/* Additional ReactFlow theming */
+.react-flow-canvas.dark,
+.dark .react-flow-canvas {
+  background-color: hsl(var(--background));
+}
+
+.dark .react-flow__edge-path {
+  stroke: hsl(var(--primary));
+}
+
+.dark .react-flow__edge-text {
+  fill: hsl(var(--foreground));
+}
+
+.dark .react-flow__edge.selected .react-flow__edge-path,
+.dark .react-flow__edge:focus .react-flow__edge-path,
+.dark .react-flow__edge:focus-visible .react-flow__edge-path {
+  stroke: hsl(var(--primary));
+}
+
+.dark .react-flow__attribution a {
+  color: hsl(var(--muted-foreground));
+}
+
+/* Background patterns for dark mode */
+.dark .react-flow__background {
+  background-color: transparent;
+}
+
+.dark .react-flow__background-pattern {
+  color: hsl(var(--border));
+  opacity: 0.3;
 }

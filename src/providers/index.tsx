@@ -17,7 +17,7 @@ export function Providers({ children }: ProvidersProps) {
         defaultTheme="system"
         enableSystem
         disableTransitionOnChange
-    >
+      >
         <ReactFlowProvider>{children}</ReactFlowProvider>
       </NextThemesProvider>
     </ValidationProvider>

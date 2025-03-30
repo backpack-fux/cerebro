@@ -66,6 +66,7 @@ export interface Agent {
   status: AgentStatus;
   createdAt: string;
   updatedAt: string;
+  capabilities?: string[];
 }
 
 /**

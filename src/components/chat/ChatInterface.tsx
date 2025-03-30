@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { User, Send, Bot, RefreshCw, Plus } from "lucide-react";
+import { AgentProfile } from './AgentProfile';
 
 // Message type definition
 interface Message {
@@ -19,9 +20,10 @@ interface Message {
 
 interface ChatInterfaceProps {
   workflowId?: string;
+  isOffline?: boolean;
 }
 
-export function ChatInterface({ workflowId }: ChatInterfaceProps) {
+export function ChatInterface({ workflowId, isOffline = false }: ChatInterfaceProps) {
   const [inputValue, setInputValue] = useState('');
   const [messages, setMessages] = useState<Message[]>([
     {
@@ -139,6 +141,10 @@ export function ChatInterface({ workflowId }: ChatInterfaceProps) {
   
   return (
     <div className="h-full flex flex-col">
+      {/* Agent Profile */}
+      <AgentProfile workflowId={workflowId} isOffline={isOffline} />
+      
+      {/* Chat Header */}
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-lg font-semibold">Chat Interface</h2>
         <div className="flex gap-2">
@@ -151,6 +157,7 @@ export function ChatInterface({ workflowId }: ChatInterfaceProps) {
         </div>
       </div>
       
+      {/* Chat Messages */}
       <ScrollArea className="flex-1 pr-4">
         <div className="space-y-4 min-h-full">
           {messages.map(renderMessage)}
@@ -178,6 +185,7 @@ export function ChatInterface({ workflowId }: ChatInterfaceProps) {
         </div>
       </ScrollArea>
       
+      {/* Message Input */}
       <div className="mt-4 relative">
         <Input
           placeholder="Send a message..."

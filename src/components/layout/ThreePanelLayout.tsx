@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect, ReactNode } from 'react';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { Wifi, WifiOff } from "lucide-react";
+import { ThemeToggle } from "@/components/theme/theme-toggle";
 
 interface ThreePanelLayoutProps {
   canvas: ReactNode;
@@ -74,12 +75,15 @@ export function ThreePanelLayout({
     <div className="h-screen w-full flex flex-col">
       {/* Top toolbar with toggle buttons */}
       <div className="flex items-center justify-between bg-background border-b px-4 h-12">
-        <button
-          onClick={toggleUtilityPanel}
-          className="p-2 rounded hover:bg-muted text-sm"
-        >
-          {utilitySize > 0 ? "Hide Utility" : "Show Utility"}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={toggleUtilityPanel}
+            className="p-2 rounded hover:bg-muted text-sm"
+          >
+            {utilitySize > 0 ? "Hide Utility" : "Show Utility"}
+          </button>
+          <ThemeToggle />
+        </div>
         
         <div className="text-sm font-medium flex items-center gap-2">
           <span>Cerebro</span>

@@ -14,10 +14,13 @@ import { ChatInterface } from '@/components/chat/ChatInterface';
 import { WorkflowNode } from '@/types/synapso';
 import { AlertTriangle } from 'lucide-react';
 
-export default function WorkflowLayout({ params }: { params: { id: string } }) {
+export default function WorkflowLayout() {
+  const params = useParams();
+  const id = params.id as string;
+  
   return (
     <ReactFlowProvider>
-      <WorkflowPage id={params.id} />
+      <WorkflowPage id={id} />
     </ReactFlowProvider>
   );
 }
@@ -166,10 +169,27 @@ function WorkflowPage({ id }: { id: string }) {
           nodeTypes={nodeTypes}
           onNodeClick={handleNodeClick}
           fitView
+          className="react-flow-canvas"
         >
-          <Background />
-          <Controls />
-          <MiniMap />
+          <Background className="react-flow-background" />
+          <Controls className="react-flow-controls" />
+          <MiniMap 
+            className="react-flow-minimap"
+            nodeColor={(node) => {
+              // Use HSL variables to ensure theme compatibility
+              return node.type === 'synapsoTeam' ? 'hsl(var(--chart-1))' : 
+                     node.type === 'synapsoLogic' ? 'hsl(var(--chart-2))' : 
+                     node.type === 'synapsoTeamMember' ? 'hsl(var(--chart-3))' : 
+                     'var(--rf-node)';
+            }}
+            maskColor="var(--rf-minimap-mask)"
+            nodeStrokeWidth={3}
+            style={{
+              backgroundColor: 'hsl(var(--card))',
+              border: '1px solid hsl(var(--border))',
+              borderRadius: 'var(--radius)',
+            }}
+          />
         </ReactFlow>
       </>
     );
@@ -186,7 +206,7 @@ function WorkflowPage({ id }: { id: string }) {
         />
       }
       chatInterface={
-        <ChatInterface workflowId={id} />
+        <ChatInterface workflowId={id} isOffline={isOffline} />
       }
       isOffline={isOffline}
     />
