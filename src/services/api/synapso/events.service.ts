@@ -41,6 +41,13 @@ class SynapsoEventsService {
    * Connect to the Synapso events stream
    */
   connect() {
+    // Don't attempt to connect if we're offline
+    if (!navigator.onLine) {
+      console.log('[SynapsoEventsService] Cannot connect: Browser is offline');
+      this.isConnected = false;
+      return;
+    }
+    
     if (this.eventSource) {
       return;
     }
@@ -52,52 +59,119 @@ class SynapsoEventsService {
       url.searchParams.append('token', this.authToken);
     }
     
-    this.eventSource = new EventSource(url.toString());
-    
-    this.eventSource.onopen = () => {
-      console.log('[SynapsoEventsService] Connected to event stream');
-      this.isConnected = true;
-      this.reconnectAttempts = 0;
-    };
-    
-    this.eventSource.onerror = (error) => {
-      console.error('[SynapsoEventsService] Error connecting to event stream:', error);
-      this.isConnected = false;
-      this.eventSource?.close();
-      this.eventSource = null;
+    try {
+      this.eventSource = new EventSource(url.toString());
       
-      // Attempt to reconnect with exponential backoff
-      if (this.reconnectAttempts < this.maxReconnectAttempts) {
-        const delay = this.reconnectDelay * Math.pow(2, this.reconnectAttempts);
-        console.log(`[SynapsoEventsService] Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts + 1})`);
+      this.eventSource.onopen = () => {
+        console.log('[SynapsoEventsService] Connected to event stream');
+        this.isConnected = true;
+        this.reconnectAttempts = 0;
         
-        setTimeout(() => {
-          this.reconnectAttempts++;
-          this.connect();
-        }, delay);
-      }
-    };
-    
-    this.eventSource.addEventListener('message', (e) => {
-      try {
-        const event = JSON.parse(e.data) as RealTimeEvent;
-        this.handleEvent(event);
-      } catch (error) {
-        console.error('[SynapsoEventsService] Error parsing event data:', error, e.data);
-      }
-    });
+        // Dispatch a connection status event
+        this.dispatchConnectionStatus(true);
+      };
+      
+      this.eventSource.onerror = (error) => {
+        console.error('[SynapsoEventsService] Error connecting to event stream:', error);
+        this.isConnected = false;
+        this.eventSource?.close();
+        this.eventSource = null;
+        
+        // Dispatch a connection status event
+        this.dispatchConnectionStatus(false);
+        
+        // Attempt to reconnect with exponential backoff
+        if (this.reconnectAttempts < this.maxReconnectAttempts) {
+          const delay = this.reconnectDelay * Math.pow(2, this.reconnectAttempts);
+          console.log(`[SynapsoEventsService] Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts + 1})`);
+          
+          setTimeout(() => {
+            // Check if we're still online before attempting to reconnect
+            if (navigator.onLine) {
+              this.reconnectAttempts++;
+              this.connect();
+            } else {
+              console.log('[SynapsoEventsService] Not reconnecting: Browser is offline');
+            }
+          }, delay);
+        } else {
+          console.error(`[SynapsoEventsService] Maximum reconnection attempts (${this.maxReconnectAttempts}) reached`);
+        }
+      };
+      
+      this.eventSource.addEventListener('message', (e) => {
+        try {
+          const event = JSON.parse(e.data) as RealTimeEvent;
+          this.handleEvent(event);
+        } catch (error) {
+          console.error('[SynapsoEventsService] Error parsing event data:', error, e.data);
+        }
+      });
+      
+      // Monitor offline/online status
+      window.addEventListener('offline', this.handleOffline);
+      window.addEventListener('online', this.handleOnline);
+      
+    } catch (error) {
+      console.error('[SynapsoEventsService] Error setting up EventSource:', error);
+      this.isConnected = false;
+      
+      // Dispatch a connection status event
+      this.dispatchConnectionStatus(false);
+    }
   }
   
   /**
    * Disconnect from the Synapso events stream
    */
   disconnect() {
+    window.removeEventListener('offline', this.handleOffline);
+    window.removeEventListener('online', this.handleOnline);
+    
     if (this.eventSource) {
       this.eventSource.close();
       this.eventSource = null;
       this.isConnected = false;
       console.log('[SynapsoEventsService] Disconnected from event stream');
+      
+      // Dispatch a connection status event
+      this.dispatchConnectionStatus(false);
     }
+  }
+  
+  /**
+   * Handle browser going offline
+   */
+  private handleOffline = () => {
+    console.log('[SynapsoEventsService] Browser went offline, closing event stream');
+    this.disconnect();
+  }
+  
+  /**
+   * Handle browser coming back online
+   */
+  private handleOnline = () => {
+    console.log('[SynapsoEventsService] Browser came online, reconnecting event stream');
+    this.connect();
+  }
+  
+  /**
+   * Dispatch a connection status event
+   */
+  private dispatchConnectionStatus(isConnected: boolean) {
+    const statusEvent: RealTimeEvent = {
+      event: {
+        id: 'connection-status',
+        type: 'connection.status',
+        source: 'events-service',
+        sourceType: 'system',
+        timestamp: new Date().toISOString(),
+        data: { isConnected }
+      },
+      data: { isConnected }
+    };
+    
+    this.handleEvent(statusEvent);
   }
   
   /**

@@ -60,36 +60,156 @@ export function useSynapso(options: UseSynapsoOptions = {}) {
   const [edges, setEdges] = useState<Edge[]>([]);
   const [canvas, setCanvas] = useState<Canvas | null>(null);
   
-  // Network status detection
+  // Network and service status detection
   useEffect(() => {
+    if (!enableRealtime) return;
+    
+    // Functions to refresh data
+    const refreshData = (id: string) => {
+      // These functions will be available in the context when this gets called
+      synapsoClient.getWorkflow(id)
+        .then(result => {
+          setCurrentWorkflow(result);
+          setConnectionAttempts(0);
+        })
+        .catch(console.error);
+        
+      synapsoClient.getNodes(id)
+        .then(result => {
+          setNodes(result);
+          setConnectionAttempts(0);
+        })
+        .catch(console.error);
+        
+      synapsoClient.getEdges(id)
+        .then(result => {
+          setEdges(result);
+        })
+        .catch(console.error);
+        
+      synapsoClient.getCanvas(id)
+        .then(result => {
+          setCanvas(result);
+        })
+        .catch(console.error);
+    };
+    
+    // Handle browser online/offline status
     const handleOnline = () => {
-      setIsOffline(false);
-      // Reconnect and refresh data
-      if (workflowId) {
-        fetchWorkflow(workflowId).catch(console.error);
-        fetchNodes(workflowId).catch(console.error);
-        fetchEdges(workflowId).catch(console.error);
+      console.log('[useSynapso] Browser came online');
+      
+      // Only update if we're currently marked as offline
+      if (isOffline) {
+        console.log('[useSynapso] Reconnecting to Synapso services');
+        
+        // Don't immediately set to online - wait for successful API call
+        // This prevents flickering if the network is connected but service is down
+        
+        // Instead, try to reconnect to the event service
+        synapsoEvents.connect();
+        
+        // And try a lightweight ping to verify service availability
+        synapsoClient.ping().then(() => {
+          setIsOffline(false);
+          setConnectionAttempts(0);
+          
+          // Refresh data if workflow ID is provided
+          if (workflowId) {
+            refreshData(workflowId);
+          }
+        }).catch(err => {
+          // Browser is online but service is unavailable
+          console.warn('[useSynapso] Browser is online but Synapso service is unavailable:', err);
+          // Stay in offline mode
+          setIsOffline(true);
+        });
       }
     };
     
     const handleOffline = () => {
+      console.log('[useSynapso] Browser went offline');
       setIsOffline(true);
+      
       if (useOfflineFallback && workflowId) {
         // Set offline fallback data
         setCurrentWorkflow({...DEFAULT_WORKFLOW, id: workflowId});
-        setNodes([{...DEFAULT_NODE, workflowId}]);
-        setEdges([]);
+        
+        // Only create a default node if there are no nodes yet
+        if (nodes.length === 0) {
+          setNodes([{...DEFAULT_NODE, workflowId}]);
+        }
+        
+        // Keep existing edges
       }
     };
     
+    // Listen for connection status events from the events service
+    const handleConnectionStatus = synapsoEvents.on('connection.status', (event: RealTimeEvent) => {
+      const { isConnected } = event.data as { isConnected: boolean };
+      console.log(`[useSynapso] Connection status changed: ${isConnected ? 'Connected' : 'Disconnected'}`);
+      
+      // If we were connected and now we're not, check if browser is still online
+      if (!isConnected && !isOffline && navigator.onLine) {
+        // We're online but service is disconnected
+        setIsOffline(true);
+      }
+      
+      // If we're now connected but were in offline mode, update status
+      if (isConnected && isOffline) {
+        setIsOffline(false);
+        setConnectionAttempts(0);
+        
+        // Refresh data
+        if (workflowId) {
+          refreshData(workflowId);
+        }
+      }
+    });
+    
+    // Check initial online status
+    if (!navigator.onLine) {
+      setIsOffline(true);
+      
+      if (useOfflineFallback && workflowId) {
+        setCurrentWorkflow({...DEFAULT_WORKFLOW, id: workflowId});
+        if (nodes.length === 0) {
+          setNodes([{...DEFAULT_NODE, workflowId}]);
+        }
+      }
+    } else {
+      // Try to connect to events service
+      synapsoEvents.connect();
+      
+      // Verify service availability with a ping
+      synapsoClient.ping().catch(err => {
+        console.warn('[useSynapso] Initial service check failed:', err);
+        setIsOffline(true);
+        
+        if (useOfflineFallback && workflowId) {
+          setCurrentWorkflow({...DEFAULT_WORKFLOW, id: workflowId});
+          if (nodes.length === 0) {
+            setNodes([{...DEFAULT_NODE, workflowId}]);
+          }
+        }
+      });
+    }
+    
+    // Set up event listeners
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
     
     return () => {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
+      handleConnectionStatus(); // Unsubscribe from connection status events
     };
-  }, [workflowId, useOfflineFallback]);
+  }, [
+    enableRealtime, 
+    workflowId, 
+    isOffline, 
+    useOfflineFallback,
+    nodes.length
+  ]);
   
   // Fetch workflows
   const fetchWorkflows = useCallback(async () => {
@@ -617,14 +737,82 @@ export function useSynapso(options: UseSynapsoOptions = {}) {
   
   // Load data if workflow ID is provided
   useEffect(() => {
-    if (workflowId) {
-      // Load workflow, nodes, edges, and canvas
-      fetchWorkflow(workflowId);
-      fetchNodes(workflowId);
-      fetchEdges(workflowId);
-      fetchCanvas(workflowId);
-    }
-  }, [workflowId, fetchWorkflow, fetchNodes, fetchEdges, fetchCanvas]);
+    if (!workflowId) return;
+    
+    const loadInitialData = async () => {
+      setLoading(true);
+      
+      try {
+        // Load workflow
+        if (!isOffline) {
+          try {
+            const workflowData = await synapsoClient.getWorkflow(workflowId);
+            setCurrentWorkflow(workflowData);
+          } catch (err) {
+            if (useOfflineFallback) {
+              setCurrentWorkflow({...DEFAULT_WORKFLOW, id: workflowId});
+            } else {
+              throw err;
+            }
+          }
+          
+          // Load nodes
+          try {
+            const nodesData = await synapsoClient.getNodes(workflowId);
+            setNodes(nodesData);
+          } catch (err) {
+            if (useOfflineFallback) {
+              setNodes([{...DEFAULT_NODE, workflowId}]);
+            } else {
+              throw err;
+            }
+          }
+          
+          // Load edges
+          try {
+            const edgesData = await synapsoClient.getEdges(workflowId);
+            setEdges(edgesData);
+          } catch (err) {
+            if (useOfflineFallback) {
+              setEdges([]);
+            } else {
+              throw err;
+            }
+          }
+          
+          // Load canvas
+          try {
+            const canvasData = await synapsoClient.getCanvas(workflowId);
+            setCanvas(canvasData);
+          } catch (err) {
+            // Canvas is optional, no fallback needed
+            console.warn('Failed to load canvas:', err);
+          }
+        } else {
+          // Already in offline mode, use fallback data
+          setCurrentWorkflow({...DEFAULT_WORKFLOW, id: workflowId});
+          setNodes([{...DEFAULT_NODE, workflowId}]);
+          setEdges([]);
+        }
+        
+      } catch (err) {
+        console.error('Failed to load workflow data:', err);
+        setError(err instanceof Error ? err : new Error(String(err)));
+        
+        // If loading fails and offline fallback is enabled, use fallback data
+        if (useOfflineFallback) {
+          setIsOffline(true);
+          setCurrentWorkflow({...DEFAULT_WORKFLOW, id: workflowId});
+          setNodes([{...DEFAULT_NODE, workflowId}]);
+          setEdges([]);
+        }
+      } finally {
+        setLoading(false);
+      }
+    };
+    
+    loadInitialData();
+  }, [workflowId, isOffline, useOfflineFallback]);
   
   return {
     // State

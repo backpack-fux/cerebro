@@ -56,17 +56,62 @@ export class SynapsoClient {
     };
 
     try {
-      const response = await fetch(url, options);
+      // First check if we're online before making the request
+      if (!navigator.onLine) {
+        throw new Error("OFFLINE: Network connection unavailable");
+      }
+      
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 second timeout
+      
+      const response = await fetch(url, {
+        ...options,
+        signal: controller.signal
+      });
+      
+      clearTimeout(timeoutId);
 
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(`Synapso API error: ${response.status} ${response.statusText} - ${JSON.stringify(errorData)}`);
+        // Handle different error types with better messages
+        let errorMessage: string;
+        
+        if (response.status === 404) {
+          errorMessage = `Resource not found: ${endpoint}`;
+        } else if (response.status === 401 || response.status === 403) {
+          errorMessage = "Authentication or permission error";
+        } else if (response.status >= 500) {
+          errorMessage = "Synapso service is currently unavailable";
+        } else {
+          const errorData = await response.json().catch(() => ({}));
+          errorMessage = `Synapso API error: ${response.status} ${response.statusText} - ${JSON.stringify(errorData)}`;
+        }
+        
+        console.warn(`Synapso API Error (${response.status}):`, errorMessage);
+        throw new Error(errorMessage);
       }
 
       const result = await response.json();
       return result as T;
     } catch (error) {
+      // Better error classification
       console.error('Synapso API request failed:', error);
+      
+      // Classify error for the front-end
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        throw new Error("TIMEOUT: Synapso service request timed out");
+      }
+      
+      if (errorMessage.includes('OFFLINE')) {
+        throw new Error("OFFLINE: Network connection unavailable");
+      }
+      
+      // If fetch is failing entirely, the service is likely down
+      if (errorMessage.includes('fetch') || errorMessage.includes('network')) {
+        throw new Error("SERVICE_DOWN: Synapso service is unavailable");
+      }
+      
       throw error;
     }
   }
@@ -226,6 +271,19 @@ export class SynapsoClient {
    */
   async deleteAgent(id: string): Promise<void> {
     return this.request<void>(`/agents/${id}`, 'DELETE');
+  }
+
+  /**
+   * Ping the Synapso API to check service availability
+   * This is a lightweight method used to verify if the service is accessible
+   */
+  async ping(): Promise<{ status: string }> {
+    try {
+      return this.request<{ status: string }>('/ping');
+    } catch (error) {
+      console.error('Synapso ping failed:', error);
+      throw error;
+    }
   }
 }
 

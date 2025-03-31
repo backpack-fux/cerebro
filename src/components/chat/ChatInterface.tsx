@@ -142,7 +142,7 @@ export function ChatInterface({ workflowId, isOffline = false }: ChatInterfacePr
   return (
     <div className="h-full flex flex-col">
       {/* Agent Profile */}
-      <AgentProfile workflowId={workflowId} isOffline={isOffline} />
+      <AgentProfile workflowId={workflowId} isOffline={isOffline} isStreaming={isStreaming} />
       
       {/* Chat Header */}
       <div className="flex items-center justify-between mb-4">

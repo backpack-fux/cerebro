@@ -2,18 +2,24 @@
 
 import { useState, useEffect } from 'react';
 import { Badge } from "@/components/ui/badge";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Bot, Wifi, WifiOff } from 'lucide-react';
+import { Bot, WifiOff } from 'lucide-react';
 import { synapsoClient } from '@/services/api/synapso/synapso.client';
 import { Agent, AgentStatus } from '@/types/synapso';
+import { AgentAvatar } from './AgentAvatar';
 
 interface AgentProfileProps {
   agentId?: string;
   workflowId?: string;
   isOffline?: boolean;
+  isStreaming?: boolean;
 }
 
-export function AgentProfile({ agentId, workflowId, isOffline = false }: AgentProfileProps) {
+export function AgentProfile({ 
+  agentId, 
+  workflowId, 
+  isOffline = false,
+  isStreaming = false 
+}: AgentProfileProps) {
   const [agent, setAgent] = useState<Agent | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<Error | null>(null);
@@ -119,22 +125,22 @@ export function AgentProfile({ agentId, workflowId, isOffline = false }: AgentPr
   };
 
   return (
-    <div className="flex items-center p-3 border-b mb-3">
-      <Avatar className="h-10 w-10 mr-3">
-        <AvatarFallback>
-          <Bot className="h-5 w-5" />
-        </AvatarFallback>
-        {agent?.config?.avatar && (
-          <AvatarImage src={agent.config.avatar} alt={agent.name} />
-        )}
-      </Avatar>
+    <div className="flex items-center p-4 border-b mb-3 relative">
+      {/* Use our new AgentAvatar component */}
+      <AgentAvatar 
+        name={agent?.name || 'Assistant'}
+        status={agent?.status || AgentStatus.IDLE}
+        avatarUrl={agent?.config?.avatar || null}
+        size="lg"
+        isAnimating={isStreaming}
+      />
       
-      <div className="flex-1 min-w-0">
+      <div className="flex-1 min-w-0 ml-4">
         <div className="flex items-center">
-          <h3 className="font-medium text-sm truncate">{agent?.name || 'Assistant'}</h3>
+          <h3 className="font-medium text-base truncate">{agent?.name || 'Assistant'}</h3>
           {getStatusIndicator()}
         </div>
-        <p className="text-xs text-muted-foreground truncate">{agent?.description || 'AI Assistant'}</p>
+        <p className="text-sm text-muted-foreground truncate">{agent?.description || 'AI Assistant'}</p>
       </div>
     </div>
   );

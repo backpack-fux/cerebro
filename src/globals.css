@@ -247,3 +247,37 @@
   color: hsl(var(--border));
   opacity: 0.3;
 }
+
+/* Figma-style panning cursor */
+.space-pan-active {
+  cursor: grab !important;
+}
+
+.space-pan-active:active {
+  cursor: grabbing !important;
+}
+
+/* Prevent text selection during pan */
+.space-pan-active .react-flow__pane,
+.space-pan-active .react-flow__node {
+  user-select: none;
+}
+
+/* Agent Avatar Animations */
+@keyframes waveform {
+  0% {
+    height: 15%;
+  }
+  100% {
+    height: 70%;
+  }
+}
+
+.wave-bar {
+  animation: waveform 0.5s ease-in-out infinite alternate;
+}
+
+.agent-avatar .avatar-animation {
+  background: rgba(0, 0, 0, 0.3);
+  backdrop-filter: blur(2px);
+}

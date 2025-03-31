@@ -4,8 +4,9 @@ import { useState } from 'react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Settings, Users, Workflow, Plus, Database, Code, User } from "lucide-react";
+import { Settings, Users, Workflow, Plus, Database, Code, User, Cpu } from "lucide-react";
 import { WorkflowNode } from "@/types/synapso";
+import { DevTelemetry } from "./DevTelemetry";
 
 interface UtilityPanelProps {
   selectedNode?: WorkflowNode | null;
@@ -37,7 +38,7 @@ export function UtilityPanel({ selectedNode, workflowId, onCreateNode }: Utility
       </div>
       
       <Tabs defaultValue="nodes" className="flex-1" value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid grid-cols-3 mb-4">
+        <TabsList className="grid grid-cols-4 mb-4">
           <TabsTrigger value="nodes" className="flex items-center gap-1.5">
             <Workflow className="h-4 w-4" />
             <span>Nodes</span>
@@ -49,6 +50,10 @@ export function UtilityPanel({ selectedNode, workflowId, onCreateNode }: Utility
           <TabsTrigger value="settings" className="flex items-center gap-1.5">
             <Settings className="h-4 w-4" />
             <span>Settings</span>
+          </TabsTrigger>
+          <TabsTrigger value="developer" className="flex items-center gap-1.5">
+            <Cpu className="h-4 w-4" />
+            <span>Developer</span>
           </TabsTrigger>
         </TabsList>
         
@@ -194,6 +199,11 @@ export function UtilityPanel({ selectedNode, workflowId, onCreateNode }: Utility
               </CardContent>
             </Card>
           </div>
+        </TabsContent>
+
+        {/* Developer Tab */}
+        <TabsContent value="developer" className="flex-1">
+          <DevTelemetry />
         </TabsContent>
       </Tabs>
     </div>
